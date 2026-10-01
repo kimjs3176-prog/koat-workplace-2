@@ -11,7 +11,7 @@
   · 제·개정 문서 세트 한글(.hwpx) 저장
 
 api_server.register 시 공통 헬퍼(AI 호출·의미 검색·HWPX 베이스)를 넘겨받는다.
-작성 기준은 「내규관리규칙」 제5조(내규의 체제)·제6조(개정 방식)를 따른다.
+작성 기준·절차·기관 명칭은 기관 프로필(org_config.json, ORG_CONFIG)에서 읽는다.
 """
 from __future__ import annotations
 
@@ -40,6 +40,42 @@ def register(app, **ctx):
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# 0. 기관 프로필(org_config.json) — 기관명·기관장·내규관리 규칙·절차·심의기준
+# ══════════════════════════════════════════════════════════════════════════
+_ORG_DEFAULT = {
+    "org_name": "○○기관", "org_short": "기관", "head": "기관장", "deputy": "부기관장",
+    "reg_word": "내규", "rules_name": "내규관리규칙", "email_domain": "example.or.kr",
+    "notice_days": 20, "staff_days": 7, "stale_terms": [], "stale_words": [],
+    "drafting_rules": [], "rules_summary": [], "review_criteria": [],
+    "procedure": {"questions": [], "steps": []},
+}
+
+
+def load_org() -> dict:
+    path = os.environ.get("ORG_CONFIG") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "org_config.json")
+    org = dict(_ORG_DEFAULT)
+    try:
+        with open(path, encoding="utf-8") as f:
+            org.update({k: v for k, v in json.load(f).items() if not k.startswith("_")})
+    except FileNotFoundError:
+        print(f"[reg-agent] 기관 프로필 없음({path}) — 기본값 사용")
+    except Exception as e:
+        print(f"[reg-agent] 기관 프로필 읽기 실패({path}): {e} — 기본값 사용")
+    return org
+
+
+ORG = load_org()
+
+
+def ofmt(s: str) -> str:
+    """문구 속 {org}·{short}·{head}·{deputy}·{rules}·{notice_days}·{staff_days} 치환."""
+    rep = {"org": ORG["org_name"], "short": ORG["org_short"], "head": ORG["head"],
+           "deputy": ORG["deputy"], "rules": ORG["rules_name"], "reg": ORG["reg_word"],
+           "notice_days": str(ORG["notice_days"]), "staff_days": str(ORG["staff_days"])}
+    return re.sub(r"\{(\w+)\}", lambda m: rep.get(m.group(1), m.group(0)), str(s or ""))
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # 1. 내규 본문 → 조문 구조
 # ══════════════════════════════════════════════════════════════════════════
 # 개정 이력 주석: <개정 2020.03.20., 2022.02.24.> · <2020.03.20.> · ＜신설 2013.6.27.＞
@@ -60,13 +96,9 @@ _MOK_CH = "가나다라마바사아자차카타파하"
 # 내규 명칭 접미어(상위법과 구분하는 데 쓴다)
 _REG_SUFFIX = ("정관", "규정", "규칙", "세칙", "지침", "요령", "기준", "매뉴얼",
                "강령", "헌장", "수칙", "예규")
-# 2022.3.1. 기관명 변경 부칙(「내규관리규칙」 부칙 2022.02.24.) 기준 구 명칭
-_STALE_TERMS = [
-    ("농업기술실용화재단", "한국농업기술진흥원"),
-    ("실용화재단", "농진원"),
-    ("이사장", "원장"),
-    ("총괄본부장", "부원장"),
-]
+# 기관명·직위 변경 전 구 명칭(기관 프로필 stale_terms·stale_words)
+_STALE_TERMS = [tuple(x) for x in ORG.get("stale_terms") or []]
+_STALE_WORDS = [tuple(x) for x in ORG.get("stale_words") or []]   # 단어 경계로만 찾는 짧은 말
 # 알기 쉬운 표기(법제처 「알기 쉬운 법령 정비기준」 중 내규에 자주 나오는 것)
 _STYLE_RULES = [
     (r"각호", "각 호"), (r"각항", "각 항"), (r"동조", "같은 조"), (r"동항", "같은 항"),
@@ -267,6 +299,18 @@ def find_reg(slug: str = "", title: str = ""):
     return None
 
 
+def resolve_reg(b: dict):
+    """요청의 대상 내규: 등록된 내규(slug·reg) 또는 붙여넣은 원문(text). 없으면 None."""
+    if (b.get("text") or "").strip() and not b.get("slug"):
+        p = parse_text(b["text"])
+        if not p["articles"]:
+            return None
+        return {"slug": "", "title": (b.get("reg") or "붙여넣은 내규").strip(), "category": "",
+                "revision": "", "articles": p["articles"], "chapters": p["chapters"],
+                "addenda": p["addenda"], "appendix": p["appendix"], "pasted": True}
+    return find_reg(b.get("slug", ""), b.get("reg", ""))
+
+
 def _reg_names() -> dict:
     """정규화 내규명 → 정식 명칭."""
     return {_nk(r["title"]): r["title"] for r in all_regs()}
@@ -322,6 +366,39 @@ def internal_refs(text: str):
                 out.append((m.group(6) + (("의" + m.group(7)) if m.group(7) else ""),
                             m.group(0), m.start()))
     return out
+
+
+def retarget_refs(text: str, moves: dict):
+    """같은 내규 내부 인용의 조 번호를 이동표(moves: {"7": "8", "7의2": "8"})대로 바꾼다.
+
+    다른 법령·내규 인용(「…」 제N조, 같은 법 제N조 등)은 건드리지 않는다. 반환: (새 본문, 바꾼 수)"""
+    if not moves or not text:
+        return text, 0
+    reps = []
+    prev_ext_end = -1
+    for m in _REF.finditer(text):
+        ext = _ref_is_external(text, m.start())
+        if not ext and prev_ext_end >= 0 and re.fullmatch(r"(?:\s*[(（][^)）]{0,24}[)）])?[\s,및또는ㆍ·와과]*", text[prev_ext_end:m.start()]):
+            ext = True
+        if ext:
+            prev_ext_end = m.end()
+            continue
+        prev_ext_end = -1
+        for gm, gs in ((1, 2), (6, 7)):
+            if not m.group(gm):
+                continue
+            no = m.group(gm) + (("의" + m.group(gs)) if m.group(gs) else "")
+            if no not in moves:
+                continue
+            new = moves[no]
+            k = art_key(new)
+            jo = text.index("조", m.end(gm))
+            end = m.end(gs) if m.group(gs) else jo + 1
+            reps.append((m.start(gm), end, f"{k[0]}조" + (f"의{k[1]}" if k[1] else "")))
+    out = text
+    for a, e, t in sorted(reps, reverse=True):
+        out = out[:a] + t + out[e:]
+    return out, len(reps)
 
 
 def _snip(text: str, pos: int, span: int = 60) -> str:
@@ -387,7 +464,7 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
         if prev and k[1] == 0 and k[0] > prev[0] + 1:
             miss = f"제{prev[0] + 1}조" + (f"~제{k[0] - 1}조" if k[0] - 1 > prev[0] + 1 else "")
             add("warn", "gap", a["no"],
-                f"{miss}가 없습니다. 삭제한 조는 번호를 남기고 '삭제'로 표시합니다(「내규관리규칙」 제6조제2항).")
+                f"{miss}가 없습니다. 삭제한 조는 번호를 남기고 '삭제'로 표시합니다(「{ORG['rules_name']}」 제6조제2항).")
         prev = k
     if arts and art_key(arts[0]["no"]) != (1, 0):
         add("warn", "first", arts[0]["no"], "첫 조문이 제1조가 아닙니다.")
@@ -438,7 +515,7 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
             if _nk(nm) in regnames or _nk(nm) == _nk(title) or nm == "정관":
                 continue
             near = [regnames[k] for k in difflib.get_close_matches(_nk(nm), list(regnames), n=2, cutoff=0.8)]
-            own = re.search(r"농진원|농업기술진흥원|실용화재단|재단", nm)
+            own = any(t and t in nm for t in [ORG["org_short"], ORG["org_name"]] + [o for o, _ in _STALE_TERMS + _STALE_WORDS])
             if not near and not own:
                 continue                  # 정부 규정·지침 등 외부 규범으로 본다
             add("warn", "regname", no,
@@ -448,8 +525,9 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
         for old, new in _STALE_TERMS:
             if old in body:
                 add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”이(가) 있습니다.", f"“{old}” → “{new}”")
-        if re.search(r"(?<![가-힣])재단(?:은|는|이|가|의|에|에서|과|와|을|를)?(?![가-힣])", body):
-            add("warn", "stale", no, f"{lbl}에 구 명칭 “재단”이 있습니다.", "“재단” → “농진원”")
+        for old, new in _STALE_WORDS:
+            if re.search(r"(?<![가-힣])" + re.escape(old) + r"(?:은|는|이|가|의|에|에서|과|와|을|를)?(?![가-힣])", body):
+                add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”이(가) 있습니다.", f"“{old}” → “{new}”")
         # (7) 알기 쉬운 표기
         if full:
             for pat, rep in _STYLE_RULES:
@@ -498,7 +576,7 @@ _JOSA_TAIL = re.compile(
     r"에|의|을|를|은|는|이|가|와|과|도|만|로|및|등)$")
 _STOP = {"관한", "대한", "위한", "따른", "있는", "없는", "경우", "사항", "필요한", "규정", "규칙",
          "지침", "내규", "제정", "개정", "만들", "새로", "운영", "관련", "정함", "목적", "기관",
-         "농진원", "한국농업기술진흥원", "그리고", "또는", "하기", "위해", "통해",
+         ORG["org_short"], ORG["org_name"], "그리고", "또는", "하기", "위해", "통해",
          "정하는", "정한", "하는", "있도록", "지침을", "규정을", "만들어야", "만들기"}
 
 
@@ -594,15 +672,9 @@ def similar_search(query: str, exclude: str = "", limit: int = 8) -> dict:
 # ══════════════════════════════════════════════════════════════════════════
 # 5. AI 프롬프트
 # ══════════════════════════════════════════════════════════════════════════
-_RULES = """[농진원 내규 작성 기준 — 「내규관리규칙」 제5조·제6조]
-- 내규는 총칙·본칙·부칙으로 구성. 장·절·조·항·호·목 순으로 구분(조문이 적으면 장·절 생략 가능).
-- 각 조에는 내용을 요약한 제목을 붙인다: "제1조(목적)". 항은 ①②③, 호는 "1." "2.", 목은 "가." "나.".
-- 조문 숫자는 아라비아 숫자. 한글 가로쓰기·띄어쓰기, 쉬운 우리말(“각호”→“각 호”, “당해”→“해당”, “기타”→“그 밖의”).
-- 기관 명칭은 첫 조문에서 한국농업기술진흥원(이하 “농진원”이라 한다)으로 정의하고 이후 “농진원”, 기관장은 “원장”.
-- 일부 개정 시 조를 추가하면 “제0조의2”로 번호를 붙이고, 조를 삭제하면 번호를 남기고 “삭제”로 표시(기존 조 번호를 당기거나 밀지 않는다).
-- 개정 조문이 기존 조문의 3분의 2 이상이면 전부개정 방식.
-- 부칙에는 시행일, 경과조치, 다른 내규의 개정 등을 둔다(5개 이내면 항 ①②, 초과 시 조).
-- 상위 법령·정관·상위 내규에 저촉되지 않게 하고 위임 근거를 명확히 한다. 다른 내규와 중복·상충 금지."""
+def _rules() -> str:
+    lines = [ofmt(x) for x in ORG.get("drafting_rules") or []]
+    return f"[{ORG['org_short']} 내규 작성 기준 — 「{ORG['rules_name']}」]\n" + "\n".join("- " + x for x in lines)
 
 
 def _json_from(text: str):
@@ -663,7 +735,7 @@ def template_enact(b: dict) -> dict:
         basis = f"「{d0.get('law', '')}」 {d0.get('art', '')}".strip() + "에 따라 "
     arts = [
         {"no": "1", "title": "목적",
-         "body": f"이 {kind}{eun} {basis}한국농업기술진흥원(이하 “농진원”이라 한다)의 {purpose}에 필요한 사항을 정함을 목적으로 한다."},
+         "body": f"이 {kind}{eun} {basis}{ORG['org_name']}(이하 “{ORG['org_short']}”{_josa(ORG['org_short'], ('이라', '라'))} 한다)의 {purpose}에 필요한 사항을 정함을 목적으로 한다."},
         {"no": "2", "title": "정의",
          "body": f"이 {kind}에서 사용하는 용어의 뜻은 다음과 같다.\n1. “○○”이란 ○○을 말한다.\n2. “○○”이란 ○○을 말한다."},
         {"no": "3", "title": "적용범위",
@@ -675,10 +747,10 @@ def template_enact(b: dict) -> dict:
         t = head[0].strip()[:20] if len(head) > 1 else re.sub(r"\s.*$", "", line)[:14]
         desc = head[1].strip() if len(head) > 1 else line
         arts.append({"no": str(n), "title": t or "○○",
-                     "body": f"① {desc}\n② 제1항에 따른 ○○에 필요한 사항은 원장이 따로 정한다."})
+                     "body": f"① {desc}\n② 제1항에 따른 ○○에 필요한 사항은 {ORG['head']}{_josa(ORG['head'], ('이', '가'))} 따로 정한다."})
         n += 1
     arts.append({"no": str(n), "title": "세부사항",
-                 "body": f"이 {kind}에서 정한 사항 외에 {purpose}에 필요한 세부사항은 원장이 따로 정한다."})
+                 "body": f"이 {kind}에서 정한 사항 외에 {purpose}에 필요한 세부사항은 {ORG['head']}{_josa(ORG['head'], ('이', '가'))} 따로 정한다."})
     eff = (b.get("effective") or "").strip() or "발령한 날"
     addenda = f"이 {kind}{eun} {eff}부터 시행한다."
     return {"title": title, "articles": arts, "addenda": [addenda],
@@ -693,9 +765,9 @@ def ai_enact(b: dict):
         return template_enact(b), "AI 키가 없어 표준 조문 골격으로 작성했습니다. [✦ AI 설정]에서 키를 넣으면 AI 초안을 만들 수 있습니다."
     mdl = model or _CTX["default_model_for"](provider, key)
     title = (b.get("title") or "").strip()
-    system = f"""당신은 한국농업기술진흥원(농진원) 내규 입안 전문가입니다.
+    system = f"""당신은 {ORG['org_name']}({ORG['org_short']}) {ORG['reg_word']} 입안 전문가입니다.
 주어진 제정 목적·주요 내용·상위법 위임 조항·유사 내규를 바탕으로 새 내규의 조문 체계와 표준 조문 초안을 작성하세요.
-{_RULES}
+{_rules()}
 
 반드시 아래 JSON만 반환(설명·코드블록 금지):
 {{
@@ -740,16 +812,16 @@ def ai_amend(b: dict):
     if not key and provider != "ollama":
         return None, "AI 키가 없습니다. [✦ AI 설정]에서 키를 넣거나, 개정안을 직접 입력하세요."
     mdl = model or _CTX["default_model_for"](provider, key)
-    reg = find_reg(b.get("slug", ""), b.get("reg", ""))
+    reg = resolve_reg(b)
     reg_title = reg["title"] if reg else (b.get("reg") or "")
     toc = ""
     if reg:
         toc = "\n".join(f"{art_label(a['no'])}({a['title'] or '삭제'})" for a in reg["articles"])[:3500]
     targets = b.get("targets") or []
     tgt = "\n\n".join(f"{art_label(t.get('no', ''))}({t.get('title', '')})\n{t.get('body', '')}" for t in targets)[:9000]
-    system = f"""당신은 한국농업기술진흥원(농진원) 내규 개정 전문가입니다.
+    system = f"""당신은 {ORG['org_name']}({ORG['org_short']}) {ORG['reg_word']} 개정 전문가입니다.
 개정 의도에 맞춰 대상 조문의 수정안을 작성하세요. 필요하면 조문 신설·삭제도 제안하세요.
-{_RULES}
+{_rules()}
 
 반드시 아래 JSON만 반환(설명·코드블록 금지):
 {{
@@ -783,7 +855,7 @@ def ai_amend(b: dict):
         if not no:
             continue
         old = None
-        if reg:
+        if reg and reg.get("articles"):
             old = next((a for a in reg["articles"] if a["no"] == no), None)
         ch.append({"type": t, "no": no, "title": str(c.get("title") or (old or {}).get("title", "")).strip(),
                    "body": str(c.get("body") or "").strip(), "why": str(c.get("why") or "").strip(),
@@ -835,7 +907,7 @@ def ra_similar():
 def ra_impact():
     """개정 조문 → 영향 범위. body: {slug, nos:[...], moves:{"5":"6"}, rename:"새 내규명"}"""
     b = request.get_json(silent=True) or {}
-    r = find_reg(b.get("slug", ""), b.get("reg", ""))
+    r = resolve_reg(b)
     if not r:
         return jsonify({"success": False, "error": "내규를 찾을 수 없습니다."}), 404
     nos = [re.sub(r"[^0-9의]", "", str(x)) for x in (b.get("nos") or [])]
@@ -893,7 +965,17 @@ def ra_impact():
     base = re.sub(r"\s*시행세칙$", "", r["title"])
     children = [o["title"] for o in all_regs()
                 if o["slug"] != r["slug"] and _nk(o["title"]).startswith(_nk(base)) and o["title"] != r["title"]]
-    return jsonify({"success": True, "reg": r["title"], "targets": nos, "inner": inner,
+    # (d) 조 번호 이동 시 같은 내규 인용 정정안(수정안에 바로 반영할 수 있는 본문)
+    fixes = []
+    if moves:
+        for a in r["articles"]:
+            if a["deleted"]:
+                continue
+            nb, n = retarget_refs(a["body"], moves)
+            if n:
+                fixes.append({"no": a["no"], "title": a["title"], "old_body": a["body"],
+                              "new_body": nb, "count": n})
+    return jsonify({"success": True, "reg": r["title"], "targets": nos, "inner": inner, "fixes": fixes,
                     "appendix": appx, "outer": outer, "mentions": name_only,
                     "children": children,
                     "summary": {"inner": len(inner), "appendix": len(appx),
@@ -992,7 +1074,7 @@ def ra_lint():
         rows.sort(key=lambda x: (-x["errors"], -x["count"]))
         return jsonify({"success": True, "mode": "all", "regs": rows, "total": tot,
                         "checked": len(all_regs()), "elapsed": round(time.time() - t0, 2)})
-    if b.get("slug") or b.get("reg"):
+    if (b.get("slug") or b.get("reg")) and not b.get("text"):
         r = find_reg(b.get("slug", ""), b.get("reg", ""))
         if not r:
             return jsonify({"success": False, "error": "내규를 찾을 수 없습니다."}), 404
@@ -1158,4 +1240,370 @@ def ra_hwpx():
     from urllib.parse import quote as _q
     fname = re.sub(r'[\\/:*?"<>|]', "_", (b.get("filename") or "내규안"))[:80] + ".hwpx"
     return Response(data, mimetype="application/hwp+zip",
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''" + _q(fname)})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 7. 기관 프로필 조회
+# ══════════════════════════════════════════════════════════════════════════
+def _deep_fmt(o):
+    if isinstance(o, str):
+        return ofmt(o)
+    if isinstance(o, list):
+        return [_deep_fmt(x) for x in o]
+    if isinstance(o, dict):
+        return {k: _deep_fmt(v) for k, v in o.items()}
+    return o
+
+
+@bp.route("/api/regagent/config")
+def ra_config():
+    regs = all_regs()
+    return jsonify({"success": True, "org": _deep_fmt(ORG), "reg_count": len(regs),
+                    "semantic": bool(_CTX.get("vec_ready") and _CTX["vec_ready"]())})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 8. 용어·명칭 일괄 정비 — 모든 내규에서 찾아 바꾸고 조사까지 맞춘다
+# ══════════════════════════════════════════════════════════════════════════
+_PARTICLES = [("으로", "로"), ("은", "는"), ("이", "가"), ("을", "를"), ("과", "와"), ("이나", "나"), ("이라", "라")]
+
+
+def _has_batchim(w: str) -> bool:
+    ch = (w or " ").strip()[-1:] or " "
+    if "가" <= ch <= "힣":
+        return (ord(ch) - 0xAC00) % 28 != 0
+    return bool(re.match(r"[0-9a-zA-Z]", ch)) and ch.lower() in "136780lmnr"
+
+
+def _rjosa(word: str, part: str) -> str:
+    """조사 하나를 새 단어 받침에 맞게."""
+    has = _has_batchim(word)
+    ends_rieul = has and (ord(word.strip()[-1]) - 0xAC00) % 28 == 8 if "가" <= word.strip()[-1:] <= "힣" else False
+    for a, b in _PARTICLES:
+        if part in (a, b):
+            if a == "으로":
+                return "로" if (not has or ends_rieul) else "으로"
+            return a if has else b
+    return part
+
+
+def replace_term(text: str, old: str, new: str, whole: bool = True):
+    """old→new 치환 + 뒤따르는 조사 교정. 반환: (새 본문, [(위치, 원래 표기)])."""
+    if not old:
+        return text, []
+    pat = re.compile((r"(?<![가-힣A-Za-z0-9])" if whole else "") + re.escape(old)
+                     + r"(으로|이나|이라|은|는|이|가|을|를|과|와|로|나|라)?(?=[^가-힣]|$)?")
+    hits, out, last = [], [], 0
+    for m in pat.finditer(text):
+        part = m.group(1) or ""
+        # 조사로 본 글자 뒤에 한글이 이어지면(예: “이사장이며”) 조사가 아니다
+        after = text[m.end():m.end() + 1]
+        if part and after and "가" <= after <= "힣":
+            part_fixed = part
+        else:
+            part_fixed = _rjosa(new, part) if part else ""
+        out.append(text[last:m.start()] + new + part_fixed)
+        last = m.end()
+        hits.append((m.start(), m.group(0)))
+    out.append(text[last:])
+    return "".join(out), hits
+
+
+def _loc_label(art: dict, pos: int) -> str:
+    """본문 위치 → “제5조제2항” 같은 개정문용 위치."""
+    lbl = art_label(art["no"])
+    before = art["body"][:pos]
+    hs = re.findall(r"(?:^|\n)\s*([" + _HANG_CH + "])", before)
+    if hs:
+        lbl += f"제{_HANG_CH.index(hs[-1]) + 1}항"
+        seg = before[before.rfind(hs[-1]):]
+    else:
+        seg = before
+    ho = re.findall(r"(?:^|\n)\s*(\d{1,2})\.\s", seg)
+    if ho:
+        lbl += f"제{ho[-1]}호"
+    return lbl
+
+
+@bp.route("/api/regagent/bulk", methods=["POST"])
+def ra_bulk():
+    """용어·명칭 일괄 정비. body: {old, new, whole:true, slugs:[...](선택)}"""
+    b = request.get_json(silent=True) or {}
+    old, new = (b.get("old") or "").strip(), (b.get("new") or "").strip()
+    if len(old) < 2 or not new or old == new:
+        return jsonify({"success": False, "error": "바꿀 용어(2자 이상)와 새 용어를 입력하세요."}), 400
+    only = set(b.get("slugs") or [])
+    whole = b.get("whole", True) is not False
+    regs_out, total = [], 0
+    for r in all_regs():
+        if only and r["slug"] not in only:
+            continue
+        arts = []
+        for a in r["articles"]:
+            if a["deleted"] or old not in a["body"] and old not in a["title"]:
+                continue
+            nb, hits = replace_term(a["body"], old, new, whole)
+            nt, thits = replace_term(a["title"], old, new, whole)
+            if not hits and not thits:
+                continue
+            locs = []
+            for pos, _ in hits:
+                lb = _loc_label(a, pos)
+                if lb not in locs:
+                    locs.append(lb)
+            if thits:
+                locs.insert(0, f"{art_label(a['no'])} 제목")
+            arts.append({"no": a["no"], "title": a["title"], "new_title": nt, "old_body": a["body"],
+                         "new_body": nb, "count": len(hits) + len(thits), "locs": locs})
+            total += len(hits) + len(thits)
+        if arts:
+            regs_out.append({"slug": r["slug"], "reg": r["title"], "articles": arts,
+                             "count": sum(x["count"] for x in arts)})
+    regs_out.sort(key=lambda x: -x["count"])
+    q_old = f"“{old}”{_josa(old, ('을', '를'))}"
+    q_new = f"“{new}”{'로' if (not _has_batchim(new) or (('가' <= new[-1] <= '힣') and (ord(new[-1]) - 0xAC00) % 28 == 8)) else '으로'}"
+    for g in regs_out:
+        locs = [l for a in g["articles"] for l in a["locs"]]
+        each = "각각 " if len(locs) > 1 else ""
+        g["amend_text"] = f"「{g['reg']}」 일부를 다음과 같이 개정한다.\n{', '.join(locs)} 중 {q_old} {each}{q_new} 한다."
+    return jsonify({"success": True, "old": old, "new": new, "total": total,
+                    "reg_count": len(regs_out), "regs": regs_out})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 9. 심의 사전검토 — 기관 심의기준(review_criteria)별 점검 + AI 검토의견
+# ══════════════════════════════════════════════════════════════════════════
+def review_draft(b: dict) -> dict:
+    title = (b.get("title") or "").strip()
+    p = parse_text(b.get("text") or "", clean=False)
+    arts = p["articles"]
+    addenda = b.get("addenda") if isinstance(b.get("addenda"), str) else p["addenda"]
+    lint = lint_articles(arts, addenda or "", p["appendix"], title)
+    purpose = (b.get("purpose") or "").strip()
+    main = [x for x in (b.get("main") or []) if str(x).strip()]
+    dels = b.get("delegations") or []
+    ans = b.get("ans") or {}
+    mode = b.get("mode") or "enact"
+    F = {}
+
+    def f(cid, status, msg):
+        F.setdefault(cid, []).append({"status": status, "msg": msg})
+
+    # 필요성
+    if len(purpose) < 20:
+        f("need", "warn", "제·개정 이유가 비어 있거나 짧습니다. 필요성·기대효과·시행상 문제점을 적으세요.")
+    else:
+        f("need", "ok", "제·개정 이유가 적혀 있습니다.")
+    if not main:
+        f("need", "warn", "주요 내용이 정리되지 않았습니다.")
+    # 적합성
+    if mode == "enact" and _kind_of(title) in ("시행세칙", "세칙") and not dels:
+        f("fit", "warn", "시행세칙인데 위임 근거(상위 규정 조항)가 없습니다.")
+    if dels:
+        f("fit", "ok", "상위 근거: " + ", ".join(f"「{d.get('law', '')}」 {d.get('art', '')}".strip() for d in dels[:4]))
+    laws = sorted({m.group(1) for a in arts for m in _QUOTED_NAME.finditer(a.get("body", ""))
+                   if re.search(r"법|령$", m.group(1))})
+    if laws:
+        f("fit", "check", "인용 법령의 현행 여부·조문 번호를 확인하세요: " + ", ".join(f"「{x}」" for x in laws[:8]))
+    for i in lint:
+        if i["code"] in ("regname", "stale"):
+            f("fit", "warn", i["msg"])
+    # 통일성·조화성
+    if mode == "enact" and title and _nk(title) in _reg_names():
+        f("unity", "warn", f"같은 이름의 {ORG['reg_word']}이(가) 이미 있습니다: 「{title}」")
+    q = " ".join([title, purpose] + [str(x) for x in main])[:600]
+    if len(q) >= 4:
+        sim = similar_search(q, b.get("slug") or "", 4)
+        top = [g for g in sim["regs"] if g["score"] >= 6][:3]
+        if top:
+            f("unity", "check", "비슷한 내용이 있는 내규와 중복·상충 여부를 확인하세요: "
+              + "; ".join(f"「{g['title']}」 " + ", ".join(f"{art_label(a['no'])}({a['title']})" for a in g["articles"][:2]) for g in top))
+        else:
+            f("unity", "ok", "내용이 크게 겹치는 내규를 찾지 못했습니다.")
+    # 명료성
+    style = [i for i in lint if i["code"] in ("style", "space", "abbr")]
+    if style:
+        f("clear", "check", f"알기 쉬운 표기 제안 {len(style)}건: " + "; ".join(i["fix"] or i["msg"] for i in style[:5]))
+    longs = [a for a in arts for s_ in re.split(r"(?<=[.다])\s", a.get("body", "")) if len(s_) > 180]
+    if longs:
+        f("clear", "check", "한 문장이 180자를 넘는 조문: " + ", ".join(sorted({art_label(a["no"]) for a in longs}, key=lambda x: art_key(re.sub(r"[제조]", "", x)))[:6]) + " — 나누어 쓰는 것을 검토하세요.")
+    if not style and not longs:
+        f("clear", "ok", "표기·문장 길이에서 특이사항이 없습니다.")
+    # 체제·효력
+    st = [i for i in lint if i["code"] in ("dup", "order", "gap", "first", "title", "empty", "hang", "ho", "mok", "ref", "addenda", "appx", "noart")]
+    for i in st[:8]:
+        f("form", "warn" if i["level"] != "info" else "check", i["msg"])
+    if not arts:
+        f("form", "warn", "“제1조(목적)” 형식의 조문을 찾지 못했습니다.")
+    if re.search(r"(발령|공포|결재)한\s*날부터", addenda or ""):
+        f("form", "check", "시행일이 즉시 시행입니다. 시행 공문이 모든 부서에 도달하는 기간을 고려했는지 확인하세요.")
+    if not st and arts:
+        f("form", "ok", "조 번호·항호 순서·인용·부칙 형식에 문제가 없습니다.")
+    # 공개·협의
+    if not ans:
+        f("open", "check", "절차 안내 탭에서 해당 여부(국민 권리·의무 관련, 부서 협의 등)를 답하면 필요한 절차를 확인합니다.")
+    else:
+        if ans.get("public") == "y":
+            f("open", "check", f"국민 권리·의무 관련 — 대국민 사전예고({ORG['notice_days']}일 이상) 대상입니다.")
+        if ans.get("multi") == "y":
+            f("open", "check", "2개 이상 부서 소관 — 사전 합의·협의 결과를 첨부하세요.")
+        if ans.get("impact") == "y":
+            f("open", "check", "국민 생활·기업 영향 — 부패영향평가 요청 대상입니다.")
+        if ans.get("burden") == "y":
+            f("open", "check", "유사 행정규제 — 자체 규제심사서를 함께 제출하세요.")
+        if not F.get("open"):
+            f("open", "ok", "추가 협의·예고 대상이 아닌 것으로 답했습니다.")
+    rows = []
+    for c in ORG.get("review_criteria") or []:
+        items = F.get(c["id"], [])
+        stv = "warn" if any(x["status"] == "warn" for x in items) else \
+              "check" if any(x["status"] == "check" for x in items) or not items else "ok"
+        rows.append({"id": c["id"], "t": ofmt(c["t"]), "ref": ofmt(c.get("ref", "")), "d": ofmt(c.get("d", "")),
+                     "status": stv, "items": items, "ai": ""})
+    return {"rows": rows, "lint_count": len(lint)}
+
+
+@bp.route("/api/regagent/review", methods=["POST"])
+def ra_review():
+    b = request.get_json(silent=True) or {}
+    if not (b.get("text") or "").strip():
+        return jsonify({"success": False, "error": "검토할 조문이 없습니다."}), 400
+    try:
+        res = review_draft(b)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": f"검토 오류: {e}"}), 500
+    notice = ""
+    if b.get("ai"):
+        provider, key, model = _ai_conf(b)
+        if key or provider == "ollama":
+            mdl = model or _CTX["default_model_for"](provider, key)
+            crit = "\n".join(f"- {r['id']}: {r['t']} — {r['d']}" for r in res["rows"])
+            system = f"""당신은 {ORG['org_name']} {ORG['reg_word']}심의위원회 간사입니다. 「{ORG['rules_name']}」의 심의기준으로 {ORG['reg_word']}안을 검토해 의견을 쓰세요.
+심의기준:
+{crit}
+반드시 JSON만 반환: {{"opinions": {{"기준id": "2~3문장 검토의견(보완 필요 사항은 구체적으로)"}}, "delegation": "상위 법령 위임 범위를 넘거나 저촉 우려가 있는 조문(없으면 빈 문자열)", "overall": "종합의견 2문장"}}
+사실을 지어내지 말고, 확인이 필요한 사항은 '확인 필요'로 쓰세요."""
+            user = (f"{ORG['reg_word']}명: {b.get('title', '')}\n구분: {'제정' if b.get('mode') != 'amend' else '개정'}\n"
+                    f"이유: {b.get('purpose', '')}\n상위 근거:\n{_deleg_block(b.get('delegations')) or '(없음)'}\n\n"
+                    f"[{ORG['reg_word']}안]\n{(b.get('text') or '')[:12000]}\n\n[부칙]\n{b.get('addenda') or ''}")
+            text, err = _CTX["ai_generate"](provider, key, mdl, system, user, max_tokens=2500, temperature=0.2, json_mode=True)
+            if err:
+                notice = f"AI 검토의견을 받지 못했습니다: {err}"
+            else:
+                try:
+                    d = _json_from(text)
+                    ops = d.get("opinions") or {}
+                    for r in res["rows"]:
+                        r["ai"] = str(ops.get(r["id"]) or "").strip()
+                    res["delegation"] = str(d.get("delegation") or "").strip()
+                    res["overall"] = str(d.get("overall") or "").strip()
+                    res["model"] = f"{provider}:{mdl}"
+                except Exception:
+                    notice = "AI 검토의견을 해석하지 못했습니다."
+        else:
+            notice = "AI 키가 없어 자동 점검 결과만 보여 줍니다."
+    return jsonify({"success": True, **res, "notice": notice})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 10. Word(.docx) 저장 — 한글이 없는 기관용
+# ══════════════════════════════════════════════════════════════════════════
+def _w_run(t):
+    return f'<w:r><w:t xml:space="preserve">{_xesc(t)}</w:t></w:r>'
+
+
+def _w_para(t, bold=False, center=False, page_break=False):
+    ppr = ""
+    if center or page_break:
+        ppr = "<w:pPr>" + ("<w:pageBreakBefore/>" if page_break else "") + ('<w:jc w:val="center"/>' if center else "") + "</w:pPr>"
+    r = f'<w:r>{"<w:rPr><w:b/></w:rPr>" if bold else ""}<w:t xml:space="preserve">{_xesc(t)}</w:t></w:r>'
+    return f"<w:p>{ppr}{r}</w:p>"
+
+
+def build_docx(blocks: list) -> bytes:
+    body = []
+    pb = False
+    for blk in blocks or []:
+        t = blk.get("t")
+        if t == "break":
+            pb = True
+            continue
+        if t == "table":
+            rows = blk.get("rows") or []
+            ncol = max((sum(int(c.get("cs") or 1) for c in r) for r in rows), default=1)
+            grid = "".join(f'<w:gridCol w:w="{int(9000 / ncol)}"/>' for _ in range(ncol))
+            trs = []
+            for i, r in enumerate(rows):
+                tcs = []
+                for c in r:
+                    cs = int(c.get("cs") or 1)
+                    paras = "".join(_w_para(x, bold=bool(c.get("hd")), center=bool(c.get("hd")))
+                                    for x in str(c.get("t", "")).split("\n"))
+                    tcs.append(f'<w:tc><w:tcPr><w:tcW w:w="{int(9000 / ncol) * cs}" w:type="dxa"/>'
+                               + (f'<w:gridSpan w:val="{cs}"/>' if cs > 1 else "")
+                               + (('<w:shd w:val="clear" w:color="auto" w:fill="EAF2FE"/>') if c.get("hd") else "")
+                               + f'</w:tcPr>{paras}</w:tc>')
+                trs.append("<w:tr>" + ('<w:trPr><w:tblHeader/></w:trPr>' if i == 0 else "") + "".join(tcs) + "</w:tr>")
+            bd = "".join(f'<w:{s} w:val="single" w:sz="4" w:space="0" w:color="444444"/>'
+                         for s in ("top", "left", "bottom", "right", "insideH", "insideV"))
+            if pb:
+                body.append(_w_para("", page_break=True))
+                pb = False
+            body.append(f'<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblBorders>{bd}</w:tblBorders>'
+                        f'<w:tblCellMar><w:left w:w="100" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tblCellMar>'
+                        f'</w:tblPr><w:tblGrid>{grid}</w:tblGrid>{"".join(trs)}</w:tbl>')
+            continue
+        for j, ln in enumerate(str(blk.get("text") or "").split("\n")):
+            body.append(_w_para(ln, bold=(j == 0 and bool(blk.get("titleBold"))), page_break=(pb and j == 0)))
+        pb = False
+    doc = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+           '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'
+           + "".join(body) +
+           '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1300" w:bottom="1440" w:left="1300" w:header="851" w:footer="992" w:gutter="0"/></w:sectPr>'
+           '</w:body></w:document>')
+    styles = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+              '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults>'
+              '<w:rPrDefault><w:rPr><w:rFonts w:ascii="Malgun Gothic" w:hAnsi="Malgun Gothic" w:eastAsia="맑은 고딕"/>'
+              '<w:sz w:val="21"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="60" w:line="300" w:lineRule="auto"/></w:pPr></w:pPrDefault>'
+              '</w:docDefaults></w:styles>')
+    ct = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+          '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+          '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+          '<Default Extension="xml" ContentType="application/xml"/>'
+          '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+          '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+          '</Types>')
+    rels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+            '</Relationships>')
+    drels = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+             '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+             '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+             '</Relationships>')
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", ct)
+        z.writestr("_rels/.rels", rels)
+        z.writestr("word/document.xml", doc)
+        z.writestr("word/styles.xml", styles)
+        z.writestr("word/_rels/document.xml.rels", drels)
+    return out.getvalue()
+
+
+@bp.route("/api/regagent/docx", methods=["POST"])
+def ra_docx():
+    b = request.get_json(silent=True) or {}
+    blocks = b.get("blocks") or []
+    if not blocks:
+        return jsonify({"success": False, "error": "문서 내용이 없습니다."}), 400
+    if len(json.dumps(blocks, ensure_ascii=False)) > 1_500_000:
+        return jsonify({"success": False, "error": "문서가 너무 큽니다."}), 413
+    from urllib.parse import quote as _q
+    fname = re.sub(r'[\\/:*?"<>|]', "_", (b.get("filename") or "내규안"))[:80] + ".docx"
+    return Response(build_docx(blocks),
+                    mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     headers={"Content-Disposition": "attachment; filename*=UTF-8''" + _q(fname)})

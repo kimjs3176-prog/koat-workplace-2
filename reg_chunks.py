@@ -14,8 +14,9 @@ import os
 import re
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-REG_DIR = os.path.join(BASE_DIR, "regulations")
-MANIFEST = os.path.join(BASE_DIR, "regulations_manifest.json")
+# 다른 기관 데이터 폴더를 쓰려면 REG_DIR·REG_MANIFEST 환경변수로 바꾼다
+REG_DIR = os.environ.get("REG_DIR") or os.path.join(BASE_DIR, "regulations")
+MANIFEST = os.environ.get("REG_MANIFEST") or os.path.join(BASE_DIR, "regulations_manifest.json")
 
 # 조문 시작 위치(제N조 / 제N조의M)
 _ART_SPLIT = re.compile(r"(?=제\s*\d+\s*조(?:의\s*\d+)?\s*[(（])")
