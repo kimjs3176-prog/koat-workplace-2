@@ -38,8 +38,9 @@ except ImportError:
     sys.exit("requests 가 필요합니다: pip install requests")
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN_PATH = os.path.join(BASE, "regulations_vectors.bin")
-META_PATH = os.path.join(BASE, "regulations_vectors.json")
+_PREFIX = os.environ.get("REG_VECTORS") or os.path.join(BASE, "regulations_vectors")   # 다른 기관 데이터용
+BIN_PATH = _PREFIX + ".bin"
+META_PATH = _PREFIX + ".json"
 
 DEFAULT_MODEL = os.environ.get("EMBED_MODEL", "gemini-embedding-001")
 # 저장 용량·검색 속도를 위해 차원 축소(MRL). 3072→768 로도 검색 품질 손실이 작다.

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>개정 내규 업로드 · KOAT 내규&국가법령 종합 검색</title>
+<title>내규 원문 등록 · 규정 제·개정 에이전트</title>
 <style>
 :root{
   --bg:#f6f7f9; --sf:#fff; --tx:#1a1d21; --mu:#5b6472; --ht:#8b95a5;
@@ -268,11 +268,11 @@ body.dark .result.ok{border-color:#065f46;}
   <div class="hd">
     <div class="hd-logo">&#x1F4E4;</div>
     <div>
-      <div class="hd-t">개정 내규 업로드</div>
-      <div class="hd-s">개정된 사규(내규)를 올리면 내규 조회 및 전문 화면에 최신본으로 반영됩니다</div>
+      <div class="hd-t" id="hdT">내규 원문 등록</div>
+      <div class="hd-s" id="hdS">제정·개정된 내규를 올리면 에이전트의 유사 규정 검색·영향 분석·일괄 정비·점검에 최신본으로 반영됩니다</div>
     </div>
     <div class="hd-actions">
-      <a class="tbtn" href="/">&#x2190; 검색으로</a>
+      <a class="tbtn" href="/">&#x2190; 에이전트로</a>
       <button class="tbtn" id="darkBtn" onclick="toggleDark()">&#x1F319;</button>
     </div>
   </div>
@@ -460,7 +460,7 @@ body.dark .result.ok{border-color:#065f46;}
     <div class="dialog" id="confirmDialog"></div>
   </div>
 
-  <div class="foot">KOAT 내규&amp;국가법령 종합 검색 서비스 &middot; 개정 내규 업로드</div>
+  <div class="foot" id="foot">규정 제·개정 에이전트 &middot; 내규 원문 등록</div>
 </div>
 
 <script>
@@ -527,6 +527,14 @@ function parseFilename(fname){
   var m=stem.match(/^(.*?)\s*\(([^)]*)\)\s*$/);
   return {title:m?m[1].trim():stem.trim(), revision:m?m[2].trim():''};
 }
+
+/* ── 기관 프로필(이름 표시) ── */
+fetch('/api/regagent/config').then(function(r){return r.json();}).then(function(d){
+  if(!d||!d.org) return; var o=d.org, w=o.reg_word||'내규';
+  $('hdT').textContent=o.org_short+' '+w+' 원문 등록';
+  $('foot').textContent=o.org_name+' · 규정 제·개정 에이전트 · '+w+' 원문 등록';
+  document.title=w+' 원문 등록 · '+o.org_short;
+}).catch(function(){});
 
 /* ── status loading ── */
 async function loadStatus(recheck){
