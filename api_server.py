@@ -6253,6 +6253,31 @@ def expense_hwpx():
         return jsonify({"success": False, "error": f"HWPX 생성 실패: {e}"}), 500
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 규정 제·개정 에이전트(reg_agent.py) — 공통 헬퍼를 넘겨 등록
+# ══════════════════════════════════════════════════════════════════════════
+@app.route("/assets/<path:subpath>")
+def serve_asset_file(subpath):
+    """정적 리소스(로컬 실행용 — Vercel은 vercel.json이 정적 처리)."""
+    from flask import send_from_directory
+    if any(part.startswith(".") for part in subpath.replace("\\", "/").split("/")):
+        return Response("404", status=404)
+    return send_from_directory(os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets"), subpath)
+
+
+import reg_agent as _reg_agent  # noqa: E402
+_reg_agent.register(
+    app,
+    ai_generate=_ai_generate,
+    default_model_for=_default_model_for,
+    semantic_search=semantic_search,
+    user_gemini_key=_user_gemini_key,
+    vec_ready=lambda: _vec_load()["mat"] is not None,
+    hwpx_base_bytes=_hwpx_base_bytes,
+    hwpx_full_border=_hwpx_full_border,
+)
+
+
 # ── 실행 ─────────────────────────────────────────────────────────────────────
 PORT = int(os.environ.get("PORT", 5100))
 

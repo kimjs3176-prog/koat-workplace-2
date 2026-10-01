@@ -2564,6 +2564,7 @@ body.dark .reg-art{border-left-color:rgba(37,110,244,.35);}
   .art-go{display:none;}
 }
 </style>
+<link rel="stylesheet" href="/assets/reg_agent.css">
 </head>
 <body>
 <!-- 자주 찾는 법령 편집 모달 -->
@@ -2969,6 +2970,7 @@ body.dark .reg-art{border-left-color:rgba(37,110,244,.35);}
         <span class="sm-glabel">규정조회</span>
         <button class="sm-item active" id="smInternal" onclick="setMode('internal')" title="사내 규정(내규) 스마트 검색"><span class="sm-ic" data-icon="internal"></span><span>내규똑똑</span></button>
         <button class="sm-item" id="smLaw" onclick="setMode('law')" title="국가법령 조회"><span class="sm-ic" data-icon="law"></span><span>법령 조회</span></button>
+        <button class="sm-item" id="smRegAgent" onclick="openRegAgent()" title="규정 제·개정 에이전트 — 유사 규정·상위법 조사, 조문 초안, 신구조문대비표·이유서·부칙·사전예고문, 영향 분석·점검"><span class="sm-ic" aria-hidden="true">⚖</span><span>제·개정</span></button>
       </div>
       <span class="sm-div" aria-hidden="true"></span>
       <div class="sm-group">
@@ -4336,6 +4338,7 @@ function closeAssist(){
   const mm=document.getElementById('smMemo'); if(mm) mm.classList.remove('active');
   const hm=document.getElementById('smHome'); if(hm) hm.classList.remove('active');
   const sv=document.getElementById('smService'); if(sv) sv.classList.remove('active');
+  const ra=document.getElementById('smRegAgent'); if(ra) ra.classList.remove('active');
 }
 // ══════════════════════════════════════════════════════════════════════════
 // 일정관리 '오늘' 탭(개인 홈 대시보드) — 마감 임박·할 일·일정·최근 검색을 한 화면에.
@@ -8498,6 +8501,11 @@ function _cmdkBuild(){
   act('업무 메모 — 포스트잇 메모','도구',()=>_dashOpenMemo('note'));
   act('지출결의서','도구',openExpense);
   act('용역도우미','도구',openService);
+  act('규정 제·개정 에이전트','도구',()=>openRegAgent());
+  act('규정 제정 초안 작성','도구',()=>openRegAgent('enact'));
+  act('규정 개정 — 신구조문대비표','도구',()=>openRegAgent('amend'));
+  act('상위법 개정 영향 분석','도구',()=>openRegAgent('upper'));
+  act('내규 전체 점검(인용·명칭 오류)','도구',()=>openRegAgent('check'));
   act('자주 쓰는 문구','도구',openSnippets);
   act('즐겨찾기','도구',openFavModal);
   act('북마크·메모한 조문','도구',openBmHub);
@@ -13647,5 +13655,6 @@ async function scoreAndReorderAsync(laws, keywords){
     </div>
   </footer>
 
+<script src="/assets/reg_agent.js" defer></script>
 </body>
 </html>
