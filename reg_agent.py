@@ -618,7 +618,8 @@ def _json_from(text: str):
 
 def _ai_conf(body: dict):
     provider = (body.get("provider") or os.environ.get("SCENARIO_AI_PROVIDER", "gemini")).lower()
-    api_key = (body.get("api_key") or os.environ.get(f"{provider.upper()}_API_KEY", "")).strip()
+    api_key = (body.get("api_key") or os.environ.get(f"{provider.upper()}_API_KEY", "")
+               or (os.environ.get("OPENAI_API_KEY", "") if provider in ("gpt", "openai") else "")).strip()
     model = (body.get("model") or os.environ.get("SCENARIO_AI_MODEL", "")).strip()
     if provider == "openai":
         provider = "gpt"

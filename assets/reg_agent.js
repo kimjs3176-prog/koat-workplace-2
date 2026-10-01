@@ -145,7 +145,7 @@ function openRegAgent(tab){
   _assistMode='regagent';
   if(tab) RA.tab=tab;
   const p=document.getElementById('assistantPanel');
-  p.innerHTML=`<div class="assist-head"><span class="assist-h-ic">⚖</span><span class="assist-h-t">규정 제·개정 에이전트</span>`+
+  p.innerHTML=`<div class="assist-head">`+
     `<span class="assist-h-hint">유사 규정·상위법을 찾아 조문 초안과 신구조문대비표·이유서·부칙·사전예고문까지 한 번에. 「내규관리규칙」 기준.</span>`+_assistCloseBtn()+`</div>`+
     `<div class="ra-tabs" role="tablist">`+RA_TABS.map(([k,l,h])=>`<button class="ra-tab${RA.tab===k?' on':''}" role="tab" aria-selected="${RA.tab===k}" title="${_e(h)}" onclick="raTab('${k}')">${l}</button>`).join('')+
     `<span class="ra-ai-st">${raHasAi()?'<span class="ra-dot ok"></span>AI 연결됨':'<span class="ra-dot"></span>AI 미설정 · 템플릿/수동 작성 <button class="ra-link" onclick="openAiModal()">설정</button>'}</span></div>`+
@@ -154,6 +154,7 @@ function openRegAgent(tab){
 }
 function raTab(k){ RA.tab=k; _raSave(); openRegAgent(); }
 function raRender(){
+  if(!_raCatalog) raCatalog().then(()=>{ if(RA.tab==='enact') raRerender('enact'); });
   const b=document.getElementById('raBody'); if(!b) return;
   const t=RA.tab;
   if(t==='enact') b.innerHTML=raLayout(raEnactView(), raProcSide('enact'));
@@ -186,7 +187,7 @@ function raEnactView(){
     `<label class="ra-f"><span>제정 목적</span>${raTa('enact.purpose',E.purpose,'왜 이 내규가 필요한지 — 예) 업무용 드론의 안전한 운영과 사고 예방',2)}</label>`+
     `<label class="ra-f"><span>주요 내용 <em>한 줄에 하나씩 — “제목: 내용” 형식이면 조 제목으로 씁니다</em></span>${raTa('enact.contents',E.contents,'운영책임자: 부서별 드론 운영책임자를 지정\n비행승인: 비행 3일 전까지 운영책임자 승인\n보험: 배상책임보험 가입 의무',4)}</label>`;
   const s2=raDelegView();
-  const s3=`<div class="ra-row"><button class="svc-btn" onclick="raFindSimilar()">🔎 유사 규정 찾기</button><span class="ra-hint">목적·주요 내용으로 기관 내규 ${_raCatalog?_raCatalog.length:'123'}건에서 비슷한 조문을 찾습니다. 체크한 조문은 초안 작성 때 참고합니다.</span></div><div id="raSim">${raSimView()}</div>`;
+  const s3=`<div class="ra-row"><button class="svc-btn" onclick="raFindSimilar()">🔎 유사 규정 찾기</button><span class="ra-hint">목적·주요 내용으로 기관 내규${_raCatalog?' '+_raCatalog.length+'건':''}에서 비슷한 조문을 찾습니다. 체크한 조문은 초안 작성 때 참고합니다.</span></div><div id="raSim">${raSimView()}</div>`;
   const s4=`<div class="ra-row"><button class="svc-btn yes" onclick="raEnactDraft()">✦ 조문 초안 작성</button>`+
     `<span class="ra-hint">${raHasAi()?'AI가 위 내용·위임 조항·참고 조문으로 조문 체계와 표준 조문을 씁니다.':'AI 키가 없으면 표준 조문 골격(목적·정의·적용범위·본칙·세부사항·부칙)을 만들어 드립니다.'}</span></div><div id="raDraft">${raEnactDraftView()}</div>`;
   return raSec(1,'기본 정보','',s1)+raSec(2,'상위법 위임 조항','법령을 불러와 근거 조문을 고르세요(선택)',s2)+raSec(3,'유사 규정 참고','',s3)+raSec(4,'조문 초안','직접 고쳐 쓸 수 있습니다',s4,'raSecDraft')+
