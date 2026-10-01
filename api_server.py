@@ -1207,6 +1207,9 @@ def serve_asset_file(subpath):
     return send_from_directory(os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets"), subpath)
 
 
+import reg_upload as _reg_upload  # noqa: E402
+_reg_upload.register(app)            # 내규 원문 등록(/upload) + 저장소 자동 커밋
+
 import reg_agent as _reg_agent  # noqa: E402
 _reg_agent.register(
     app,

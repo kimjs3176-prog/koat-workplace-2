@@ -79,7 +79,7 @@
 ## 데이터 출처
 | 데이터 | 제공처 |
 |---|---|
-| 기관 내규 원문 | 저장소 `regulations/` (KOAT 126건) · `scripts/import_regulations.py`로 등록·갱신 |
+| 기관 내규 원문 | 저장소 `regulations/` (KOAT 126건) · 상단 **📤 내규 등록**(`/upload`) 또는 `scripts/import_regulations.py`로 등록·갱신 |
 | 상위 법령 조문 | 법제처 국가법령정보센터 Open API |
 | 작성 기준·절차·심의기준 | 기관 프로필 `org_config.json` (KOAT: 「내규관리규칙」 제5조·제6조·제8조·제14조~제28조) |
 
@@ -89,7 +89,7 @@
 
 ### 기술 구성
 - **프론트엔드**: `index.html`(틀·AI 설정) + `assets/reg_agent.js`·`assets/reg_agent.css`(에이전트 화면). 빌드 과정 없음.
-- **백엔드**: Flask `api_server.py`(법령 조문 조회·AI 호출·의미 검색) + `reg_agent.py`(`/api/regagent/*`) + `reg_import.py`(원문 변환).
+- **백엔드**: Flask `api_server.py`(법령 조문 조회·AI 호출·의미 검색) + `reg_agent.py`(`/api/regagent/*`) + `reg_upload.py`(내규 원문 등록·자동 커밋) + `reg_import.py`(원문 변환, 등록 화면·스크립트 공용).
 - **배포**: Vercel(`api/index.py`가 Python 서버리스 진입점).
 
 ### API
@@ -106,6 +106,7 @@
 | `POST /api/regagent/review` | 심의 사전검토(기준별 점검 + AI 검토의견) |
 | `POST /api/regagent/parse` | 붙여넣은 원문 → 조문 구조 |
 | `GET /api/regagent/config` | 기관 프로필 |
+| `/upload`, `/api/regs/upload`·`/status`·`/delete` | 내규 원문 등록·되돌리기(토큰 보호, 저장소 자동 커밋) |
 | `POST /api/regagent/hwpx` · `/docx` | 문서 세트 한글(.hwpx)·Word(.docx) 생성 |
 | `GET /api/law/articles?name=` | 법령 조문 전체(법제처) |
 
@@ -125,11 +126,19 @@ python run_local.py          # http://localhost:5100 (PORT 환경변수로 변�
 | `GEMINI_MODEL`, `GEMINI_MODEL_PREF` | Gemini 모델 고정·선호 버전 |
 | `SEMANTIC_MIN_SCORE` | 의미 검색 최소 유사도 |
 | `OLLAMA_BASE_URL`, `OLLAMA_ALLOWED_HOSTS` | 로컬 LLM 연동 |
+| `REG_UPLOAD_TOKEN`, `REG_UPLOAD_MAX_MB` | 내규 원문 등록 암호·최대 크기 |
+| `GITHUB_TOKEN`, `GITHUB_REPO`, `GITHUB_BRANCH` | 등록분 저장소 자동 커밋(읽기전용 배포용) |
 | `ORG_CONFIG` | 기관 프로필 파일 경로(기본 `org_config.json`) |
 | `REG_DIR`, `REG_MANIFEST`, `REG_VECTORS` | 내규 원문 폴더·목록·의미 검색 색인 위치(다른 기관 데이터) |
 | `ALLOWED_ORIGINS` | CORS 허용 도메인 |
 
 ### 내규 원문 등록·갱신
+**① 웹에서 — 📤 내규 등록(`/upload`)**: 실무 담당자가 제정·개정된 내규 파일(HWPX·DOCX·TXT·HTML·MD, PDF·HWP는 원본 보관)을 올리면 바로 에이전트에 반영됩니다.
+- 쓰기 가능한 서버(로컬·VM)는 `regulations/`에 바로 저장하고, 이전본은 `regulations/.backup`에 보관해 **되돌리기**를 할 수 있습니다.
+- Vercel 같은 읽기전용 배포는 `GITHUB_TOKEN`·`GITHUB_REPO`를 설정하면 **저장소에 자동 커밋 → 자동 재배포**됩니다.
+- `REG_UPLOAD_TOKEN`으로 보호합니다. 자동 커밋을 켰는데 토큰이 없으면 업로드를 거부합니다.
+
+**② 한꺼번에 — 일괄 등록 스크립트**(최초 구축·대량 갱신):
 ```bash
 python scripts/import_regulations.py <내규 파일 폴더>           # 추가·갱신
 python scripts/import_regulations.py <폴더> --reset            # 기존 데이터를 지우고 새로 구성
@@ -148,7 +157,7 @@ python scripts/import_regulations.py <폴더> --dry-run          # 변환만 시
    - `review_criteria`: 심의 사전검토 기준(id·제목·근거 조항·설명)
    - `procedure.questions`·`procedure.steps`: 절차 질문과 단계. 단계의 `when`(모두 일치)·`unless`(하나라도 일치하면 제외)로 조건을 줍니다.
    - `stale_terms`·`stale_words`: 점검 때 찾을 옛 기관명·직위명
-2. **내규 원문**: `python scripts/import_regulations.py <폴더> --reset`
+2. **내규 원문**: `python scripts/import_regulations.py <폴더> --reset`으로 처음 한 번 넣고, 이후 개정분은 📤 내규 등록에서 올립니다(자동 커밋을 쓰려면 `GITHUB_REPO`를 그 기관 저장소로).
 3. **(선택) 색인**: `python scripts/build_embeddings.py`
 4. 같은 코드로 여러 기관을 운영하려면 저장소를 고치지 않고 환경변수 `ORG_CONFIG`·`REG_DIR`·`REG_MANIFEST`·`REG_VECTORS`로 기관별 파일을 지정하면 됩니다.
 
@@ -161,6 +170,8 @@ python scripts/import_regulations.py <폴더> --dry-run          # 변환만 시
 ├── reg_agent.py               # 에이전트 API(/api/regagent/*)
 ├── org_config.json            # 기관 프로필(명칭·절차·심의기준) — 다른 기관은 이 파일을 고침
 ├── reg_import.py              # 내규 원문(HWPX·DOCX·TXT…) → 에이전트 데이터 변환
+├── reg_upload.py              # 내규 원문 등록(/upload)·되돌리기·저장소 자동 커밋
+├── upload.html                # 내규 원문 등록 화면
 ├── api_server.py              # Flask 서버(법령 조회·AI·의미 검색)
 ├── api/index.py               # Vercel 서버리스 진입점
 ├── reg_chunks.py              # 내규 원문 → 조문 단위 분할
