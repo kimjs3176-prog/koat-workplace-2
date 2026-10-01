@@ -14,6 +14,8 @@ const RA_IC={
   upper:'<path d="M3 21h18M5 21v-9M9.5 21v-9M14.5 21v-9M19 21v-9M2 10l10-6 10 6z"/>',
   check:'<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
   proc:'<path d="M3 6l1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/><path d="M11 6h10M11 12h10M11 18h10"/>',
+  agent:'<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8zM5 3l.6 1.4L7 5l-1.4.6L5 7l-.6-1.4L3 5l1.4-.6z"/>',
+  health:'<path d="M3 12h4l2-5 4 10 2-5h6"/>',
   spark:'<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/>',
   search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   doc:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
@@ -24,6 +26,8 @@ const RA_IC={
 };
 function raIc(k,cls){ return `<svg class="ic${cls?' '+cls:''}" viewBox="0 0 24 24" aria-hidden="true">${RA_IC[k]||''}</svg>`; }
 const RA_TABS=[
+  ['agent','에이전트','한 문장으로 지시하면 끝까지 수행'],
+  ['health','건강검진','기관 내규 진단·정비 우선순위'],
   ['enact','제정','새 내규 초안 · 심의 사전검토 · 문서 세트'],
   ['amend','개정','수정안 · 신구조문대비표 · 인용 정정'],
   ['bulk','일괄 정비','바뀐 용어·명칭을 모든 내규에 반영'],
@@ -32,6 +36,8 @@ const RA_TABS=[
   ['proc','절차 안내','기관 제·개정 절차와 할 일'],
 ];
 const RA_PAGE={
+  agent:['에이전트에게 맡기기','하고 싶은 일을 한 문장으로 적으면, 에이전트가 대상 내규와 조문을 찾아 초안부터 영향 분석·점검·심의 사전검토·문서 세트까지 이어서 수행합니다.'],
+  health:['규정 건강검진','기관 내규 전체를 진단해 건강 점수와 등급을 매기고, 먼저 정비해야 할 내규를 이유와 함께 알려 줍니다.'],
   enact:['새 내규 제정','목적과 주요 내용을 정리하면 유사 규정·상위법을 참고해 조문 초안을 쓰고, 심의 사전검토와 제정 문서 세트까지 만듭니다.'],
   amend:['내규 개정','고칠 조문과 개정 의도를 정하면 수정안과 신구조문대비표를 만들고, 이 조문을 인용하는 곳까지 찾아 정정합니다.'],
   bulk:['용어·명칭 일괄 정비','직제 개편이나 명칭 변경 때 모든 내규에서 해당 용어를 찾아 조사까지 맞춰 바꾸고, 개정문·부칙을 만듭니다.'],
@@ -49,7 +55,9 @@ async function raLoadOrg(){
 }
 function raRules(){ return (RA_ORG&&RA_ORG.rules_name)||'내규관리규칙'; }
 function _raBlank(){
-  return {tab:'enact',
+  return {tab:'agent',
+    agent:{req:'',steps:[],plan:null,done:null,running:false},
+    health:{law:{},f:{q:'',g:''}},
     enact:{review:null,title:'',category:'규칙',dept:'',effective:'',purpose:'',contents:'',dels:[],sim:null,refs:{},draft:null,lint:null,docTab:'law',lawQ:'',lawArts:null,lawName:''},
     bulk:{old:'',neu:'',whole:true,res:null,sel:{},reason:''},
     amend:{src:'reg',pasteText:'',pasted:false,moves:'',review:null,slug:'',title:'',sel:{},intent:'',effective:'',refText:'',changes:[],purpose:'',main:[],addenda:'',notes:[],impact:null,lint:null,docTab:'cmp',filter:'',abbr:true},
@@ -61,7 +69,8 @@ function _raLoad(){
   try{ const o=JSON.parse(localStorage.getItem(RA_KEY)||'null'); if(o&&o.enact) return Object.assign(_raBlank(),o); }catch(e){}
   return _raBlank();
 }
-let RA=_raLoad(), _raArts=null, _raCatalog=null, _raSaveT=null, _raBusy={};
+let RA=_raLoad(); RA.agent=Object.assign({req:'',steps:[],plan:null,done:null},RA.agent||{},{running:false}); (RA.agent.steps||[]).forEach(s=>{ if(s.st==='run') s.st='err'; }); RA.health=Object.assign({law:{},f:{q:'',g:''}},RA.health||{});
+let _raArts=null, _raCatalog=null, _raSaveT=null, _raBusy={};
 function _raSave(){ clearTimeout(_raSaveT); _raSaveT=setTimeout(()=>{ try{ localStorage.setItem(RA_KEY, JSON.stringify(RA)); }catch(e){ if(typeof _toast==='function') _toast('작업 내용을 저장하지 못했습니다(브라우저 저장 공간 부족).'); } },300); }
 function raSet(path, val){ const ks=path.split('.'); let o=RA; for(let i=0;i<ks.length-1;i++) o=o[ks[i]]; o[ks[ks.length-1]]=val; _raSave(); }
 const _e=s=>escHtml(String(s==null?'':s));
@@ -208,6 +217,8 @@ function raRender(){
   if(t==='enact') b.innerHTML=raLayout(raEnactView(), raProcSide('enact'));
   else if(t==='amend'){ b.innerHTML=raLayout(raAmendView(), raProcSide('amend')); if(RA.amend.slug && !_raArts && !_raBusy.arts) raLoadArts(RA.amend.slug, true); }
   else if(t==='bulk') b.innerHTML=raBulkView();
+  else if(t==='agent') b.innerHTML=raAgentView();
+  else if(t==='health') b.innerHTML=raHealthView();
   else if(t==='upper') b.innerHTML=raUpperView();
   else if(t==='check') b.innerHTML=raCheckView();
   else b.innerHTML=raProcView();
@@ -711,6 +722,239 @@ function raExport(mode, fmt){
   const B=raDocsBuild(mode), names=Object.fromEntries(RA_DOCS[mode]);
   raSaveFile(fmt, `${B.c.title}_${B.c.word}안`, raDocBlocks(B,picks), picks.map(k=>names[k]).join('·'));
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// ✦ 에이전트 모드 — 한 문장 지시 → 계획 → 단계별 자동 수행(진행 과정을 그대로 보여 줌)
+// 서버는 계획만 세우고(/api/regagent/plan), 각 단계는 기존 API를 차례로 호출한다.
+// ══════════════════════════════════════════════════════════════════════════
+const RA_AG_EX=[
+  ['개정','여비규정 제15조의 일비를 3만원으로 올려줘'],
+  ['개정','출장 숙박비 상한을 실비 기준으로 바꾸고 싶어'],
+  ['제정','업무용 드론 운영지침을 새로 만들어줘'],
+  ['일괄 정비','기획운영본부를 경영기획본부로 모든 내규에서 바꿔줘'],
+  ['상위법','「공공기관의 운영에 관한 법률」 제31조가 개정됐어'],
+];
+const RA_MODE_L={amend:'개정',enact:'제정',bulk:'일괄 정비',upper:'상위법 영향'};
+function raAgentView(){
+  const G=RA.agent;
+  const ex=RA_AG_EX.map(([k,t])=>`<button class="ra-ag-ex" onclick="raAgentEx('${_a(t)}')"><span>${_e(k)}</span>${_e(t)}</button>`).join('');
+  return `<div class="ra-wide">`+
+    `<section class="ra-ag-hero"><label class="ra-ag-label" for="raAgIn">무엇을 하고 싶으세요?</label>`+
+    `<div class="ra-ag-box"><textarea id="raAgIn" class="ra-ag-in" rows="2" placeholder="예) 여비규정 제15조의 일비를 3만원으로 올려줘" oninput="raSet('agent.req',this.value)" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();raAgentRun();}">${_e(G.req)}</textarea>`+
+    `<button class="svc-btn yes ra-ag-go" onclick="raAgentRun()" ${G.running?'disabled':''}>${raIc('spark')}${G.running?'진행 중…':'에이전트 실행'}</button></div>`+
+    `<div class="ra-ag-exs">${ex}</div>`+
+    `<p class="ra-hint">에이전트가 요청을 <b>제정·개정·일괄 정비·상위법 영향</b> 중 하나로 판단하고, 대상 ${_e(RA_ORG.reg_word)}와 조문을 찾아 초안 → 인용 영향 → 점검 → 심의 사전검토 → 절차 판단 → 문서 세트까지 이어서 수행합니다. ${raHasAi()?'AI가 계획과 초안을 씁니다.':'AI 키가 없으면 규칙 기반으로 계획하고, 조문 문장은 결과 화면에서 직접 고칩니다.'}</p></section>`+
+    `<div id="raAgOut">${raAgentOut()}</div></div>`;
+}
+function raAgentEx(t){ RA.agent.req=t; _raSave(); const el=document.getElementById('raAgIn'); if(el){ el.value=t; el.focus(); } }
+const RA_AG_ST={run:['진행 중','run'],ok:['완료','ok'],warn:['확인 필요','warn'],err:['중단','err'],skip:['건너뜀','skip']};
+function raAgentOut(){
+  const G=RA.agent; if(!G.steps.length) return '';
+  const P=G.plan;
+  const head=P?`<div class="ra-ag-plan"><span class="ra-pill ok">${raIc(P.mode==='amend'?'amend':P.mode==='enact'?'enact':P.mode==='bulk'?'bulk':'upper')}${_e(RA_MODE_L[P.mode]||P.mode)}</span>`+
+    (P.reg?`<span class="ra-pill">「${_e(P.reg.title)}」${(P.articles||[]).length?' '+P.articles.map(a=>raLbl(a.no)).join('·'):''}</span>`:'')+
+    (P.mode==='bulk'?`<span class="ra-pill">“${_e(P.old)}” → “${_e(P.new)}”</span>`:'')+(P.mode==='upper'?`<span class="ra-pill">「${_e(P.law)}」 ${_e((P.arts||[]).join(', '))}</span>`:'')+
+    (P.mode==='enact'&&P.title?`<span class="ra-pill">「${_e(P.title)}」</span>`:'')+`<span class="ra-pill subtle">${P.ai?'AI 계획':'규칙 기반 계획'}</span></div>`:'';
+  const steps=`<ol class="ra-ag-steps">`+G.steps.map((s,i)=>`<li class="st-${RA_AG_ST[s.st][1]}"><span class="ra-ag-dot">${s.st==='run'?'<span class="spinner"></span>':s.st==='ok'?'✓':s.st==='err'?'!':s.st==='warn'?'!':'–'}</span>`+
+    `<div class="ra-ag-b"><div class="ra-ag-t"><b>${i+1}. ${_e(s.t)}</b><span class="ra-ag-s">${RA_AG_ST[s.st][0]}</span></div>${s.d?`<div class="ra-ag-d">${s.d}</div>`:''}</div></li>`).join('')+`</ol>`;
+  const done=G.done?`<div class="ra-ag-done"><div><b>${_e(G.done.title)}</b><div class="ra-hint">${_e(G.done.sub)}</div></div><div class="ra-row" style="margin:0">`+
+    G.done.acts.map(([l,f,yes])=>`<button class="svc-btn${yes?' yes':''}" onclick="${f}">${l}</button>`).join('')+`</div></div>`:'';
+  return raSec('✦','에이전트 작업 내역',_e(G.req),head+steps+done,'raAgSec');
+}
+function raAgentDraw(){ const o=document.getElementById('raAgOut'); if(o) o.innerHTML=raAgentOut(); }
+function raAgProc(category){
+  const a=RA.proc.ans=RA.proc.ans||{};
+  if(!a.level) a.level=(category==='규정'||category==='정관')?'reg':(category==='예규'||category==='매뉴얼')?'ye':'rule';
+  const st=raProcSteps();
+  return `${_e(RA_ORG.reg_word)} 단계 <b>${a.level==='reg'?'규정(이사회 의결)':a.level==='ye'?'예규':'규칙·시행세칙(내규심의)'}</b>로 보고 ${st.length}단계 절차를 구성: `+st.map(s=>_e(s.t)).join(' → ');
+}
+async function raAgentRun(){
+  const G=RA.agent; const el=document.getElementById('raAgIn'); if(el) G.req=el.value.trim();
+  if(!G.req||G.req.length<4){ _toast('무엇을 하고 싶은지 한 문장으로 적어 주세요.'); return; }
+  if(G.running) return;
+  Object.assign(G,{steps:[],plan:null,done:null,running:true}); _raSave(); raRerender('agent');
+  const step=t=>{ const s={t,st:'run',d:''}; G.steps.push(s); raAgentDraw(); return s; };
+  const fin=(s,d,st)=>{ s.st=st||'ok'; s.d=d||''; raAgentDraw(); };
+  const stop=(s,msg)=>{ fin(s,_e(msg),'err'); throw 'stop'; };
+  try{
+    let s=step('요청 분석·작업 계획');
+    const d=await raPost('/api/regagent/plan',{request:G.req,...raAi()});
+    if(!d.success) stop(s,d.error||'계획을 세우지 못했습니다.');
+    const P=G.plan=d.plan;
+    fin(s,(P.reasoning||[]).map(_e).join('<br>'));
+    if(P.mode==='amend') await raAgAmend(P,step,fin,stop);
+    else if(P.mode==='enact') await raAgEnact(P,step,fin,stop);
+    else if(P.mode==='bulk') await raAgBulk(P,step,fin,stop);
+    else await raAgUpper(P,step,fin,stop);
+  }catch(e){ if(e!=='stop'){ console.error(e); const last=G.steps[G.steps.length-1]; if(last&&last.st==='run') fin(last,'처리 중 오류가 났습니다.','err'); } }
+  G.running=false; _raSave(); raRerender('agent');
+  setTimeout(()=>{ const x=document.getElementById('raAgSec'); if(x) x.scrollIntoView({behavior:'smooth',block:'start'}); },60);
+}
+async function raAgCheck(mode, step, fin){
+  let s=step('조문 점검');
+  let body;
+  if(mode==='enact'){ const D=RA.enact.draft; body={text:D.text,addenda:D.addenda,title:RA.enact.title}; }
+  else { const t=raAmendFullText(); body={text:t.text,addenda:t.addenda,title:RA.amend.title}; }
+  const li=await raPost('/api/regagent/lint',body);
+  if(li.success){
+    let iss=li.issues; if(mode==='amend'){ const nos=new Set(RA.amend.changes.map(c=>c.no)); iss=iss.filter(i=>!i.no||nos.has(i.no)); }
+    RA[mode].lint=li.issues;
+    const c=l=>iss.filter(i=>i.level===l).length;
+    fin(s,`오류 ${c('error')} · 주의 ${c('warn')} · 표기 제안 ${c('info')}`+(iss.length?'<br>'+iss.slice(0,3).map(i=>_e(i.msg)).join('<br>'):''), c('error')?'warn':'ok');
+  } else fin(s,_e(li.error||'점검 실패'),'warn');
+  s=step('심의 사전검토');
+  const rv=await raPost('/api/regagent/review',{...raReviewPayload(mode),ans:RA.proc.ans||{},ai:raHasAi(),...raAi()});
+  if(rv.success){ RA[mode].review=rv; const n=k=>rv.rows.filter(r=>r.status===k).length;
+    fin(s,`적합 ${n('ok')} · 확인 필요 ${n('check')} · 보완 필요 ${n('warn')}`+(rv.overall?'<br>'+_e(rv.overall):''), n('warn')?'warn':'ok'); }
+  else fin(s,_e(rv.error||'검토 실패'),'warn');
+}
+async function raAgAmend(P, step, fin, stop){
+  const A=RA.amend;
+  let s=step(`「${P.reg.title}」 조문 불러오기`);
+  const d=await raGet('/api/regagent/articles?slug='+encodeURIComponent(P.reg.slug));
+  if(!d.success) stop(s,d.error||'불러오기 실패');
+  _raArts=d;
+  Object.assign(A,{src:'reg',pasted:false,slug:d.slug,title:d.title,sel:{},changes:[],impact:null,lint:null,review:null,purpose:'',main:[],addenda:'',notes:[],intent:P.intent||RA.agent.req,refText:'',model:''});
+  const tg=(P.articles||[]).map(a=>raOld(a.no)).filter(Boolean);
+  tg.forEach(a=>A.sel[a.no]=true);
+  fin(s,`${d.articles.length}개 조 중 ${tg.length?tg.map(a=>`${raLbl(a.no)}(${_e(a.title)})`).join(', '):'대상 조문 없음 — AI가 목차를 보고 고릅니다'}`);
+  s=step('수정안 작성');
+  let ok=false;
+  if(raHasAi()){
+    const r=await raPost('/api/regagent/draft',{mode:'amend',slug:A.slug,reg:A.title,intent:A.intent,targets:tg.map(a=>({no:a.no,title:a.title,body:a.body})),delegations:[],...raAi()});
+    if(r.success){ const x=r.draft; A.changes=x.changes.map(c=>({type:c.type,no:c.no,title:c.title,body:c.body,why:c.why}));
+      A.purpose=(x.reason||{}).purpose||''; A.main=(x.reason||{}).main||[]; A.addenda=(x.addenda||[]).join('\n'); A.notes=x.notes||[]; A.model=x.model||''; ok=true;
+      fin(s,`${A.changes.length}개 조문 수정안: `+A.changes.map(c=>`${raLbl(c.no)} ${({modify:'개정',insert:'신설',delete:'삭제'})[c.type]}`).join(', ')+(A.purpose?'<br>'+_e(A.purpose):'')); }
+    else fin(s,_e(r.error||'AI 오류')+' — 대상 조문을 수정안 칸에 담았습니다.','warn');
+  }
+  if(!ok){
+    A.changes=tg.map(a=>({type:'modify',no:a.no,title:a.title,body:a.body,why:'에이전트가 고른 대상 조문 — 내용을 고쳐 쓰세요'}));
+    A.purpose=`${A.intent.replace(/[.。]?$/,'')}하려는 것임.`; A.main=tg.map(a=>`${a.title} 정비(안 ${raLbl(a.no)})`);
+    if(!raHasAi()) fin(s,'AI 키가 없어 대상 조문을 수정안 칸에 담았습니다. 결과 화면에서 문장을 고쳐 쓰면 대비표·문서가 바로 바뀝니다.','warn');
+  }
+  s=step('인용 영향 분석');
+  const nos=A.changes.filter(c=>c.type!=='insert').map(c=>c.no);
+  const im=await raPost('/api/regagent/impact',{slug:A.slug,nos,moves:{}});
+  if(im.success){ A.impact=im; const m=im.summary;
+    fin(s,`같은 ${_e(RA_ORG.reg_word)} 안 인용 ${m.inner}건 · 다른 ${_e(RA_ORG.reg_word)}의 조문 인용 ${m.outer}건 · ${_e(RA_ORG.reg_word)}명 인용 ${m.mention_regs}개`+
+      (im.inner.length?'<br>'+im.inner.slice(0,3).map(h=>`${raLbl(h.no)}에서 ${_e(h.text)} 인용`).join(', '):''), (m.inner||m.outer)?'warn':'ok'); }
+  else fin(s,_e(im.error||'분석 실패'),'warn');
+  await raAgCheck('amend',step,fin);
+  s=step('절차 판단'); fin(s,raAgProc(P.reg.category));
+  s=step('문서 세트 준비'); fin(s,'개정문 · 개정 이유서 · 신구조문대비표 · 대국민 사전예고문 · 직원 의견수렴 공고 · 사전검토 의견서');
+  RA.agent.done={title:`「${A.title}」 개정안이 준비됐습니다`,sub:'결과 화면에서 문장을 다듬고 한글·Word로 저장하세요.',
+    acts:[['개정 결과 열기',"raTab('amend')",1],['문서 세트로 바로 가기',"raTab('amend');setTimeout(()=>raGoDoc('amend','cmp'),80)"]]};
+}
+async function raAgEnact(P, step, fin, stop){
+  const E=RA.enact;
+  Object.assign(E,{title:P.title||'',purpose:P.purpose||RA.agent.req,contents:P.contents||'',dels:[],sim:null,refs:{},draft:null,lint:null,review:null});
+  let s=step('유사 규정 조사');
+  const sm=await raPost('/api/regagent/similar',{query:[E.title,E.purpose,E.contents].join(' ').slice(0,600),limit:6});
+  if(sm.success&&sm.regs.length){ E.sim={regs:sm.regs,semantic:sm.semantic,tokens:sm.tokens};
+    sm.regs.slice(0,2).forEach(g=>g.articles.slice(0,2).forEach(a=>{ E.refs[g.slug+'|'+a.no]={reg:g.title,no:a.no,title:a.title,body:a.body}; }));
+    fin(s,'참고 조문: '+Object.values(E.refs).map(r=>`「${_e(r.reg)}」 ${raLbl(r.no)}(${_e(r.title)})`).join(', ')); }
+  else fin(s,'비슷한 조문을 찾지 못했습니다.','skip');
+  s=step(raHasAi()?'조문 체계·초안 작성':'표준 조문 골격 작성');
+  const d=await raPost('/api/regagent/draft',{mode:'enact',title:E.title,category:E.category,purpose:E.purpose,contents:E.contents,delegations:[],refs:Object.values(E.refs),...raAi()});
+  if(!d.success) stop(s,d.error||'초안 작성 실패');
+  const r=d.draft; if(r.title&&!E.title) E.title=r.title;
+  E.draft={text:raDraftText(r.articles),addenda:(r.addenda||[]).join('\n'),purpose:(r.reason||{}).purpose||'',main:((r.reason||{}).main||[]).join('\n'),notes:r.notes||[],model:r.model||'',template:!!r.template,notice:d.notice||''};
+  fin(s,`「${_e(E.title||'새 내규')}」 ${r.articles.length}개 조: `+r.articles.slice(0,8).map(a=>_e(a.title)).join(' · ')+(r.template?'<br>AI 키가 없어 표준 골격으로 작성했습니다.':''), r.template?'warn':'ok');
+  await raAgCheck('enact',step,fin);
+  s=step('절차 판단'); fin(s,raAgProc(E.category==='규정'?'규정':E.category));
+  s=step('문서 세트 준비'); fin(s,'내규안 · 제정 이유서 · 신구조문대비표 · 대국민 사전예고문 · 직원 의견수렴 공고 · 사전검토 의견서');
+  RA.agent.done={title:`「${E.title||'새 내규'}」 제정안이 준비됐습니다`,sub:'결과 화면에서 조문을 다듬고 문서 세트를 저장하세요.',
+    acts:[['제정 결과 열기',"raTab('enact')",1],['문서 세트로 바로 가기',"raTab('enact');setTimeout(()=>raGoDoc('enact','law'),80)"]]};
+}
+async function raAgBulk(P, step, fin, stop){
+  const U=RA.bulk; Object.assign(U,{old:P.old,neu:P.new,whole:true,res:null,sel:{},reason:''});
+  let s=step(`모든 ${RA_ORG.reg_word}에서 “${P.old}” 찾기`);
+  const d=await raPost('/api/regagent/bulk',{old:P.old,new:P.new,whole:true});
+  if(!d.success) stop(s,d.error||'검색 실패');
+  U.res=d; d.regs.forEach(g=>U.sel[g.slug]=true);
+  if(!d.regs.length){ fin(s,`“${_e(P.old)}”을(를) 쓰는 ${_e(RA_ORG.reg_word)}가 없습니다.`,'skip'); RA.agent.done={title:'정비할 곳이 없습니다',sub:'다른 표현으로 다시 시도해 보세요.',acts:[]}; return; }
+  fin(s,`${d.reg_count}개 ${_e(RA_ORG.reg_word)} · ${d.total}곳: `+d.regs.slice(0,5).map(g=>`「${_e(g.reg)}」 ${g.count}`).join(', ')+(d.regs.length>5?' 외':''));
+  s=step('조사 교정·개정문 작성'); fin(s,_e(d.regs[0].amend_text).replace(/\n/g,'<br>')+(d.regs.length>1?`<br>… 외 ${d.regs.length-1}개 ${_e(RA_ORG.reg_word)}`:''));
+  s=step('문서 세트 준비'); fin(s,'내규별 개정문 · “다른 내규의 개정” 부칙 · 통합 신구조문대비표 · 정비 이유서');
+  RA.agent.done={title:`“${P.old}” → “${P.new}” 일괄 정비안이 준비됐습니다`,sub:`${d.reg_count}개 ${RA_ORG.reg_word}, ${d.total}곳`,acts:[['일괄 정비 결과 열기',"raTab('bulk')",1]]};
+}
+async function raAgUpper(P, step, fin, stop){
+  const U=RA.upper; Object.assign(U,{law:P.law||'',arts:(P.arts||[]).join(', '),old:'',neu:'',res:null});
+  let s=step(`「${P.law}」을(를) 인용하는 ${RA_ORG.reg_word} 찾기`);
+  const d=await raPost('/api/regagent/upper',{law:U.law,arts:(P.arts||[]).map(raNormNo).filter(Boolean)});
+  if(!d.success) stop(s,d.error||'분석 실패');
+  U.res=d;
+  if(!d.count){ fin(s,'인용하는 조문이 없습니다.','skip'); RA.agent.done={title:'영향받는 내규가 없습니다',sub:'',acts:[]}; return; }
+  fin(s,`${d.reg_count}개 ${_e(RA_ORG.reg_word)} · ${d.count}개 조문 · 우선 검토 ${d.high}건`);
+  const top=d.candidates.slice(0,3);
+  s=step('개정 후보 선정'); fin(s,top.map(c=>`「${_e(c.reg)}」 ${raLbl(c.no)}(${_e(c.title)})${c.specific.length?' — '+_e(c.specific.join(', ')):''}`).join('<br>'), d.high?'warn':'ok');
+  RA.agent.done={title:`개정 후보 ${d.count}개 조문을 찾았습니다`,sub:'1순위 후보로 바로 개정 작업을 시작할 수 있습니다.',
+    acts:[['후보 전체 보기',"raTab('upper')",1],[`1순위 「${top[0].reg}」 ${raLbl(top[0].no)} 개정하기`,`raUpperToAmend('${_a(top[0].slug)}','${_a(top[0].no)}')`]]};
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 규정 건강검진 — 내규별 점수·등급·정비 우선순위, 상위법 최신성(법제처) 확인
+// ══════════════════════════════════════════════════════════════════════════
+const RA_GRADE={A:['양호','good'],B:['관심','good'],C:['주의','warning'],D:['경고','serious'],E:['위험','critical']};
+async function raHealthLoad(){
+  const H=RA.health; const box=document.getElementById('raHealth'); if(box) box.innerHTML=raSpin(`${RA_ORG.reg_word} ${RA_ORG._count||''}건을 진단하는 중...`);
+  const d=await raPost('/api/regagent/health',{law_info:H.law||{}});
+  if(!d.success){ if(box) box.innerHTML=raErr(d.error||'진단 실패'); return; }
+  _raHealth=d; raRerender('health');
+}
+let _raHealth=null;
+async function raHealthLaws(){
+  const H=RA.health; if(!_raHealth) return;
+  const names=_raHealth.laws.filter(n=>!(H.law||{})[n]); H.law=H.law||{};
+  const bar=document.getElementById('raLawProg'); let done=0, fail=0;
+  for(let i=0;i<names.length;i+=6){
+    const chunk=names.slice(i,i+6);
+    if(bar) bar.innerHTML=`<div class="ra-prog"><i style="width:${Math.round((i)/names.length*100)}%"></i></div><div class="ra-meta">법제처에서 상위법 시행일 확인 중 ${i}/${names.length}</div>`;
+    const d=await raPost('/api/regagent/health/laws',{names:chunk});
+    if(!d.success){ if(bar) bar.innerHTML=raErr(d.error||'법령 조회 실패'); return; }
+    Object.entries(d.laws).forEach(([k,v])=>{ if(v.error) fail++; else { H.law[k]={ef:v.ef,found:v.found,status:v.status}; done++; } });
+  }
+  _raSave(); _toast(`상위법 ${done}건 확인`+(fail?`, ${fail}건 실패(법제처 연결 확인)`:''),4500); raHealthLoad();
+}
+function raHealthView(){
+  if(!_raHealth){ setTimeout(raHealthLoad,0); return `<div class="ra-wide" id="raHealth">${raSpin('진단 준비 중...')}</div>`; }
+  const d=_raHealth, H=RA.health, f=H.f||{q:'',g:''};
+  const gradeOf=s=>s>=95?'A':s>=85?'B':s>=75?'C':s>=60?'D':'E';
+  const ag=gradeOf(d.avg);
+  const lawN=Object.keys(H.law||{}).length;
+  const tiles=`<div class="ra-kpis">`+
+    `<div class="ra-kpi hero"><div class="ra-kpi-l">평균 건강 점수</div><div class="ra-kpi-v">${d.avg}<small>/100</small></div><div class="ra-kpi-s"><span class="ra-gr g-${RA_GRADE[ag][1]}">${ag}</span>${RA_GRADE[ag][0]} · ${d.count}개 ${_e(RA_ORG.reg_word)}</div></div>`+
+    `<div class="ra-kpi"><div class="ra-kpi-l">문제가 발견된 ${_e(RA_ORG.reg_word)}</div><div class="ra-kpi-v">${d.with_issues}<small>건</small></div><div class="ra-kpi-s">전체의 ${Math.round(d.with_issues/d.count*100)}%</div></div>`+
+    `<div class="ra-kpi"><div class="ra-kpi-l">인용·명칭·번호 문제</div><div class="ra-kpi-v">${d.issue_total}<small>곳</small></div><div class="ra-kpi-s">오류가 있는 ${_e(RA_ORG.reg_word)} ${d.with_errors}건</div></div>`+
+    `<div class="ra-kpi"><div class="ra-kpi-l">3년 이상 개정 없음</div><div class="ra-kpi-v">${d.old_regs}<small>건</small></div><div class="ra-kpi-s">정비 시기 점검 대상</div></div>`+
+    `<div class="ra-kpi"><div class="ra-kpi-l">상위법 개정 미반영 의심</div><div class="ra-kpi-v">${lawN?d.stale_regs:'—'}<small>${lawN?'건':''}</small></div><div class="ra-kpi-s">${lawN?`법령 ${lawN}/${d.laws.length}개 확인`:'아래에서 법제처 확인'}</div></div></div>`;
+  const mx=Math.max(1,...Object.values(d.grades));
+  const dist=`<div class="ra-dist" role="img" aria-label="등급 분포">`+'ABCDE'.split('').map(g=>{ const n=d.grades[g]||0;
+    return `<button class="ra-dist-r${f.g===g?' on':''}" onclick="raHealthF('g','${g}')" title="${g}등급(${RA_GRADE[g][0]}) ${n}건 — 눌러서 목록 거르기"><span class="ra-dist-k"><span class="ra-gr g-${RA_GRADE[g][1]}">${g}</span>${RA_GRADE[g][0]}</span>`+
+      `<span class="ra-dist-t"><i class="g-${RA_GRADE[g][1]}" style="width:${n?Math.max(2,n/mx*100):0}%"></i></span><span class="ra-dist-n">${n}</span></button>`; }).join('')+`</div>`;
+  const top=d.rows.filter(r=>r.reasons.length).slice(0,10);
+  const prio=top.length?`<ol class="ra-prio">`+top.map((r,i)=>`<li><span class="ra-prio-n">${i+1}</span><div class="ra-prio-b"><div class="ra-prio-t"><b>「${_e(r.title)}」</b><span class="ra-gr g-${RA_GRADE[r.grade][1]}">${r.grade}</span><span class="ra-prio-s">${r.score}점</span><span class="ra-sub">${_e(r.revision)}</span></div>`+
+    `<div class="ra-prio-r">${r.reasons.map(x=>`<span class="ra-chip">${_e(x)}</span>`).join('')}</div>`+
+    (r.stale_laws.length?`<div class="ra-snip">상위법: ${r.stale_laws.slice(0,3).map(l=>`「${_e(l.law)}」 ${l.ef.slice(0,4)}.${l.ef.slice(4,6)}.${l.ef.slice(6)} 시행`).join(', ')}</div>`:'')+
+    `</div><div class="ra-prio-a"><button class="svc-btn sm" onclick="raCheckToAmend('${_a(r.slug)}','${_a(r.title)}')">개정 작업</button><a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener">원문↗</a></div></li>`).join('')+`</ol>`:'<div class="ra-ok">정비가 필요한 내규가 없습니다.</div>';
+  const q=(f.q||'').replace(/\s+/g,'');
+  const rows=d.rows.filter(r=>(!f.g||r.grade===f.g)&&(!q||r.title.replace(/\s+/g,'').includes(q)));
+  const table=`<div class="ra-row"><input class="ra-in sm" style="max-width:220px" placeholder="${_e(RA_ORG.reg_word)}명 검색" value="${_e(f.q||'')}" oninput="raHealthF('q',this.value)">`+
+    (f.g?`<button class="ra-chip btn" onclick="raHealthF('g','')">${f.g}등급만 보는 중 ✕</button>`:'')+`<span class="ra-hint">${rows.length}건</span></div>`+
+    `<div class="ra-tbl-w"><table class="ra-tbl"><thead><tr><th>${_e(RA_ORG.reg_word)}</th><th>등급</th><th>점수</th><th>최종 개정</th><th>진단</th></tr></thead><tbody>`+
+    rows.map(r=>`<tr><td><a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener">${_e(r.title)}</a><div class="ra-sub">${_e(r.category)} · ${r.n_articles}개 조 · 인용 법령 ${r.laws.length}</div></td>`+
+      `<td><span class="ra-gr g-${RA_GRADE[r.grade][1]}">${r.grade}</span></td><td class="num">${r.score}</td><td>${_e(r.revision)}</td><td>${r.reasons.map(x=>_e(x)).join(', ')||'<span class="ra-mu">이상 없음</span>'}</td></tr>`).join('')+`</tbody></table></div>`;
+  const rule=d.rules?`<details class="ra-det"><summary>점수 기준</summary><div class="ra-hint">100점에서 감점: 없는 조문 인용 건당 -10(최대 -30) · 조 번호 중복·순서 오류 -8 · 현행 목록에 없는 내규명 인용 -6 · 옛 기관명·직위 -5 · 개정 경과 ${_e(d.rules.age)} · ${_e(d.rules.law)}<br>등급: A 95점 이상(양호) · B 85(관심) · C 75(주의) · D 60(경고) · E 60점 미만(위험)</div></details>`:'';
+  const lawSec=`<div class="ra-row"><button class="svc-btn" onclick="raHealthLaws()">${raIc('upper')}상위법 최신성 확인</button><span class="ra-hint">${_e(RA_ORG.reg_word)}가 인용한 법령 ${d.laws.length}개의 현행 시행일을 법제처에서 조회해, ${_e(RA_ORG.reg_word)} 개정일보다 나중에 시행된 법령을 찾습니다.${lawN?` (확인 ${lawN}개)`:''}</span></div><div id="raLawProg"></div>`;
+  return `<div class="ra-wide" id="raHealth">${tiles}`+
+    `<div class="ra-grid2 ra-h2">${raSec(1,'등급 분포','막대를 누르면 아래 목록을 거릅니다',dist+rule)}${raSec(2,'상위법 최신성','법제처 현행 법령 기준',lawSec)}</div>`+
+    raSec(3,'정비 우선순위 Top 10','점수가 낮은 순 — 바로 개정 작업으로 넘길 수 있습니다',prio)+
+    raSec(4,`전체 ${_e(RA_ORG.reg_word)} 진단표`,'',table)+
+    `<div class="ra-foot"><button class="svc-btn ghost sm" onclick="_raHealth=null;raHealthLoad()">다시 진단</button></div></div>`;
+}
+function raHealthF(k,v){ const H=RA.health; H.f=H.f||{q:'',g:''}; H.f[k]=(k==='g'&&H.f.g===v)?'':v; _raSave();
+  if(k==='q'){ clearTimeout(raHealthF._t); raHealthF._t=setTimeout(()=>{ const y=window.scrollY; raRerender('health'); window.scrollTo(0,y); const i=document.querySelector('#raHealth .ra-tbl-w')?.previousElementSibling?.querySelector('input'); if(i){ i.focus(); i.setSelectionRange(i.value.length,i.value.length); } },250); }
+  else { const y=window.scrollY; raRerender('health'); window.scrollTo(0,y); } }
 
 // ══════════════════════════════════════════════════════════════════════════
 // 일괄 정비 — 기관명·직위·부서명·내규명이 바뀌면 모든 내규에서 찾아 바꾸고(조사 교정),
