@@ -1101,8 +1101,8 @@ function raProcSteps(){
     return true;
   }).map(s=>({...s, desc:s.d||s.desc||'', docs:s.docs||[]}));
 }
-function raProcAnswer(k,v){ RA.proc.ans[k]=v; _raSave(); const t=RA.tab; if(t==='proc') raRender(); else { const s=document.querySelector('.ra-side'); if(s) s.innerHTML=raProcSide(t); } }
-function raProcCheck(id,on){ RA.proc.chk[id]=on; _raSave(); const t=RA.tab; if(t==='proc') raRender(); else { const s=document.querySelector('.ra-side'); if(s) s.innerHTML=raProcSide(t); } }
+function raProcAnswer(k,v){ RA.proc.ans[k]=v; _raSave(); const t=RA.tab; if(t==='proc'){ const y=window.scrollY; raRender(); window.scrollTo(0,y); } else { const s=document.querySelector('.ra-side'); if(s) s.innerHTML=raProcSide(t); } }
+function raProcCheck(id,on){ RA.proc.chk[id]=on; _raSave(); const t=RA.tab; if(t==='proc'){ const y=window.scrollY; raRender(); window.scrollTo(0,y); } else { const s=document.querySelector('.ra-side'); if(s) s.innerHTML=raProcSide(t); } }
 function raProcQs(){
   const a=RA.proc.ans||{};
   return raPQ().map(q=>{
@@ -1131,12 +1131,54 @@ function raProcSide(mode){
     (answered<Q.length?`<details class="ra-q-det"><summary><span class="ra-q-cnt">${answered}/${Q.length}</span><span>해당 여부에 답하면 필요한 단계만 남습니다</span></summary>${raProcQs()}</details>`:`<div class="ra-q-done">${raIc('check')}해당 여부 답변 완료 <button class="ra-link" onclick="raTab('proc')">고치기</button></div>`)+
     raProcStepsView(mode, true);
 }
+// 절차 안내 대시보드 — 지표 카드 · 해당 여부 격자 · 국면별 로드맵 · 작성 기준 카드
+const RA_PHASE_FALLBACK=[{id:'prep',t:'입안·점검',d:''},{id:'opinion',t:'의견수렴·평가',d:''},{id:'review',t:'심의·확정',d:''},{id:'enforce',t:'시행·공개',d:''}];
+function raPhases(){ const p=((RA_ORG||{}).procedure||{}).phases; return (p&&p.length)?p:RA_PHASE_FALLBACK; }
+function raDays(s){ const n=parseInt(s.days,10); return isNaN(n)?0:n; }
+function raWho(who){
+  const w=String(who||'');
+  const k=/감사/.test(w)?'audit':/이사회|원장|기관장/.test(w)&&!/주무부서$/.test(w)?'head':/→/.test(w)?'flow':/내규관리부서/.test(w)&&!/주무/.test(w)?'mgmt':/·/.test(w)?'flow':'dept';
+  return `<span class="ra-who w-${k}">${_e(w)}</span>`;
+}
+function raProcDocMode(){ return RA.amend.changes.length?'amend':RA.enact.draft?'enact':null; }
 function raProcView(){
-  const sum=(RA_ORG.rules_summary||[]).map(([h,t])=>`<b>${_e(h)}</b> ${_e(t)}`).join('<br>');
-  return `<div class="ra-layout"><div class="ra-main">${raSec(1,'해당 여부','답에 따라 필요한 단계·문서가 바뀝니다',raProcQs())}${raSec(2,`${_e(RA_ORG.reg_word)} 제·개정 절차`,'체크하면 이 브라우저에 진행 상황이 저장됩니다',raProcStepsView(null,false))}</div>`+
-    `<aside class="ra-side"><div class="ra-side-h">작성 기준 요약 — 「${_e(raRules())}」</div><div class="ra-note">${sum||'기관 프로필에 작성 기준 요약이 없습니다.'}</div>`+
-    `<div class="ra-hint">절차·심의기준·기관 명칭은 기관 프로필(org_config.json)에서 바꿀 수 있습니다.</div>`+
-    `<button class="svc-btn ghost sm" onclick="RA.proc={ans:{},chk:{}};_raSave();raRender()">↺ 절차 초기화</button></aside></div>`;
+  const steps=raProcSteps(), chk=RA.proc.chk||{}, a=RA.proc.ans||{}, Q=raPQ();
+  const done=steps.filter(s=>chk[s.id]).length, pct=steps.length?Math.round(done/steps.length*100):0;
+  const next=steps.find(s=>!chk[s.id]);
+  const answered=Q.filter(q=>a[q.k]).length;
+  // 최소 소요기간: 의견수렴 국면은 병행 가능 → 가장 긴 기간, 나머지 국면은 합산
+  const op=steps.filter(s=>s.phase==='opinion').map(raDays), rv=steps.filter(s=>s.phase!=='opinion').map(raDays);
+  const opMax=op.length?Math.max(0,...op):0, rvSum=rv.reduce((x,y)=>x+y,0), minDays=opMax+rvSum;
+  const brk=[]; if(opMax) brk.push(`의견수렴 ${opMax}일${op.filter(x=>x>0).length>1?'(병행)':''}`);
+  steps.filter(s=>s.phase!=='opinion'&&raDays(s)>0).forEach(s=>brk.push(`${s.phase==='review'?'심의 제출':_e(s.t)} ${raDays(s)}일`));
+  const mode=raProcDocMode(), names=Object.fromEntries(RA_DOCS[mode||'enact']);
+  const docs=[...new Set(steps.flatMap(s=>s.docs||[]))].filter(d=>names[d]);
+  const kpis=`<div class="ra-kpis ra-pk">`+
+    `<div class="ra-kpi"><div class="ra-kpi-l">진행률</div><div class="ra-kpi-v">${pct}<small>%</small></div><div class="ra-meter" role="meter" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="절차 진행률"><i style="width:${pct}%"></i></div><div class="ra-kpi-s">${steps.length}단계 중 ${done}단계 완료</div></div>`+
+    `<div class="ra-kpi ra-kpi-next"><div class="ra-kpi-l">다음 할 일</div>`+(next?`<div class="ra-kpi-t">${_e(next.t)}</div><div class="ra-kpi-s">${raWho(next.who)}<span class="ra-ref">${_e(next.ref||'')}</span></div>`:`<div class="ra-kpi-t">모든 단계 완료</div><div class="ra-kpi-s">수고하셨습니다</div>`)+`</div>`+
+    `<div class="ra-kpi"><div class="ra-kpi-l">예상 최소 소요기간</div><div class="ra-kpi-v">${minDays||'—'}<small>${minDays?'일':''}</small></div><div class="ra-kpi-s">${brk.length?brk.join(' + '):'기간이 정해진 단계 없음'}</div></div>`+
+    `<div class="ra-kpi"><div class="ra-kpi-l">준비할 문서</div><div class="ra-kpi-v">${docs.length}<small>종</small></div><div class="ra-kpi-s" title="${_e(docs.map(d=>names[d]).join(' · '))}">${docs.slice(0,3).map(d=>_e(names[d])).join(' · ')||'—'}${docs.length>3?` 외 ${docs.length-3}종`:''}</div></div>`+
+    `<div class="ra-kpi"><div class="ra-kpi-l">해당 여부 답변</div><div class="ra-kpi-v">${answered}<small>/${Q.length}</small></div><div class="ra-kpi-s">${answered<Q.length?'답할수록 필요한 단계만 남습니다':'답변 완료 — 맞춤 절차'}</div></div></div>`;
+  const qs=`<div class="ra-pq-grid">`+Q.map(q=>{ const opts=q.opts||[['y','예'],['n','아니오']];
+    return `<div class="ra-pq-c${a[q.k]?' on':''}"><div class="ra-pq-q">${_e(q.q)}</div><div class="ra-pq-f"><div class="ra-seg">`+
+      opts.map(([v,l])=>`<button class="${a[q.k]===v?'on':''}" onclick="raProcAnswer('${_a(q.k)}','${_a(v)}')">${_e(l)}</button>`).join('')+`</div><span class="ra-ref">${_e(q.ref||'')}</span></div></div>`; }).join('')+`</div>`;
+  const lanes=`<div class="ra-lanes">`+raPhases().map((ph,pi)=>{
+    const ps=steps.filter(s=>(s.phase||'prep')===ph.id); const pd=ps.filter(s=>chk[s.id]).length;
+    const st=!ps.length?'none':pd===ps.length?'done':ps.some(s=>next&&s.id===next.id)?'now':'todo';
+    return `<div class="ra-lane l-${st}"><div class="ra-lane-h"><span class="ra-lane-n">${st==='done'?'✓':pi+1}</span><div><b>${_e(ph.t)}</b><small>${_e(ph.d||'')}</small></div><span class="ra-lane-c">${pd}/${ps.length}</span></div>`+
+      `<div class="ra-lane-p"><i style="width:${ps.length?Math.round(pd/ps.length*100):0}%"></i></div>`+
+      (ps.length?ps.map(s=>{ const isNext=next&&next.id===s.id, dn=!!chk[s.id], dd=raDays(s);
+        return `<div class="ra-card${dn?' done':''}${isNext?' next':''}"><label class="ra-card-h"><input type="checkbox" ${dn?'checked':''} onchange="raProcCheck('${_a(s.id)}',this.checked)"><span>${_e(s.t)}</span></label>`+
+          `<div class="ra-card-m">${raWho(s.who)}${dd&&!/\d+일/.test(s.t)?`<span class="ra-days" title="${_e(s.days_note||'')}">${dd}일${s.days_note?'':' 이상'}</span>`:''}<span class="ra-ref">${_e(s.ref||'')}</span></div>`+
+          `<div class="ra-card-d">${_e(s.desc)}</div>`+
+          ((s.docs||[]).filter(d=>names[d]).length?`<div class="ra-card-docs">${s.docs.filter(d=>names[d]).map(d=>mode?`<button class="ra-chip btn" onclick="raGoDoc('${mode}','${d}')">${raIc('doc')}${_e(names[d])}</button>`:`<span class="ra-chip">${raIc('doc')}${_e(names[d])}</span>`).join('')}</div>`:'')+
+          (isNext?'<div class="ra-card-now">지금 할 일</div>':'')+`</div>`; }).join(''):`<div class="ra-lane-empty">해당 단계 없음</div>`)+`</div>`; }).join('')+`</div>`;
+  const sum=(RA_ORG.rules_summary||[]).map(([h,t])=>`<div class="ra-rule"><b>${_e(h)}</b><p>${_e(t)}</p></div>`).join('');
+  return `<div class="ra-wide ra-procdash">${kpis}`+
+    raSec(1,'해당 여부','답에 따라 아래 로드맵의 단계·기간·문서가 바뀝니다',qs)+
+    raSec(2,`${_e(RA_ORG.reg_word)} 제·개정 로드맵`,`카드를 체크하면 진행 상황이 이 브라우저에 저장됩니다${mode?' · 문서 칩을 누르면 해당 문서로 이동':''}`,lanes)+
+    raSec(3,`작성 기준 요약 — 「${_e(raRules())}」`,'절차·심의기준·기관 명칭은 기관 프로필(org_config.json)에서 바꿀 수 있습니다',`<div class="ra-rules">${sum||'<div class="ra-empty">기관 프로필에 작성 기준 요약이 없습니다.</div>'}</div>`)+
+    `<div class="ra-foot"><button class="svc-btn ghost sm" onclick="if(confirm('해당 여부 답변과 진행 체크를 모두 지울까요?')){RA.proc={ans:{},chk:{}};_raSave();raRender();}">절차 초기화</button></div></div>`;
 }
 
 function raReset(mode){
