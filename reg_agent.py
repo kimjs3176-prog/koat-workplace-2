@@ -322,7 +322,7 @@ def _reg_names() -> dict:
 _REF = re.compile(
     r"제\s*(\d+)\s*조(?:\s*의\s*(\d+))?(?:\s*제\s*(\d+)\s*항)?(?:\s*제\s*(\d+)\s*호)?"
     r"(?:\s*(부터|내지|및|또는|ㆍ|·|,|와|과)\s*제\s*(\d+)\s*조(?:\s*의\s*(\d+))?(?:\s*(까지)?))?")
-_QUOTED_NAME = re.compile(r"「\s*([^」]{2,60}?)\s*」")
+_QUOTED_NAME = re.compile(r"「\s*([^「」]{2,60}?)\s*」")
 _EXT_BEFORE = re.compile(
     r"(?:「[^」]{1,60}」|(?:같은|동|이|해당)\s*법(?:\s*시행령|\s*시행규칙)?|"
     r"\(\s*이하[^)]{0,30}\)|"
@@ -445,6 +445,7 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                   full: bool = True) -> list:
     """조문 목록 점검 → [{level, code, no, msg, fix?}]. level: error|warn|info"""
     issues = []
+    regnames = _reg_names()
 
     def add(level, code, no, msg, fix=""):
         issues.append({"level": level, "code": code, "no": no, "msg": msg, "fix": fix})
@@ -505,7 +506,6 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                 seen.add(rno)
                 add("error", "ref", no, f"{lbl}에서 인용한 {art_label(rno)}가 이 내규에 없습니다: “{raw.strip()}”")
         # (5) 「내규명」 확인
-        regnames = _reg_names()
         for m in _QUOTED_NAME.finditer(body):
             nm = m.group(1).strip()
             if "법" in nm or nm.endswith(("령", "조례")):
@@ -1742,6 +1742,81 @@ def ra_health_laws():
                     _LAW_FRESH[nm] = {"at": time.time(), "v": v}
     return jsonify({"success": True, "laws": out,
                     "failed": sum(1 for v in out.values() if v.get("error"))})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 11-2. 인용 관계망 — 어떤 내규가 어떤 내규를 「내규명」으로 인용하는지(개정·폐지 영향 범위)
+# ══════════════════════════════════════════════════════════════════════════
+_GRAPH_CACHE = {"key": None, "v": None}
+
+
+def _reg_text(r: dict) -> str:
+    """본칙 조문만(부칙은 당시 명칭을 그대로 둬야 하는 연혁이라 제외)."""
+    return "\n".join(a.get("body", "") for a in r["articles"] if not a.get("deleted"))
+
+
+def citation_graph() -> dict:
+    """노드=내규, 간선=A가 B를 「B」로 인용(인용 횟수). 현행 목록에 없는 내규명 인용은 broken."""
+    regs = all_regs()
+    key = id(regs)
+    if _GRAPH_CACHE["key"] == key:
+        return _GRAPH_CACHE["v"]
+    idx = {_nk(r["title"]): i for i, r in enumerate(regs)}
+    names = list(idx)
+    own = [t for t in [ORG["org_short"], ORG["org_name"]] if t] + [o for o, _ in _STALE_TERMS + _STALE_WORDS]
+    edges, broken, memo = {}, {}, {}
+
+    def resolve(nm):
+        """「nm」 → (내규 번호|None, 옛 명칭 여부, 비슷한 현행 내규명)"""
+        if nm in memo:
+            return memo[nm]
+        k = _nk(nm)
+        if k in idx:
+            res = (idx[k], False, "")
+        else:
+            cur = nm
+            for old, new in _STALE_TERMS:
+                cur = cur.replace(old, new)
+            kc = _nk(cur)
+            if kc != k and kc in idx:
+                res = (idx[kc], True, regs[idx[kc]]["title"])
+            elif "법" in nm or nm.endswith(("령", "조례")) or not nm.endswith(_REG_SUFFIX) or nm == "정관":
+                res = (None, False, None)
+            else:
+                near = difflib.get_close_matches(k, names, n=1, cutoff=0.8)
+                ext = not near and not any(t in nm for t in own)       # 정부 규정 등 외부 규범
+                res = (None, False, None if ext else (regs[idx[near[0]]]["title"] if near else ""))
+        memo[nm] = res
+        return res
+
+    for i, r in enumerate(regs):
+        for m in _QUOTED_NAME.finditer(_reg_text(r)):
+            nm = m.group(1).strip()
+            j, stale, near = resolve(nm)
+            if j is not None and j != i:
+                edges[(i, j)] = edges.get((i, j), 0) + 1
+            if (j is None and near is not None) or stale:
+                b = broken.setdefault((i, nm), {"from": r["slug"], "from_title": r["title"], "name": nm, "count": 0,
+                                                "near": near or "", "kind": "stale" if stale else "missing"})
+                b["count"] += 1
+    indeg, outdeg = [0] * len(regs), [0] * len(regs)
+    for (a, b), n in edges.items():
+        outdeg[a] += 1
+        indeg[b] += 1
+    nodes = [{"slug": r["slug"], "title": r["title"], "category": r.get("category", ""), "revision": r.get("revision", ""),
+              "in": indeg[i], "out": outdeg[i]} for i, r in enumerate(regs)]
+    v = {"nodes": nodes, "edges": [{"s": a, "t": b, "n": n} for (a, b), n in sorted(edges.items())],
+         "broken": sorted(broken.values(), key=lambda x: (-x["count"], x["from_title"])),
+         "stats": {"regs": len(regs), "edges": len(edges), "linked": sum(1 for i in range(len(regs)) if indeg[i] or outdeg[i]),
+                   "isolated": sum(1 for i in range(len(regs)) if not indeg[i] and not outdeg[i]),
+                   "broken": len(broken)}}
+    _GRAPH_CACHE.update({"key": key, "v": v})
+    return v
+
+
+@bp.route("/api/regagent/graph")
+def ra_graph():
+    return jsonify({"success": True, **citation_graph()})
 
 
 # ══════════════════════════════════════════════════════════════════════════

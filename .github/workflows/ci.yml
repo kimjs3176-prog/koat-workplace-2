@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - name: Python 테스트
+        run: python -m pytest -q tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 프론트엔드 문법 검사
+        run: node --check assets/reg_agent.js
+      - name: 프론트엔드 로직 테스트
+        run: node --test tests/js/*.test.mjs

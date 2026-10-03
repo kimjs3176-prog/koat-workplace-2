@@ -16,6 +16,7 @@ const RA_IC={
   proc:'<path d="M3 6l1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/><path d="M11 6h10M11 12h10M11 18h10"/>',
   agent:'<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8zM5 3l.6 1.4L7 5l-1.4.6L5 7l-.6-1.4L3 5l1.4-.6z"/>',
   health:'<path d="M3 12h4l2-5 4 10 2-5h6"/>',
+  graph:'<circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.5 6h9M6.3 8.2l4.4 7.6M17.7 8.2l-4.4 7.6"/>',
   spark:'<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/>',
   search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   doc:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
@@ -35,6 +36,7 @@ const RA_TABS=[
   ['bulk','일괄 정비','바뀐 용어·명칭을 모든 내규에 반영'],
   ['upper','상위법 영향','상위법 개정 → 개정 후보 조문'],
   ['check','전체 점검','인용·명칭·조 번호 오류'],
+  ['graph','인용 관계','내규 사이 인용 관계·파급 범위'],
   ['proc','절차 안내','기관 제·개정 절차와 할 일'],
 ];
 // 페이지 머리: 제목 + 작업 흐름(아이콘 칩). 설명 문장 대신 흐름으로 보여 준다
@@ -46,6 +48,7 @@ const RA_PAGE={
   bulk:['용어·명칭 일괄 정비',[['search','용어 검색'],['bulk','조사까지 교정'],['doc','개정문·부칙']]],
   upper:['상위법 개정 영향 분석',[['upper','법령 개정'],['search','인용 조문'],['alert','개정 후보'],['amend','개정 착수']]],
   check:['내규 점검',[['search','없는 조문 인용'],['doc','내규명'],['alert','옛 명칭·직위'],['check','조 번호']]],
+  graph:['내규 인용 관계',[['graph','인용 관계도'],['bulk','파급 범위'],['alert','옛 명칭 인용'],['amend','정비 착수']]],
   proc:['제·개정 절차 안내',[['proc','해당 여부'],['check','단계 체크'],['doc','문서 준비']]],
 };
 // 기관 프로필(org_config.json) — 기관명·기관장·내규관리 규칙·절차·심의기준. 서버 /api/regagent/config
@@ -66,6 +69,7 @@ function _raBlank(){
     amend:{src:'reg',pasteText:'',pasted:false,moves:'',review:null,slug:'',title:'',sel:{},intent:'',effective:'',refText:'',changes:[],purpose:'',main:[],addenda:'',notes:[],impact:null,lint:null,docTab:'cmp',filter:'',abbr:true},
     upper:{law:'',arts:'',old:'',neu:'',res:null},
     check:{res:null,reg:'',one:null},
+    graph:{sel:''},
     proc:{ans:{},chk:{},plan:{}}};
 }
 function _raLoad(){
@@ -241,7 +245,30 @@ function raOrgCard(){
   const c=document.getElementById('orgCard'); if(!c||!RA_ORG) return;
   const srv=(typeof _srvOk==='undefined'||_srvOk===null)?'<span class="badge">서버 확인 중</span>':_srvOk?'<span class="badge ok">서버 연결됨</span>':'<span class="badge no">서버 연결 실패</span>';
   c.innerHTML=`<div class="oc-n">${_e(RA_ORG.org_name)}</div><div class="oc-m">등록 ${_e(RA_ORG.reg_word)} ${RA_ORG._count!=null?RA_ORG._count+'건':'—'} · 「${_e(raRules())}」</div>`+
-    `<div class="oc-row">${srv}</div><div class="oc-row">${raHasAi()?'<span class="badge ok">AI 연결됨</span>':'<span class="badge">AI 미설정</span>'}</div>`;
+    `<div class="oc-row">${srv}</div><div class="oc-row">${raHasAi()?'<span class="badge ok">AI 연결됨</span>':'<span class="badge">AI 미설정</span>'}</div>`+
+    `<div class="oc-row oc-bk"><button class="ra-link" onclick="raBackup()" title="제정·개정·절차 작업 내용을 파일로 저장(이 브라우저에만 저장되어 있음)">작업 백업</button><span>·</span><button class="ra-link" onclick="raRestore()" title="백업 파일에서 작업 내용을 되살림">복원</button></div>`;
+}
+// 작업 내용은 이 브라우저(localStorage)에만 있으므로 파일로 백업·복원할 수 있게 한다
+function raBackup(){
+  clearTimeout(_raSaveT);
+  const data={app:'koat-regagent', version:1, saved:new Date().toISOString(), org:(RA_ORG||{}).org_name||'', state:RA};
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));
+  a.download=`규정에이전트_작업백업_${raYmd(new Date())}.json`; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },500);
+  _toast('작업 내용을 백업 파일로 저장했습니다.');
+}
+function raRestore(){
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='.json,application/json';
+  inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(!f) return;
+    if(f.size>20*1024*1024){ _toast('파일이 너무 큽니다.'); return; }
+    const rd=new FileReader();
+    rd.onload=()=>{ let d; try{ d=JSON.parse(rd.result); }catch(e){ _toast('백업 파일을 읽지 못했습니다.'); return; }
+      const st=d&&d.app==='koat-regagent'&&d.state;
+      if(!st||typeof st!=='object'||!st.enact||!st.amend){ _toast('이 도구의 백업 파일이 아닙니다.'); return; }
+      if(!confirm(`${d.saved?String(d.saved).slice(0,10)+'에 ':''}백업한 작업으로 지금 작업 내용을 바꿀까요?`)) return;
+      try{ localStorage.setItem(RA_KEY, JSON.stringify(st)); }catch(e){ _toast('브라우저 저장 공간이 부족합니다.'); return; }
+      location.reload(); };
+    rd.readAsText(f); };
+  inp.click();
 }
 function raRender(){
   if(!_raCatalog) raCatalog().then(()=>{ if(RA.tab==='enact') raRerender('enact'); });
@@ -254,6 +281,7 @@ function raRender(){
   else if(t==='health') b.innerHTML=raHealthView();
   else if(t==='upper') b.innerHTML=raUpperView();
   else if(t==='check') b.innerHTML=raCheckView();
+  else if(t==='graph') b.innerHTML=raGraphView();
   else b.innerHTML=raProcView();
   if(t==='amend'||t==='upper'||t==='check') raFillCatalog();
 }
@@ -1162,6 +1190,82 @@ async function raCheckOne(){
 function raCheckToAmend(slug, title){
   const A=RA.amend; if(A.slug!==slug) Object.assign(A,{src:'reg',pasted:false,slug,title,sel:{},changes:[],impact:null,lint:null,review:null,purpose:'',main:[],addenda:'',notes:[],intent:''});
   _raArts=null; RA.tab='amend'; _raSave(); openRegAgent();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 인용 관계망 — 「내규명」 인용으로 이어진 내규 관계. 많이 인용되는 내규(개정 시 파급 큼)·옛 명칭 인용을 찾는다
+// ══════════════════════════════════════════════════════════════════════════
+const RA_CAT_ORDER=['정관','규정','규칙','세칙','예규','매뉴얼'];
+const RA_CAT_COLOR={'정관':'#c2410c','규정':'#2a78d6','규칙':'#0f8a7a','세칙':'#7c5cd6','예규':'#b7791f','매뉴얼':'#8a93a3'};
+let _raGraph=null;
+async function raGraphLoad(){
+  const box=document.getElementById('raGraph'); if(box) box.innerHTML=raSpin('내규 사이의 인용 관계를 분석하는 중...');
+  const d=await raGet('/api/regagent/graph');
+  if(!d||!d.success){ if(box) box.innerHTML=raErr((d&&d.error)||'분석 실패'); return; }
+  const order=n=>{ const i=RA_CAT_ORDER.indexOf(n.category); return i<0?RA_CAT_ORDER.length:i; };
+  d.nodes.forEach((n,i)=>{ n.i=i; n.cites=[]; n.citedBy=[]; });
+  d.edges.forEach(e=>{ d.nodes[e.s].cites.push({j:e.t,n:e.n}); d.nodes[e.t].citedBy.push({j:e.s,n:e.n}); });
+  d.ring=[...d.nodes].sort((a,b)=>order(a)-order(b)||a.title.localeCompare(b.title,'ko'));
+  _raGraph=d;
+  const G=RA.graph=RA.graph||{sel:''};
+  if(!d.nodes.some(n=>n.slug===G.sel)){ const hub=[...d.nodes].sort((a,b)=>b.in-a.in)[0]; G.sel=hub?hub.slug:''; }
+  raRerender('graph');
+}
+function raGraphSel(slug){ RA.graph=RA.graph||{}; RA.graph.sel=slug; _raSave(); const y=window.scrollY; raRerender('graph'); window.scrollTo(0,y); }
+// 원형 배치: 범주별로 묶어 원 둘레에 놓고, 인용은 원 안쪽 곡선으로 잇는다
+function raGraphSvg(d, sel){
+  const W=640, C=W/2, R=250, N=d.ring.length||1;
+  const pos={}; d.ring.forEach((n,k)=>{ const a=k/N*2*Math.PI-Math.PI/2; pos[n.i]={x:C+R*Math.cos(a),y:C+R*Math.sin(a),a}; });
+  const S=sel?d.nodes.find(n=>n.slug===sel):null;
+  const nb=new Set(S?[S.i,...S.cites.map(x=>x.j),...S.citedBy.map(x=>x.j)]:[]);
+  const curve=(a,b)=>{ const p=pos[a], q=pos[b]; return `M${p.x.toFixed(1)},${p.y.toFixed(1)} Q${C},${C} ${q.x.toFixed(1)},${q.y.toFixed(1)}`; };
+  const base=d.edges.filter(e=>!S||(e.s!==S.i&&e.t!==S.i)).map(e=>`<path d="${curve(e.s,e.t)}" class="ra-gl"/>`).join('');
+  const hiIn=S?S.citedBy.map(x=>`<path d="${curve(x.j,S.i)}" class="ra-gl in"><title>${_e(d.nodes[x.j].title)} → ${_e(S.title)}</title></path>`).join(''):'';
+  const hiOut=S?S.cites.map(x=>`<path d="${curve(S.i,x.j)}" class="ra-gl out"><title>${_e(S.title)} → ${_e(d.nodes[x.j].title)}</title></path>`).join(''):'';
+  const dots=d.ring.map(n=>{ const p=pos[n.i], r=2.6+Math.sqrt(n.in)*1.5, on=S&&n.i===S.i, dim=S&&!nb.has(n.i);
+    return `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r.toFixed(1)}" fill="${RA_CAT_COLOR[n.category]||'#8a93a3'}" class="ra-gn${on?' on':''}${dim?' dim':''}" tabindex="0" role="button" aria-label="${_e(n.title)} — 인용받음 ${n.in}, 인용함 ${n.out}" onclick="raGraphSel('${_a(n.slug)}')" onkeydown="if(event.key==='Enter')raGraphSel('${_a(n.slug)}')"><title>${_e(n.title)} (${_e(n.category)}) — 인용받음 ${n.in} · 인용함 ${n.out}</title></circle>`; }).join('');
+  // 이름표: 많이 인용되는 내규와 선택한 내규·이웃만(겹침 방지)
+  const lab=d.ring.filter(n=>(S&&nb.has(n.i)&&(n.i===S.i||nb.size<=14))||(!S||!nb.has(n.i))&&n.in>=8).map(n=>{ const p=pos[n.i], right=Math.cos(p.a)>=0, lx=C+(R+12)*Math.cos(p.a), ly=C+(R+12)*Math.sin(p.a);
+    const deg=p.a*180/Math.PI+(right?0:180); const t=n.title.length>14?n.title.slice(0,13)+'…':n.title;
+    return `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" transform="rotate(${deg.toFixed(1)} ${lx.toFixed(1)} ${ly.toFixed(1)})" text-anchor="${right?'start':'end'}" dominant-baseline="middle" class="ra-gt${S&&n.i===S.i?' on':''}">${_e(t)}</text>`; }).join('');
+  return `<svg class="ra-gsvg" viewBox="-96 -40 ${W+192} ${W+80}" role="img" aria-label="내규 인용 관계도: 내규 ${d.nodes.length}개, 인용 관계 ${d.edges.length}개">${base}${hiIn}${hiOut}${dots}${lab}</svg>`;
+}
+function raGraphPanel(d, sel){
+  const S=d.nodes.find(n=>n.slug===sel); if(!S) return '<div class="ra-empty sm">관계도에서 내규를 고르세요</div>';
+  const li=(arr,dir)=>arr.length?`<ul class="ra-gp-l">`+[...arr].sort((a,b)=>b.n-a.n).map(x=>{ const n=d.nodes[x.j];
+    return `<li><button class="ra-link" onclick="raGraphSel('${_a(n.slug)}')">「${_e(n.title)}」</button>${x.n>1?`<span class="ra-chip">${x.n}회</span>`:''}</li>`; }).join('')+`</ul>`:`<div class="ra-mu ra-gp-0">${dir}</div>`;
+  const brk=d.broken.filter(b=>b.from===S.slug);
+  return `<div class="ra-gp-h"><span class="ra-gdot" style="background:${RA_CAT_COLOR[S.category]||'#8a93a3'}"></span><div><b>「${_e(S.title)}」</b><div class="ra-sub">${_e(S.category)} · ${_e(S.revision||'')}</div></div></div>`+
+    raStats([{v:S.in,l:'인용받음',ic:'bulk',tone:S.in>=10?'warn':S.in?'acc':'n',tip:'이 내규를 개정·폐지하거나 명칭을 바꾸면 함께 검토할 내규'},{v:S.out,l:'인용함',ic:'doc',tone:S.out?'acc':'n'},{v:brk.length,l:'명칭 확인',ic:'alert',tone:brk.length?'bad':'ok'}])+
+    `<div class="ra-gp-c"><div><div class="ra-ih"><i class="ra-gk in"></i>이 내규를 인용하는 내규</div>${li(S.citedBy,'없음')}</div><div><div class="ra-ih"><i class="ra-gk out"></i>이 내규가 인용하는 내규</div>${li(S.cites,'없음')}</div></div>`+
+    (brk.length?`<div class="ra-ih">명칭 확인 필요</div><ul class="ra-gp-l">${brk.map(b=>`<li>「${_e(b.name)}」${b.near?` → 「${_e(b.near)}」`:''} <span class="ra-chip ${b.kind==='stale'?'warn':'hi'}">${b.kind==='stale'?'옛 명칭':'목록에 없음'}</span></li>`).join('')}</ul>`:'')+
+    `<div class="ra-row" style="margin-top:12px"><button class="svc-btn sm" onclick="raCheckToAmend('${_a(S.slug)}','${_a(S.title)}')">${raIc('amend')}개정 작업</button><a class="ra-link" href="${raRegUrl(S.slug)}" target="_blank" rel="noopener">원문↗</a></div>`;
+}
+function raGraphBulk(oldName, newName){
+  Object.assign(RA.bulk,{old:oldName,neu:newName,whole:true,res:null,sel:{},reason:`「${oldName}」의 명칭이 「${newName}」(으)로 바뀜에 따라 이를 인용하는 ${RA_ORG.reg_word}를 일괄 정비하려는 것임.`});
+  RA.tab='bulk'; _raSave(); openRegAgent(); setTimeout(raBulkRun,50);
+}
+function raGraphView(){
+  if(!_raGraph){ setTimeout(raGraphLoad,0); return `<div class="ra-wide" id="raGraph">${raSpin('인용 관계 준비 중...')}</div>`; }
+  const d=_raGraph, G=RA.graph||{sel:''}, st=d.stats;
+  const hubs=[...d.nodes].sort((a,b)=>b.in-a.in).filter(n=>n.in).slice(0,10);
+  const top=hubs[0];
+  // 명칭 오류: 같은 이름끼리 묶어 일괄 정비로 넘긴다
+  const grp={}; d.broken.forEach(b=>{ const g=grp[b.name]=grp[b.name]||{name:b.name,near:b.near,kind:b.kind,regs:0,count:0}; g.regs++; g.count+=b.count; });
+  const bl=Object.values(grp).sort((a,b)=>b.regs-a.regs||b.count-a.count);
+  const legend=`<div class="ra-stack-l">`+RA_CAT_ORDER.filter(c=>d.nodes.some(n=>n.category===c)).map(c=>`<span><i style="background:${RA_CAT_COLOR[c]}"></i>${c} <b>${d.nodes.filter(n=>n.category===c).length}</b></span>`).join('')+
+    `<span><i class="ra-gk in"></i>인용함 → 선택</span><span><i class="ra-gk out"></i>선택 → 인용함</span></div>`;
+  return `<div class="ra-wide" id="raGraph">`+
+    raStats([{v:st.regs,l:`개 ${RA_ORG.reg_word}`,ic:'doc',tone:'acc'},{v:st.edges,l:'인용 관계',ic:'graph',tone:'acc'},{v:top?top.in:0,l:top?`최다 인용 「${top.title}」`:'최다 인용',ic:'bulk',tone:'warn',tip:'인용이 많을수록 개정 시 함께 검토할 내규가 많습니다'},{v:st.isolated,l:'다른 내규와 연결 없음',ic:'info',tone:'n'},{v:st.broken,l:'옛 명칭·없는 내규명 인용',ic:'alert',tone:st.broken?'bad':'ok'}])+
+    `<section class="ra-sec"><div class="ra-sec-h"><span class="ra-num">1</span><div class="ra-sec-t"><h2>인용 관계도 ${raTip('점은 내규(크기 = 인용받은 수, 색 = 종류), 선은 「내규명」 인용입니다. 점을 누르면 그 내규의 인용 관계가 강조됩니다.')}</h2></div></div>`+
+      `<div class="ra-gwrap"><div class="ra-gfig">${raGraphSvg(d,G.sel)}${legend}</div><div class="ra-gpanel">${raGraphPanel(d,G.sel)}</div></div></section>`+
+    raPair(raSec(2,'많이 인용되는 내규 Top 10',raTip('개정·폐지·명칭 변경 때 파급이 큰 내규입니다. 막대를 누르면 관계도에서 선택됩니다.'),
+        raBars(hubs.map(n=>({l:n.title,n:n.in,tone:n.in>=20?'warn':'acc',go:`raGraphSel('${_a(n.slug)}')`})),'','많이 인용되는 내규')),
+      raSec(3,'명칭 확인이 필요한 인용',raTip('현행 목록에 없는 내규명 또는 옛 명칭으로 인용한 곳입니다. 옛 명칭은 일괄 정비로 한 번에 고칠 수 있습니다.'),
+        bl.length?`<ul class="ra-gb">`+bl.slice(0,12).map(g=>`<li><div><b>「${_e(g.name)}」</b>${g.near?` → 「${_e(g.near)}」`:''}<div class="ra-sub">${g.regs}개 ${_e(RA_ORG.reg_word)} · ${g.count}곳</div></div>`+
+          `<span class="ra-chip ${g.kind==='stale'?'warn':'hi'}">${g.kind==='stale'?'옛 명칭':'목록에 없음'}</span>${g.near?`<button class="svc-btn sm" onclick="raGraphBulk('${_a(g.name)}','${_a(g.near)}')">${raIc('bulk')}일괄 정비 검토</button>`:''}</li>`).join('')+`</ul>`+(bl.length>12?`<div class="ra-meta">외 ${bl.length-12}건</div>`:'')
+          :`<div class="ra-ok">${raIc('check')}명칭 오류 인용 없음</div>`))+
+    `<div class="ra-foot"><button class="svc-btn ghost sm" onclick="_raGraph=null;raGraphLoad()">다시 분석</button></div></div>`;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
