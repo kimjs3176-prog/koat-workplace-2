@@ -313,7 +313,7 @@ b.lv-error{color:var(--bad);} b.lv-warn{color:var(--warn);} b.lv-info{color:var(
 .ra-gr{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:800;color:var(--tx);background:var(--sf2);border:1px solid var(--bd);border-radius:7px;padding:1px 7px 1px 6px;}
 .ra-gr::before{content:'';width:8px;height:8px;border-radius:50%;background:currentColor;}
 .ra-gr.g-good::before{background:#0ca30c;} .ra-gr.g-warning::before{background:#fab219;} .ra-gr.g-serious::before{background:#ec835a;} .ra-gr.g-critical::before{background:#d03b3b;}
-.ra-h2{gap:16px;align-items:start;} .ra-h2>.ra-sec{margin-bottom:16px;}
+.ra-h2{gap:16px;align-items:stretch;} .ra-h2>.ra-sec{margin-bottom:16px;}
 .ra-h2>.ra-sec+.ra-sec::before{display:none;}
 .ra-dist{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;}
 .ra-dist-r{display:grid;grid-template-columns:84px 1fr 36px;gap:10px;align-items:center;width:100%;background:transparent;border:none;border-radius:8px;padding:5px 6px;cursor:pointer;font:inherit;color:inherit;text-align:left;}
@@ -531,3 +531,18 @@ body.dark .ra-tip:hover::after,body.dark .ra-tip:focus::after{background:#e8eaee
 .ra-sec-det[open]>summary{margin-bottom:16px;}
 .ra-sec-det[open]>summary::after{transform:rotate(-135deg);}
 .ra-sec-t h2 .ra-tip,.ra-sec-t h2 .ra-leg{margin-left:4px;font-weight:600;} .ra-sec-t h2 .ra-tip svg.ic{width:16px;height:16px;}
+
+/* ══ 배치 효율화 — 내용이 짧은 요소는 2열로 ═════════════════════════════════ */
+.ra-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:stretch;margin-bottom:16px;}
+.ra-pair>.ra-sec{margin-bottom:0;}
+.ra-pair>.ra-sec+.ra-sec::before{display:none;}
+.ra-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:20px;align-items:start;margin-bottom:6px;}
+.ra-split .ra-stats{grid-template-columns:repeat(auto-fit,minmax(130px,1fr));}
+.ra-detg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:start;}
+.ra-detg>.ra-det{margin:0;}
+.ra-detg>.ra-simc{margin:0;}
+.ra-detg .ra-fixd{grid-template-columns:1fr;}
+.ra-prio{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}
+.ra-lint{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr));}
+@media (max-width:1180px){ .ra-prio{grid-template-columns:1fr;} }
+@media (max-width:900px){ .ra-pair,.ra-split,.ra-detg{grid-template-columns:1fr;} }
