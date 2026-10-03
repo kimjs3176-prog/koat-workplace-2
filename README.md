@@ -149,6 +149,8 @@ GitHub Actions(`.github/workflows/ci.yml`)가 푸시·PR마다 두 테스트를 
 | `SEMANTIC_MIN_SCORE` | 의미 검색 최소 유사도 |
 | `OLLAMA_BASE_URL`, `OLLAMA_ALLOWED_HOSTS` | 로컬 LLM 연동 |
 | `REG_UPLOAD_TOKEN`, `REG_UPLOAD_MAX_MB` | 내규 원문 등록 암호·최대 크기 |
+| `REG_UPLOAD_ALLOW_ANON` | `1`이면 토큰 없이도 원격 업로드 허용(권장하지 않음). 기본은 토큰이 없으면 이 PC(로컬)에서만 등록 가능 |
+| `LAW_LOOKUP_BUDGET` | 건강검진 상위법 조회 1회 최대 대기 초(기본 25) |
 | `GITHUB_TOKEN`, `GITHUB_REPO`, `GITHUB_BRANCH` | 등록분 저장소 자동 커밋(읽기전용 배포용) |
 | `ORG_CONFIG` | 기관 프로필 파일 경로(기본 `org_config.json`) |
 | `REG_DIR`, `REG_MANIFEST`, `REG_VECTORS` | 내규 원문 폴더·목록·의미 검색 색인 위치(다른 기관 데이터) |
@@ -158,7 +160,7 @@ GitHub Actions(`.github/workflows/ci.yml`)가 푸시·PR마다 두 테스트를 
 **① 웹에서 — 📤 내규 등록(`/upload`)**: 실무 담당자가 제정·개정된 내규 파일(HWPX·DOCX·TXT·HTML·MD, PDF·HWP는 원본 보관)을 올리면 바로 에이전트에 반영됩니다.
 - 쓰기 가능한 서버(로컬·VM)는 `regulations/`에 바로 저장하고, 이전본은 `regulations/.backup`에 보관해 **되돌리기**를 할 수 있습니다.
 - Vercel 같은 읽기전용 배포는 `GITHUB_TOKEN`·`GITHUB_REPO`를 설정하면 **저장소에 자동 커밋 → 자동 재배포**됩니다.
-- `REG_UPLOAD_TOKEN`으로 보호합니다. 자동 커밋을 켰는데 토큰이 없으면 업로드를 거부합니다.
+- `REG_UPLOAD_TOKEN`으로 보호합니다. 자동 커밋을 켰는데 토큰이 없으면 업로드를 거부하고, 커밋을 끈 서버도 토큰이 없으면 로컬(이 PC)에서만 등록할 수 있습니다.
 
 **② 한꺼번에 — 일괄 등록 스크립트**(최초 구축·대량 갱신):
 ```bash
