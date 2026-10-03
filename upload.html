@@ -470,6 +470,10 @@ var _status=null, _names=[], _uploaded=[], _queue=[], _mgmtSelected=new Set(), _
 /* ── utilities ── */
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
   .replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// 인라인 onclick 안의 JS 문자열 인자: 역슬래시·따옴표·줄바꿈을 JS 이스케이프한 뒤 HTML 속성으로 이스케이프
+function jsArg(s){return esc(String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,'\\n'));}
+function lsGet(k){try{return localStorage.getItem(k);}catch(e){return null;}}
+function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
 function fmtSize(n){return n<1024?n+'B':n<1048576?(n/1024).toFixed(1)+'KB':(n/1048576).toFixed(1)+'MB';}
 function $(id){return document.getElementById(id);}
 
@@ -477,10 +481,10 @@ function $(id){return document.getElementById(id);}
 function toggleDark(){
   var dark=!document.body.classList.contains('dark');
   document.body.classList.toggle('dark',dark);
-  localStorage.setItem('dark',dark?'1':'0');
+  lsSet('dark',dark?'1':'0');
   $('darkBtn').textContent=dark?'\u2600':'\uD83C\uDF19';
 }
-if(localStorage.getItem('dark')==='1'){
+if(lsGet('dark')==='1'){
   document.body.classList.add('dark');
   $('darkBtn').textContent='\u2600';
 }
@@ -898,7 +902,7 @@ function renderManagement(){
     var slugEnc=encodeURIComponent(u.slug);
     var checked=_mgmtSelected.has(u.slug);
     return '<tr data-slug="'+esc(u.slug)+'">'
-      +'<td data-label=""><input type="checkbox" class="q-check" '+(checked?'checked':'')+' onchange="toggleMgmtItem(\''+esc(u.slug).replace(/'/g,"\\'")+'\',this.checked)"></td>'
+      +'<td data-label=""><input type="checkbox" class="q-check" '+(checked?'checked':'')+' onchange="toggleMgmtItem(\''+jsArg(u.slug)+'\',this.checked)"></td>'
       +'<td data-label="구분"><span class="mgmt-cat">'+esc(u.category||'기타')+'</span></td>'
       +'<td data-label="규정명"><div class="mgmt-title">'+esc(u.title)+'</div>'
       +(u.searchable?'':'<span class="no-search">본문 검색 불가</span>')
@@ -910,7 +914,7 @@ function renderManagement(){
       +'<td data-label="작업"><div class="mgmt-acts">'
       +'<a href="'+esc(u.html||'#')+'" target="_blank">전문보기</a>'
       +'<a href="/?q='+encodeURIComponent(u.title)+'">검색</a>'
-      +'<button onclick="removeUpload(\''+slugEnc+'\',\''+esc(u.title).replace(/'/g,"\\'")+'\')">되돌리기</button>'
+      +'<button onclick="removeUpload(\''+jsArg(slugEnc)+'\',\''+jsArg(u.title)+'\')">되돌리기</button>'
       +'</div></td></tr>';
   }).join('');
   updateBottomBar();
