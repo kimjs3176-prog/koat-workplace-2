@@ -163,6 +163,9 @@ python scripts/import_regulations.py <폴더> --dry-run          # 변환만 시
    - `drafting_rules`·`rules_summary`: AI 초안 작성 기준과 작성 기준 요약
    - `review_criteria`: 심의 사전검토 기준(id·제목·근거 조항·설명)
    - `procedure.questions`·`procedure.steps`: 절차 질문과 단계. 단계의 `when`(모두 일치)·`unless`(하나라도 일치하면 제외)로 조건을 줍니다.
+   - `procedure.phases`: 국면(입안·의견수렴·심의·시행 등). `parallel: true`인 국면의 단계는 같은 기간에 진행된다고 보고 일정을 계산합니다.
+   - `procedure.actors`: 프로세스 맵의 행위 주체(레인). `m`은 단계 `who`에서 주체를 찾는 정규식입니다.
+   - 단계 속성: `phase`(국면) · `days`(최소 기간) · `after`(선행 단계 id) · `optional`(선행 조건에서 제외) · `lanes`·`to`(수행·이관 주체 지정) · `auto`(`draft`·`check` — 도구 결과로 완료 근거 표시). 질문의 `s`는 분기 사유에 쓰는 짧은 이름입니다.
    - `stale_terms`·`stale_words`: 점검 때 찾을 옛 기관명·직위명
 2. **내규 원문**: `python scripts/import_regulations.py <폴더> --reset`으로 처음 한 번 넣고, 이후 개정분은 📤 내규 등록에서 올립니다(자동 커밋을 쓰려면 `GITHUB_REPO`를 그 기관 저장소로).
 3. **(선택) 색인**: `python scripts/build_embeddings.py`
