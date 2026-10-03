@@ -1607,3 +1607,265 @@ def ra_docx():
     return Response(build_docx(blocks),
                     mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     headers={"Content-Disposition": "attachment; filename*=UTF-8''" + _q(fname)})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 11. 규정 건강검진 — 내규별 건강 점수·정비 우선순위
+# ══════════════════════════════════════════════════════════════════════════
+_REV_DATE = re.compile(r"((?:19|20)\d\d)\s*년(?:도)?(?:\s*(\d{1,2})\s*월)?(?:\s*(\d{1,2})\s*일)?")
+_LAW_NAME_OK = re.compile(r"(법|법률|시행령|시행규칙)$")
+
+
+def rev_date(rev: str) -> str:
+    """'2023년도 7월 일부개정' → '20230701'. 모르면 ''."""
+    m = _REV_DATE.search(rev or "")
+    if not m:
+        return ""
+    return f"{m.group(1)}{int(m.group(2) or 1):02d}{int(m.group(3) or 1):02d}"
+
+
+def cited_laws(reg: dict) -> list:
+    """내규 본문(부칙 제외)이 인용하는 국가 법령명(「…법」·시행령·시행규칙)."""
+    names = []
+    for a in reg["articles"]:
+        if a["deleted"]:
+            continue
+        for m in _QUOTED_NAME.finditer(a["body"]):
+            nm = re.sub(r"\s+", " ", m.group(1)).strip()
+            if _LAW_NAME_OK.search(nm) and nm not in names and len(nm) <= 40:
+                names.append(nm)
+    return names
+
+
+# 감점(건당, 상한). 점수 기준은 화면에도 그대로 안내한다
+_H_W = {"ref": (10, 30), "dup": (8, 16), "order": (8, 16), "regname": (6, 18), "stale": (5, 15)}
+_H_GRADE = [("A", 95), ("B", 85), ("C", 75), ("D", 60), ("E", 0)]
+
+
+def health_row(r: dict, law_info: dict, today: str) -> dict:
+    iss = [i for i in lint_articles(r["articles"], r["addenda"], r["appendix"], r["title"], full=False)
+           if i["code"] in _H_W]
+    cnt = {}
+    for i in iss:
+        cnt[i["code"]] = cnt.get(i["code"], 0) + 1
+    pen, reasons = 0, []
+    labels = {"ref": "없는 조문 인용", "dup": "조 번호 중복", "order": "조 번호 순서 오류",
+              "regname": "현행 목록에 없는 내규명 인용", "stale": "옛 기관명·직위"}
+    for code, n in cnt.items():
+        w, cap = _H_W[code]
+        pen += min(n * w, cap)
+        reasons.append(f"{labels[code]} {n}건")
+    rd = rev_date(r.get("revision", ""))
+    age = None
+    if rd:
+        y, mth = int(rd[:4]), int(rd[4:6])
+        ty, tm = int(today[:4]), int(today[4:6])
+        age = round(((ty - y) * 12 + (tm - mth)) / 12, 1)
+        ap = 15 if age >= 5 else 8 if age >= 3 else 4 if age >= 2 else 0
+        if ap:
+            pen += ap
+            reasons.append(f"{age:g}년째 개정 없음")
+    laws = cited_laws(r)
+    stale_laws = []
+    for nm in laws:
+        info = law_info.get(nm) or {}
+        ef = re.sub(r"\D", "", str(info.get("ef") or ""))[:8]
+        if rd and len(ef) == 8 and rd < ef <= today:
+            stale_laws.append({"law": nm, "ef": ef})
+    if stale_laws:
+        pen += min(len(stale_laws) * 8, 32)
+        reasons.append(f"내규 개정 뒤 시행된 상위법 {len(stale_laws)}건")
+    score = max(0, 100 - pen)
+    grade = next(g for g, cut in _H_GRADE if score >= cut)
+    return {"slug": r["slug"], "title": r["title"], "category": r["category"], "revision": r.get("revision", ""),
+            "rev_date": rd, "age": age, "score": score, "grade": grade, "counts": cnt,
+            "issues": iss[:12], "laws": laws, "stale_laws": stale_laws, "reasons": reasons,
+            "n_articles": len(r["articles"])}
+
+
+@bp.route("/api/regagent/health", methods=["GET", "POST"])
+def ra_health():
+    """전체 내규 건강검진. POST {law_info:{법령명:{ef:YYYYMMDD}}} 를 주면 상위법 최신성까지 반영."""
+    b = request.get_json(silent=True) or {}
+    law_info = b.get("law_info") if isinstance(b.get("law_info"), dict) else {}
+    today = time.strftime("%Y%m%d")
+    rows = [health_row(r, law_info, today) for r in all_regs()]
+    rows.sort(key=lambda x: (x["score"], -(x["age"] or 0)))
+    grades = {g: sum(1 for x in rows if x["grade"] == g) for g in "ABCDE"}
+    all_laws = sorted({nm for x in rows for nm in x["laws"]})
+    n = len(rows) or 1
+    return jsonify({"success": True, "today": today, "count": len(rows),
+                    "rules": {"weights": _H_W, "grades": _H_GRADE,
+                              "age": "2년 -4 · 3년 -8 · 5년 이상 -15", "law": "상위법 건당 -8(최대 -32)"},
+                    "avg": round(sum(x["score"] for x in rows) / n, 1), "grades": grades,
+                    "with_errors": sum(1 for x in rows if x["counts"].get("ref") or x["counts"].get("dup") or x["counts"].get("order")),
+                    "with_issues": sum(1 for x in rows if x["reasons"]),
+                    "issue_total": sum(sum(x["counts"].values()) for x in rows),
+                    "stale_regs": sum(1 for x in rows if x["stale_laws"]),
+                    "old_regs": sum(1 for x in rows if (x["age"] or 0) >= 3),
+                    "laws": all_laws, "law_checked": len(law_info), "rows": rows})
+
+
+_LAW_FRESH: dict = {}
+
+
+@bp.route("/api/regagent/health/laws", methods=["POST"])
+def ra_health_laws():
+    """상위법 최신 시행일 조회(법제처). body {names:[...]} — 서버리스 시간 제한에 맞춰 한 번에 최대 12건."""
+    b = request.get_json(silent=True) or {}
+    names = [str(x).strip() for x in (b.get("names") or []) if str(x).strip()][:12]
+    look = _CTX.get("law_info")
+    if not look:
+        return jsonify({"success": False, "error": "법령 조회를 사용할 수 없습니다."}), 503
+    out = {}
+    todo = []
+    for nm in names:
+        c = _LAW_FRESH.get(nm)
+        if c and time.time() - c["at"] < 6 * 3600:
+            out[nm] = c["v"]
+        else:
+            todo.append(nm)
+    if todo:
+        import concurrent.futures as cf
+
+        def one(nm):
+            try:
+                v = look(nm) or {}
+                return nm, {"ef": v.get("ef", ""), "status": v.get("status", ""), "name": v.get("name", ""),
+                            "found": bool(v.get("mst") or v.get("id")) and v.get("rank", 99) <= 1}
+            except Exception as e:
+                return nm, {"error": str(e)[:120]}
+        with cf.ThreadPoolExecutor(max_workers=6) as ex:
+            for nm, v in ex.map(one, todo):
+                out[nm] = v
+                if "error" not in v:
+                    _LAW_FRESH[nm] = {"at": time.time(), "v": v}
+    return jsonify({"success": True, "laws": out,
+                    "failed": sum(1 for v in out.values() if v.get("error"))})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 12. 에이전트 모드 — 한 문장 지시 → 작업 계획(종류·대상 내규·조문·의도)
+# ══════════════════════════════════════════════════════════════════════════
+_ENACT_RE = re.compile(r"(제정|새로\s*만들|새\s*(?:내규|규정|규칙|지침)|만들어\s*(?:줘|주세요|야)|만들고\s*싶|신규\s*(?:내규|규정|지침))")
+_BULK_RE = re.compile(r"[“\"'「]?([가-힣A-Za-z0-9·()\s]{2,24}?)[”\"'」]?\s*(?:을|를|에서)\s*[“\"'「]?([가-힣A-Za-z0-9·()\s]{2,24}?)[”\"'」]?\s*(?:으로|로)\s*[가-힣\s]{0,14}?(?:바꾸|바꿔|바뀌|변경|정비|교체|고치|고쳐)")
+_ARROW_RE = re.compile(r"[“\"'「]?([가-힣A-Za-z0-9·()]{2,24})[”\"'」]?\s*(?:→|->|=>)\s*[“\"'「]?([가-힣A-Za-z0-9·()]{2,24})[”\"'」]?")
+_LAW_IN_RE = re.compile(r"「([^」]{2,40}(?:법|법률|시행령|시행규칙))」|([가-힣·\s]{2,30}?(?:법|법률)(?:\s*시행령|\s*시행규칙)?)(?=\s|이|가|의|을|를|에|$)")
+
+
+def heuristic_plan(req: str) -> dict:
+    t = (req or "").strip()
+    plan = {"mode": "amend", "intent": t, "reasoning": []}
+    bulk_kw = re.search(r"(모든|전체|일괄|모두|전\s*내규|명칭|부서명|직위|기관명|이름이\s*바뀌)", t)
+    m = _ARROW_RE.search(t) or (_BULK_RE.search(t) if bulk_kw else None)
+    if m and (bulk_kw or "→" in t or "->" in t):
+        _clean = lambda w: re.sub(r"\s*(?:명칭|이름|용어|표현|표기|단어|문구)$", "", w.strip()).strip()
+        plan.update(mode="bulk", old=_clean(m.group(1)), new=_clean(m.group(2)))
+        plan["reasoning"].append(f"“{plan['old']}” → “{plan['new']}” 용어 변경이므로 모든 내규 일괄 정비로 판단")
+        return plan
+    lm = None
+    if re.search(r"(개정|바뀌|변경|시행|신설|삭제)", t):
+        for mm in _LAW_IN_RE.finditer(t):
+            nm = (mm.group(1) or mm.group(2) or "").strip()
+            if nm and not nm.endswith(("규정", "규칙")) or (nm and "법" in nm):
+                lm = nm
+                break
+    if lm and re.search(r"(상위법|법령|법률|시행령|시행규칙|「)", t) and not re.search(r"(내규|규정|규칙|지침)을\s*(?:고치|개정)", t):
+        plan.update(mode="upper", law=re.sub(r"\s+", " ", lm),
+                    arts=[re.sub(r"\s+", "", x) for x in re.findall(r"제\s*\d+\s*조(?:\s*의\s*\d+)?", t)])
+        plan["reasoning"].append(f"상위 법령 「{plan['law']}」 개정에 따른 영향 분석으로 판단")
+        return plan
+    if _ENACT_RE.search(t) and not re.search(r"개정", t):
+        tm = re.search(r"([가-힣A-Za-z0-9·\s]{2,30}?(?:규정|규칙|지침|요령|기준|세칙))", t)
+        title = re.sub(r"^(새로운?|신규|새)\s*", "", tm.group(1).strip()) if tm else ""
+        plan.update(mode="enact", title=title, purpose=t, contents="")
+        plan["reasoning"].append("새 내규를 만드는 요청으로 판단" + (f" — 내규명 「{title}」" if title else ""))
+        return plan
+    plan["reasoning"].append("기존 내규 조문을 고치는 요청으로 판단")
+    return plan
+
+
+def _resolve_targets(plan: dict, req: str):
+    """개정: 대상 내규·조문을 고른다(명시된 내규명 우선, 없으면 유사 검색)."""
+    reg = None
+    for r in sorted(all_regs(), key=lambda x: -len(x["title"])):
+        if _nk(r["title"]) and _nk(r["title"]) in _nk(req):
+            reg = r
+            break
+    if not reg and plan.get("reg_hint"):
+        reg = find_reg("", plan["reg_hint"])
+    q = " ".join(x for x in [plan.get("intent") or req, req] if x)[:600]
+    sim = similar_search(q, "", 15)
+    if not reg and sim["regs"]:
+        reg = find_reg(sim["regs"][0]["slug"])
+        plan["reasoning"].append(f"유사 검색으로 「{reg['title']}」을(를) 대상으로 선택(관련도 1위)")
+    elif reg:
+        plan["reasoning"].append(f"요청에 내규명 「{reg['title']}」이(가) 있어 대상으로 선택")
+    if not reg:
+        return
+    plan["reg"] = {"slug": reg["slug"], "title": reg["title"], "category": reg["category"]}
+    nos = [re.sub(r"\s+", "", x).replace("제", "").replace("조", "") for x in re.findall(r"제\s*\d+\s*조(?:\s*의\s*\d+)?", req)]
+    nos = [n for n in nos if any(a["no"] == n for a in reg["articles"])]
+    if not nos:
+        g = next((g for g in sim["regs"] if g["slug"] == reg["slug"]), None)
+        if not g:
+            g = (similar_search(q + " " + reg["title"], "", 15)["regs"] or [{}])
+            g = next((x for x in g if x.get("slug") == reg["slug"]), None)
+        if g:
+            top = g["articles"][0]["score"] if g["articles"] else 0
+            nos = [a["no"] for a in g["articles"] if a["score"] >= top * 0.55][:3]
+            if nos:
+                plan["reasoning"].append("관련 조문: " + ", ".join(art_label(n) for n in nos) + " (내용 일치도 기준)")
+    else:
+        plan["reasoning"].append("요청에 적힌 조문: " + ", ".join(art_label(n) for n in nos))
+    plan["articles"] = [{"no": a["no"], "title": a["title"]} for a in reg["articles"] if a["no"] in nos]
+
+
+@bp.route("/api/regagent/plan", methods=["POST"])
+def ra_plan():
+    b = request.get_json(silent=True) or {}
+    req = (b.get("request") or "").strip()
+    if len(req) < 4:
+        return jsonify({"success": False, "error": "무엇을 하고 싶은지 한 문장으로 적어 주세요."}), 400
+    plan = heuristic_plan(req)
+    provider, key, model = _ai_conf(b)
+    plan["ai"] = False
+    if key or provider == "ollama":
+        mdl = model or _CTX["default_model_for"](provider, key)
+        system = f"""당신은 {ORG['org_name']} {ORG['reg_word']} 제·개정 에이전트의 작업 계획 담당입니다.
+사용자의 한 문장 요청을 분석해 JSON만 반환하세요.
+{{"mode": "enact|amend|bulk|upper",
+  "intent": "개정·제정 의도를 실무 문장으로 1~2문장",
+  "reg_hint": "개정 대상 내규명(알 수 있으면, 없으면 빈 문자열)",
+  "title": "제정 시 내규명(없으면 제안)", "purpose": "제정 목적", "contents": "제정 시 주요 내용(줄바꿈 구분, '제목: 내용')",
+  "old": "일괄 정비 시 바뀌기 전 용어", "new": "바뀐 뒤 용어",
+  "law": "상위법 영향 분석 시 법령명", "arts": ["제N조"],
+  "why": "이렇게 판단한 이유 1문장"}}
+- enact: 새 내규를 만듦 / amend: 특정 내규 조문을 고침 / bulk: 기관명·부서명·직위·내규명 등 용어를 모든 내규에서 바꿈 / upper: 상위 법령이 바뀌어 영향받는 내규를 찾음"""
+        text, err = _CTX["ai_generate"](provider, key, mdl, system, f"요청: {req}", max_tokens=1200, temperature=0.1, json_mode=True)
+        if not err:
+            try:
+                d = _json_from(text)
+                if d.get("mode") in ("enact", "amend", "bulk", "upper"):
+                    keep = plan.get("reasoning", [])
+                    plan = {k: v for k, v in d.items() if k in ("mode", "intent", "reg_hint", "title", "purpose", "contents", "old", "new", "law", "arts")}
+                    plan["reasoning"] = [f"AI 판단: {d.get('why') or plan['mode']}"] + [x for x in keep if x.startswith("“")]
+                    plan["ai"] = True
+                    plan["model"] = f"{provider}:{mdl}"
+            except Exception:
+                plan["reasoning"].append("AI 계획을 해석하지 못해 규칙 기반 판단을 사용")
+        else:
+            plan["reasoning"].append(f"AI 호출 실패로 규칙 기반 판단 사용({err[:60]})")
+    if plan["mode"] == "amend":
+        plan.setdefault("intent", req)
+        _resolve_targets(plan, req)
+        if not plan.get("reg"):
+            return jsonify({"success": False, "error": "개정할 내규를 찾지 못했습니다. 내규명을 함께 적어 주세요.", "plan": plan}), 404
+    if plan["mode"] == "enact":
+        plan.setdefault("purpose", req)
+        plan["title"] = plan.get("title") or ""
+    if plan["mode"] == "bulk" and not (plan.get("old") and plan.get("new")):
+        plan["mode"] = "amend"
+        _resolve_targets(plan, req)
+    plan["request"] = req
+    return jsonify({"success": True, "plan": plan})

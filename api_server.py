@@ -1220,6 +1220,7 @@ _reg_agent.register(
     vec_ready=lambda: _vec_load()["mat"] is not None,
     hwpx_base_bytes=_hwpx_base_bytes,
     hwpx_full_border=_hwpx_full_border,
+    law_info=lambda name: _lookup_law(name, "law"),
 )
 
 
