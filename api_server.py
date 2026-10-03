@@ -5,6 +5,7 @@ KOAT 규정 제·개정 에이전트 — API 서버
 """
 
 import os, json, re, time, threading, webbrowser
+from datetime import datetime, timedelta, timezone
 import xml.etree.ElementTree as ET
 # 신뢰할 수 없는 XML(업로드 파일·외부 법령 XML)의 엔티티 폭탄(billion laughs) 방어.
 # defusedxml 이 있으면 그 파서를 쓰고, 없으면 표준 파서로 폴백한다.
@@ -23,6 +24,8 @@ from urllib3.util.retry import Retry
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
+app.json.ensure_ascii = False                 # 한글을 \uXXXX 로 늘리지 않는다(응답 크기 1/2~1/3)
+app.config["MAX_CONTENT_LENGTH"] = 45 * 1024 * 1024   # 요청 본문 상한(내규 원문 업로드 40MB + 여유)
 # CORS는 교차 출처(다른 웹사이트) 호출에만 적용된다. 이 앱의 프론트엔드는
 # 동일 출처(/api/... 상대경로)라 아래 제한과 무관하게 항상 동작한다.
 # 열린 CORS를 두면 임의의 외부 사이트가 브라우저에서 서버의 AI 키를 대신
@@ -310,7 +313,7 @@ def _lookup_law(law_name: str, target: str = "law") -> dict:
         items = [el for el in root if _mst_of(el)] or \
                 [el for el in root.iter() if el is not root and _mst_of(el)]
         want = _norm_key(law_name)
-        today = time.strftime("%Y%m%d")
+        today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")   # 한국 날짜
 
         def _txt(it, *tags):
             for t in tags:
@@ -353,6 +356,7 @@ def _lookup_law(law_name: str, target: str = "law") -> dict:
         print(f"[MST] '{law_name}'({target}) 실패 — 태그: {sorted({e.tag for e in root.iter()})}")
     except Exception as e:
         print(f"[MST] 오류: {e}")
+        out["error"] = str(e)[:120]          # 조회 실패를 '법령 없음'과 구분(실패는 캐시하지 않음)
     return out
 
 
@@ -900,6 +904,9 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
                  max_tokens: int = 1800, temperature: float = 0.2,
                  json_mode: bool = False):
     """프로바이더 공통 텍스트 생성. 반환: (text, error_message). 실패 시 text=''."""
+    # 모델명은 URL 경로·요청 본문에 그대로 들어가므로 형식을 확인한다(경로 조작 방지)
+    if mdl and not re.fullmatch(r"[\w.:\-]{1,80}", mdl):
+        return "", "모델 이름 형식이 올바르지 않습니다."
     try:
         if provider == "gemini":
             url = (f"https://generativelanguage.googleapis.com/v1beta/models"
@@ -1048,7 +1055,12 @@ def serve_regulation_file(subpath):
     if any(part.startswith(".") for part in subpath.replace("\\", "/").split("/")):
         return Response("<h1>404</h1>", status=404, mimetype="text/html; charset=utf-8")
     try:
-        return send_from_directory(REG_DIR, subpath)
+        resp = send_from_directory(REG_DIR, subpath)
+        # vercel.json 과 같은 보안 헤더 — 업로드된 원문 HTML 안의 스크립트가 실행되지 않게
+        resp.headers["Content-Security-Policy"] = ("default-src 'self'; script-src 'none'; object-src 'none'; frame-src 'none'; "
+                                                   "style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'")
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        return resp
     except Exception:
         return Response("<h1>404 — 규정 파일을 찾을 수 없습니다</h1>",
                         status=404, mimetype="text/html; charset=utf-8")

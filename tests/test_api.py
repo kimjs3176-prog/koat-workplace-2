@@ -109,3 +109,13 @@ def test_citation_graph(client):
 def test_quoted_name_does_not_span_brackets(ra):
     names = [m.group(1) for m in ra._QUOTED_NAME.finditer("「정관 및「직제규정」")]
     assert names == ["직제규정"]
+
+
+def test_bulk_rejects_overly_common_terms(client):
+    r = client.post("/api/regagent/bulk", json={"old": "한다", "new": "하여야 한다", "whole": False})
+    assert r.status_code == 400 and len(r.data) < 10_000
+
+
+def test_korean_json_not_escaped(client):
+    r = client.get("/api/regagent/config")
+    assert "\\u" not in r.get_data(as_text=True)[:2000]

@@ -7,6 +7,7 @@
   "reg_word": "내규",
   "rules_name": "내규관리규칙",
   "email_domain": "koat.or.kr",
+  "lint_refs": {"deleted": "제6조제2항", "title": "제5조제3호", "addenda": "제5조제5호"},
   "notice_days": 20,
   "staff_days": 7,
   "stale_terms": [

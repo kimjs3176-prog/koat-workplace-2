@@ -91,3 +91,56 @@ def test_xml_escape_in_documents(ra):
 
 def test_org_format(ra):
     assert "{" not in ra.ofmt("{org}·{head}")
+
+
+# ── 서버 검토에서 찾은 결함의 회귀 테스트 ────────────────────────────────────
+def test_replace_term_short_word_boundary(ra):
+    out, hits = ra.replace_term("이사장은 이사회를 소집하고 이사는 출석한다.", "이사", "임원")
+    assert out == "이사장은 이사회를 소집하고 임원은 출석한다." and len(hits) == 1
+
+
+def test_replace_term_long_name_derivative(ra):
+    out, _ = ra.replace_term("기획운영본부장은 기획운영본부를", "기획운영본부", "경영기획본부")
+    assert out == "경영기획본부장은 경영기획본부를"
+
+
+def test_replace_term_compound_particles(ra):
+    got = [ra.replace_term(t, "부서", "팀")[0] for t in ["부서와의", "부서로부터", "부서로서", "부서와는"]]
+    assert got == ["팀과의", "팀으로부터", "팀으로서", "팀과는"]
+
+
+def test_internal_refs_after_common_words(ra):
+    assert ra.internal_refs("방법 제3조에 따른다") and ra.internal_refs("운영 제3조")
+    assert not ra.internal_refs("근로기준법 제3조") and not ra.internal_refs("같은 법 시행령 제3조")
+
+
+def test_style_hints_need_word_boundary(ra):
+    p = ra.parse_text("제1조(목적) 공동조사와 노동조합 및 비상기구를 둔다.")
+    assert not [i for i in ra.lint_articles(p["articles"], "", title="x") if i["code"] == "style"]
+
+
+def test_lint_counts_paragraphs_on_one_line(ra):
+    p = ra.parse_text("제2조(정의) ① 가를 말한다. ② 나를 말한다.")
+    assert not [i for i in ra.lint_articles(p["articles"], "", title="x") if i["code"] == "hang1"]
+
+
+def test_org_profile_validation(ra):
+    org = ra._check_org({**ra._ORG_DEFAULT, "stale_terms": [["구", "신", "2020"], "x", ["옛", "새"]],
+                         "review_criteria": [{"id": "a"}, {"id": "b", "t": "기준"}], "notice_days": "abc"})
+    assert org["stale_terms"] == [["옛", "새"]]
+    assert [c["id"] for c in org["review_criteria"]] == ["b"]
+    assert org["notice_days"] == ra._ORG_DEFAULT["notice_days"]
+
+
+def test_sanitize_html_blocks_script_vectors():
+    import reg_import as ri
+    for h in ["<svg/onload=alert(1)>", "<a href=javascript:alert(1)>x</a>", '<a href="jav&#x61;script:alert(1)">x</a>']:
+        out = ri._sanitize_html(h).lower()
+        assert "onload" not in out and "javascript" not in out and "&#x61;" not in out
+    assert ri._sanitize_html('<a href="https://law.go.kr">ok</a>') == '<a href="https://law.go.kr">ok</a>'
+
+
+def test_reg_slug_limits():
+    import reg_import as ri
+    assert len(ri.reg_slug("가" * 120).encode("utf-8")) <= 200
+    assert ri.reg_slug("a\x00b#c%d/e") == "abcde"

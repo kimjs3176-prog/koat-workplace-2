@@ -177,6 +177,7 @@ python scripts/import_regulations.py <폴더> --dry-run          # 변환만 시
    - `notice_days`·`staff_days`: 사전예고·직원 의견수렴 기간
    - `drafting_rules`·`rules_summary`: AI 초안 작성 기준과 작성 기준 요약
    - `review_criteria`: 심의 사전검토 기준(id·제목·근거 조항·설명)
+   - `lint_refs`: 점검 메시지에 붙일 「내규관리규칙」 근거 조항(`deleted`·`title`·`addenda`). 없으면 조항 없이 안내합니다.
    - `procedure.questions`·`procedure.steps`: 절차 질문과 단계. 단계의 `when`(모두 일치)·`unless`(하나라도 일치하면 제외)로 조건을 줍니다.
    - `procedure.phases`: 국면(입안·의견수렴·심의·시행 등). `parallel: true`인 국면의 단계는 같은 기간에 진행된다고 보고 일정을 계산합니다.
    - `procedure.actors`: 프로세스 맵의 행위 주체(레인). `m`은 단계 `who`에서 주체를 찾는 정규식입니다.

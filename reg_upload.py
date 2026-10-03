@@ -21,6 +21,9 @@ from urllib.parse import quote
 import requests as req_lib
 from flask import Blueprint, Response, jsonify, request
 
+import hmac
+from urllib.parse import quote as _q
+
 import reg_import as ri
 from reg_import import (REG_DIR, REG_MANIFEST_PATH, _KST, now_kst as _now_kst,  # noqa: F401
                         reg_slug as _reg_slug, guess_category as _guess_reg_category,
@@ -168,9 +171,14 @@ def _upload_authorized() -> tuple[bool, str]:
         if _gh_enabled():
             return (False, "이 서버는 업로드가 리포지토리에 자동 커밋되므로 "
                            "REG_UPLOAD_TOKEN 설정이 필요합니다. 관리자에게 문의하세요.")
-        return (True, "")
+        # 토큰이 없으면 이 PC에서 띄운 개발 서버(루프백)만 허용한다. 공개 서버에서 익명 업로드를
+        # 허용하려면 REG_UPLOAD_ALLOW_ANON=1 을 명시해야 한다(fail-closed).
+        if os.environ.get("REG_UPLOAD_ALLOW_ANON", "").strip() == "1" or \
+                (request.remote_addr or "") in ("127.0.0.1", "::1"):
+            return (True, "")
+        return (False, "업로드 토큰(REG_UPLOAD_TOKEN)이 설정되지 않은 서버입니다. 관리자에게 문의하세요.")
     tok = (request.form.get("token") or request.headers.get("X-Upload-Token") or "").strip()
-    if tok == REG_UPLOAD_TOKEN:
+    if hmac.compare_digest(tok.encode("utf-8"), REG_UPLOAD_TOKEN.encode("utf-8")):
         return (True, "")
     return (False, "업로드 토큰이 올바르지 않습니다.")
 
@@ -326,7 +334,7 @@ def _gh_get_manifest():
 def _gh_dir(path: str, ref: str = ""):
     """저장소 디렉터리 목록. 없으면 []."""
     try:
-        d = _gh("GET", f"/contents/{path}", params={"ref": ref or GITHUB_BRANCH})
+        d = _gh("GET", f"/contents/{_q(path, safe='/')}", params={"ref": ref or GITHUB_BRANCH})
         return d if isinstance(d, list) else []
     except Exception:
         return []
@@ -335,7 +343,7 @@ def _gh_dir(path: str, ref: str = ""):
 def _gh_file(path: str, ref: str = ""):
     """저장소 파일 내용(bytes). 없으면 None."""
     try:
-        d = _gh("GET", f"/contents/{path}", params={"ref": ref or GITHUB_BRANCH})
+        d = _gh("GET", f"/contents/{_q(path, safe='/')}", params={"ref": ref or GITHUB_BRANCH})
         if isinstance(d, dict) and d.get("content"):
             return base64.b64decode(d["content"])
         # 1MB 초과 파일은 content 가 비므로 blob 으로 받는다
@@ -519,6 +527,11 @@ def reg_upload():
     slug = _reg_slug(title)
     if not slug:
         return jsonify({"error": "규정명에서 저장 폴더명을 만들 수 없습니다."}), 400
+    # 서로 다른 규정명이 같은 폴더(slug)로 모이면 기존 규정 파일을 덮어쓰게 되므로 막는다
+    clash = next((m for m in _load_reg_manifest()
+                  if m.get("slug") == slug and _norm_key(m.get("title", "")) != _norm_key(title)), None)
+    if clash:
+        return jsonify({"error": f"「{clash.get('title')}」과(와) 저장 폴더가 겹칩니다. 규정명을 정확히 입력하세요."}), 409
 
     stored_ext = ".pdf" if ext == ".pdf" else ext
     entry = {
@@ -705,7 +718,8 @@ def reg_upload_delete():
     _ok, _why = _upload_authorized()
     if not _ok:
         return jsonify({"error": _why}), 401
-    slug = (request.form.get("slug") or (request.json or {}).get("slug") or "").strip()
+    jb = request.get_json(silent=True)
+    slug = str(request.form.get("slug") or (jb.get("slug") if isinstance(jb, dict) else "") or "").strip()
     if not slug or "/" in slug or "\\" in slug or slug.startswith("."):
         return jsonify({"error": "slug 값이 올바르지 않습니다."}), 400
 

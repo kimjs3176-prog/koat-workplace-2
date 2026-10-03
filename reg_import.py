@@ -78,9 +78,11 @@ def now_kst() -> str:
 def reg_slug(title: str) -> str:
     """규정명 → 디렉터리 슬러그. 기존 manifest 규칙(공백→_)을 따른다."""
     s = unicodedata.normalize("NFC", (title or "").strip())
-    s = re.sub(r"[\\/:*?\"<>|]+", "", s)          # 경로·윈도우 금지문자 제거
+    s = re.sub(r"[\\/:*?\"<>|#%\x00-\x1f\x7f]+", "", s)   # 경로·윈도우 금지문자·URL 예약문자·제어문자 제거
     s = re.sub(r"\s+", "_", s).strip("._")
-    return s[:120]
+    # 파일시스템 이름 한도(255바이트) 안에서 자른다 — 한글은 글자당 3바이트
+    b = s.encode("utf-8")[:200]
+    return b.decode("utf-8", "ignore").strip("._")
 
 
 
@@ -250,12 +252,27 @@ _SCRIPT_RE = re.compile(
     re.I | re.S)
 _SCRIPT_OPEN_RE = re.compile(
     r"<\s*/?\s*(script|iframe|object|embed|applet|link|meta|base)\b[^>]*>", re.I)
-_ON_ATTR_RE = re.compile(r"\son[a-z]+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
+_ON_ATTR_RE = re.compile(r"[\s/\"']on[a-z]+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)   # <svg/onload=…> 도
 # srcdoc/formaction 은 스크립트 실행 경로가 되므로 속성째 제거
 _DANGER_ATTR_RE = re.compile(
     r"\s(srcdoc|formaction)\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
 _JS_URL_RE = re.compile(
-    r"(href|src)\s*=\s*(\"|')\s*(?:javascript|data|vbscript):[^\"']*(\2)", re.I)
+    r"(href|src|action|xlink:href)\s*=\s*(\"|')\s*(?:javascript|data|vbscript):[^\"']*(\2)", re.I)
+_JS_URL_BARE_RE = re.compile(r"(href|src|action|xlink:href)\s*=\s*(?:javascript|data|vbscript):[^\s>]*", re.I)
+_ENTITY_RE = re.compile(r"&#(x[0-9a-f]+|\d+);?", re.I)
+
+
+def _unentity_urls(html: str) -> str:
+    """href/src 값 속 숫자 문자 참조(jav&#x61;script:)를 풀어 아래 검사에 걸리게 한다."""
+    def dec(m):
+        v = m.group(1)
+        try:
+            ch = chr(int(v[1:], 16) if v[0] in "xX" else int(v))
+        except (ValueError, OverflowError):
+            return m.group(0)
+        return ch if ch.isascii() and (ch.isalnum() or ch in ":/") else m.group(0)
+    return re.sub(r"((?:href|src|action|xlink:href)\s*=\s*[\"']?)([^\"'\s>]*)",
+                  lambda m: m.group(1) + _ENTITY_RE.sub(dec, m.group(2)), html, flags=re.I)
 
 
 def _sanitize_html(html: str) -> str:
@@ -269,7 +286,9 @@ def _sanitize_html(html: str) -> str:
     out = _SCRIPT_OPEN_RE.sub("", out)
     out = _ON_ATTR_RE.sub("", out)
     out = _DANGER_ATTR_RE.sub("", out)
+    out = _unentity_urls(out)
     out = _JS_URL_RE.sub(r"\1=\2#\2", out)
+    out = _JS_URL_BARE_RE.sub(r'\1="#"', out)
     return out
 
 
