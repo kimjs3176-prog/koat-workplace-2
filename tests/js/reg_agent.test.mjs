@@ -111,3 +111,49 @@ test('날짜 도우미: 월말·윤년·잘못된 값', () => {
   RA.proc.plan = { start: 'garbage' };
   assert.match(c.raSchedule([]).start, /^\d{4}-\d{2}-\d{2}$/);
 });
+
+test('raNormNo: 항·호 번호는 버리고 조 번호만', () => {
+  const c = load();
+  assert.equal(c.raNormNo('제 7 조 제2항'), '7');
+  assert.equal(c.raNormNo('제31조제2항'), '31');
+  assert.equal(c.raNormNo('제7조의2'), '7의2');
+  assert.equal(c.raNormNo('7의2'), '7의2');
+  assert.equal(c.raNormNo('abc'), '');
+});
+
+test('raCmpCell: 항 신설로 번호가 밀려도 같은 내용끼리 짝짓는다', () => {
+  const c = load();
+  const r = c.raCmpCell({ no: '2', title: 't', body: '① 가는 x이다.\n② 나는 y이다.' }, { no: '2', title: 't', body: '① 가는 x이다.\n② 새로 넣은 항이다.\n③ 나는 y이다.' }, false);
+  const rows = r[3].split('\n');
+  assert.equal(rows.length, 3);
+  assert.match(r[1], /<u class="ra-i">② 새로 넣은 항이다\.<\/u>/);   // 신설 항은 통째로 추가 표시
+  assert.ok(!/<u class="ra-i">③ 나는 y이다/.test(r[1]));           // 기존 항은 번호만 바뀐 것으로 비교
+});
+
+test('raParse: “부칙으로”·“제3조(정의)에 따른”은 본문으로 본다', () => {
+  const c = load();
+  const p = c.raParse('제1조(목적) 가.\n부칙으로 정하는 사항은 따로 정한다.\n제2조(정의) 나.\n제3조(정의)에 따른 용어는 같다.\n제4조(기타) 다.');
+  assert.equal(JSON.stringify(p.articles.map(a => a.no)), JSON.stringify(['1', '2', '4']));
+  assert.equal(p.addenda, '');
+});
+
+test('raProcEval: unless 조건이 미답변이면 확정하지 않는다(요약 목록에는 포함)', () => {
+  const c = load();
+  const RA = c.__RA();
+  RA.proc.ans = {};
+  const confirm = c.raProcEval().find(s => s.id === 'confirm');
+  assert.equal(confirm.st, 'tbd');
+  RA.proc.ans = { level: 'rule' };
+  const staff = c.raProcEval().find(s => s.id === 'staff');
+  assert.equal(staff.st, 'tbd');                                    // 경미한 변경 여부 미답변
+  assert.ok(c.raProcSteps().some(s => s.id === 'staff'));           // 에이전트 요약에는 포함
+});
+
+test('raProcState: 앞 국면의 미정 단계도 관문을 막는다', () => {
+  const c = load();
+  const RA = c.__RA();
+  RA.proc.ans = { level: 'rule', minor: 'n', multi: 'n', impact: 'n', burden: 'n' };   // public 미답변 → 사전예고 미정
+  RA.proc.chk = { draft: 1, check: 1, staff: 1 };
+  const st = c.raProcState();
+  assert.ok(st.live.find(s => s.id === 'review').locked);
+});
