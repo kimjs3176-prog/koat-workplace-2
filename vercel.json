@@ -5,7 +5,15 @@
       "src": "api/index.py",
       "use": "@vercel/python",
       "config": {
-        "maxLambdaSize": "50mb"
+        "maxLambdaSize": "50mb",
+        "excludeFiles": "{node_modules/**,tests/**,.github/**}"
+      }
+    },
+    {
+      "src": "api/kordoc.mjs",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": "kordoc_core.mjs"
       }
     },
     {
@@ -26,6 +34,10 @@
     }
   ],
   "routes": [
+    {
+      "src": "/api/kordoc/(status|lint|bundle)",
+      "dest": "/api/kordoc.mjs?action=$1"
+    },
     {
       "src": "/api/(.*)",
       "dest": "/api/index.py"

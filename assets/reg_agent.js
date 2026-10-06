@@ -733,13 +733,8 @@ function raReviewSec(mode){
   return `<div class="ra-row"><button class="svc-btn" onclick="raReview('${mode}')">${raIc('check')}심의 사전검토</button>${raTip(`필요성·적합성·통일성·명료성·체제·공개 등 ${_e(RA_ORG.reg_word)}심의 기준으로 미리 점검합니다${raHasAi()?'(AI 검토의견·위임 범위 검토 포함)':''}. 결과는 「사전검토 의견서」로 저장됩니다.`)}</div><div id="raReview">${raReviewView(RA[mode].review)}</div>`;
 }
 function raDocReview(c, mode){
-  const d=RA[mode].review;
-  if(!d) return '심의 사전검토를 먼저 실행하세요(위의 「심의 사전검토」).';
-  const L=[`「${c.title}」 ${c.word}(안) 심의 사전검토 의견서`,'',`검토 기준: 「${raRules()}」 심의사항`, `검토일: ${raToday(0)}`,''];
-  d.rows.forEach((r,i)=>{ L.push(`${i+1}. ${r.t}(${r.ref}) — ${RA_ST[r.status][0]}`); r.items.forEach(x=>L.push(`  - ${x.msg}`)); if(r.ai) L.push(`  ※ 검토의견: ${r.ai}`); L.push(''); });
-  if(d.delegation) L.push('■ 위임 범위·상위법 저촉 검토', `  ${d.delegation}`, '');
-  if(d.overall) L.push('■ 종합의견', `  ${d.overall}`);
-  return L.join('\n');
+  const o=raOutReview(c, mode);
+  return o?raOutText(o):'심의 사전검토를 먼저 실행하세요(위의 「심의 사전검토」).';
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -778,26 +773,62 @@ function raDocLaw(c){
   L.push('','부    칙',...raAddendaLines(c.addenda));
   return L.join('\n').replace(/\n{3,}/g,'\n\n');
 }
-function raDocReason(c){
-  const L=[`「${c.title}」 ${c.word} 이유서`,'',`1. ${c.word} 이유`, `  ${c.purpose||`○○에 필요한 사항을 정하기 위하여 「${c.title}」을(를) ${c.word}하려는 것임.`}`,'',`2. 주요 내용`];
-  const main=c.main.length?c.main:(c.mode==='enact'?c.arts.slice(2).map(a=>`${a.title}에 관한 사항을 정함(안 ${raLbl(a.no)})`):c.changes.map(ch=>`${ch.title||raLbl(ch.no)} ${ch.type==='insert'?'신설':ch.type==='delete'?'삭제':'정비'}(안 ${raLbl(ch.no)})`));
-  main.forEach((m,i)=>L.push(`  ${'가나다라마바사아자차카타파하'[i]||'-'}. ${m}`));
-  L.push('','3. 관련 근거');
-  if(c.dels.length) c.dels.forEach(d=>L.push(`  - 「${d.law}」 ${d.art}`)); else L.push(`  - 「${raRules()}」 제14조(입안)`);
-  L.push('','4. 행정사항',`  - 시행일: ${raAddendaLines(c.addenda)[0]||''}`,'  - 관련 부서 협의: ○○팀(협의 완료/예정)',`  - 사전예고·직원 의견수렴: 「${raRules()}」 제15조의3·제15조의4에 따라 실시(해당 시)`,'  - 붙임: 신구조문대비표 1부.');
+// ── 공문서 문서(이유서·사전예고문·의견수렴 공고·사전검토 의견서) ─────────────────────────
+// 내용은 하나의 개요(outline)로 만들고, 화면·복사용 글과 kordoc 공문서 마크다운(항목부호 1. 가. 1) …를 엔진이 붙임)을 같은 개요에서 만든다.
+// 표기는 행정업무운영편람 기준(kordoc gongmunseo): 날짜 “2026. 10. 6.”, 기간 “∼” 붙여 씀, “붙임  … 1부.  끝.”(쌍점 없음, 두 칸)
+const RA_KD_PRESET={reason:'계획서', notice:'통지', staff:'통지', review:'계획서'};
+function raOutText(o){
+  const L=[o.title,''];
+  if(o.lead) L.push(o.lead,'');
+  o.items.forEach((it,i)=>{ L.push(`${i+1}. ${it.t}`); (it.s||[]).forEach((x,j)=>L.push(`  ${'가나다라마바사아자차카타파하'[j]||'-'}. ${x}`)); L.push(''); });
+  L.push(o.tail||'끝.');
   return L.join('\n');
 }
-function raDocNotice(c, staff){
-  const days=staff?(+RA_ORG.staff_days||7):(+RA_ORG.notice_days||20); const from=raToday(0), to=raToday(days);
-  const L=[ staff?`「${c.title}」 ${c.word}(안) 직원 의견수렴 공고`:`「${c.title}」 ${c.word}(안) 사전예고`, '',
-    staff?`「${c.title}」을(를) ${c.word}하기에 앞서 임직원의 의견을 듣고자 「${raRules()}」 제15조의4에 따라 다음과 같이 알립니다.`
-         :`${RA_ORG.org_name} 「${c.title}」을(를) ${c.word}함에 있어 국민·기관·단체의 의견을 듣고자 「${raRules()}」 제15조의3에 따라 다음과 같이 예고합니다.`,
-    '', `1. ${RA_ORG.reg_word}명: ${c.title}`, '', `2. ${c.word} 이유`, `  ${c.purpose||'○○'}`, '', '3. 주요 내용'];
-  (c.main.length?c.main:['○○']).forEach((m,i)=>L.push(`  ${'가나다라마바사아자차카타파하'[i]||'-'}. ${m}`));
-  L.push('', `4. 의견 제출`, `  가. 기간: ${from} ~ ${to} (${days}일 이상)`, `  나. 제출처: ${c.dept} (전화 ○○○-○○○○-○○○○, 전자우편 ○○○@${RA_ORG.email_domain||'example.or.kr'})`,
-    `  다. 제출 방법: 의견서에 ${staff?'소속·':''}성명, 전화번호, 전자우편 주소를 적어 전자우편 또는 ${staff?'내부포털':'서면'}으로 제출`,
-    '', '5. 붙임: 신구조문대비표 1부.  끝.');
+function raMdEsc(s){ return String(s==null?'':s).replace(/\s*\n\s*/g,' ').replace(/[\\`*_<>|[\]#]/g,'\\$&'); }
+function raOutMd(o){
+  const L=['# '+raMdEsc(o.title),''];
+  if(o.lead) L.push(raMdEsc(o.lead),'');
+  o.items.forEach((it,i)=>{ L.push(`${i+1}. ${raMdEsc(it.t)}`); (it.s||[]).forEach(x=>L.push(`  - ${raMdEsc(x)}`)); });
+  L.push('',raMdEsc(o.tail||'끝.').replace(/\\/g,''));
   return L.join('\n');
+}
+const RA_BUNIM='붙임  신구조문대비표 1부.  끝.';
+function raOutReason(c){
+  const main=c.main.length?c.main:(c.mode==='enact'?c.arts.slice(2).map(a=>`${a.title}에 관한 사항을 정함(안 ${raLbl(a.no)})`):c.changes.map(ch=>`${ch.title||raLbl(ch.no)} ${ch.type==='insert'?'신설':ch.type==='delete'?'삭제':'정비'}(안 ${raLbl(ch.no)})`));
+  return {title:`「${c.title}」 ${c.word} 이유서`, items:[
+    {t:`${c.word} 이유`, s:[c.purpose||`○○에 필요한 사항을 정하기 위하여 「${c.title}」을(를) ${c.word}하려는 것임.`]},
+    {t:'주요 내용', s:main.length?main:['○○']},
+    {t:'관련 근거', s:c.dels.length?c.dels.map(d=>`「${d.law}」 ${d.art}`):[`「${raRules()}」 제14조(입안)`]},
+    {t:'행정사항', s:[`시행일: ${raAddendaLines(c.addenda)[0]||''}`,'관련 부서 협의: ○○팀(협의 완료/예정)',`사전예고·직원 의견수렴: 「${raRules()}」 제15조의3·제15조의4에 따라 실시(해당 시)`]},
+  ], tail:RA_BUNIM};
+}
+function raOutNotice(c, staff){
+  const days=staff?(+RA_ORG.staff_days||7):(+RA_ORG.notice_days||20);
+  return {title:staff?`「${c.title}」 ${c.word}(안) 직원 의견수렴 공고`:`「${c.title}」 ${c.word}(안) 사전예고`,
+    lead:staff?`「${c.title}」을(를) ${c.word}하기에 앞서 임직원의 의견을 듣고자 「${raRules()}」 제15조의4에 따라 다음과 같이 알립니다.`
+              :`${RA_ORG.org_name} 「${c.title}」을(를) ${c.word}함에 있어 국민·기관·단체의 의견을 듣고자 「${raRules()}」 제15조의3에 따라 다음과 같이 예고합니다.`,
+    items:[
+      {t:`${RA_ORG.reg_word}명: ${c.title}`},
+      {t:`${c.word} 이유`, s:[c.purpose||'○○']},
+      {t:'주요 내용', s:c.main.length?c.main:['○○']},
+      {t:'의견 제출', s:[`기간: ${raToday(0)}∼${raToday(days)}(${days}일 이상)`,
+        `제출처: ${c.dept}(전화 ○○○-○○○○-○○○○, 전자우편 ○○○@${RA_ORG.email_domain||'example.or.kr'})`,
+        `제출 방법: 의견서에 ${staff?'소속·':''}성명, 전화번호, 전자우편 주소를 적어 전자우편 또는 ${staff?'내부포털':'서면'}으로 제출하시기 바랍니다.`]},
+    ], tail:RA_BUNIM};
+}
+function raOutReview(c, mode){
+  const d=RA[mode].review; if(!d) return null;
+  const items=d.rows.map(r=>({t:`${r.t}(${r.ref}): ${RA_ST[r.status][0]}`, s:[...r.items.map(x=>x.msg), ...(r.ai?[`검토의견: ${r.ai}`]:[])]}));
+  if(d.delegation) items.push({t:'위임 범위·상위법 저촉 검토', s:[d.delegation]});
+  if(d.overall) items.push({t:'종합의견', s:[d.overall]});
+  return {title:`「${c.title}」 ${c.word}(안) 심의 사전검토 의견서`, lead:`검토 기준: 「${raRules()}」 심의사항, 검토일: ${raToday(0)}`, items, tail:'끝.'};
+}
+function raDocReason(c){ return raOutText(raOutReason(c)); }
+function raDocNotice(c, staff){ return raOutText(raOutNotice(c, staff)); }
+// kordoc 공문서 마크다운(해당 문서만). 규정안·대비표는 null(내장 생성기 사용)
+function raDocMd(B, k, mode){
+  const o=k==='reason'?raOutReason(B.c):k==='notice'?raOutNotice(B.c,false):k==='staff'?raOutNotice(B.c,true):k==='review'?raOutReview(B.c,mode):null;
+  return o?raOutMd(o):null;
 }
 function raDocCmpRows(c){
   if(c.mode==='enact') return c.arts.map(a=>{ const t=raArtText(a); return ['&lt;신 설&gt;', `<u class="ra-i">${_e(t).replace(/\n/g,'<br>')}</u>`, '<신 설>', t]; });
@@ -817,8 +848,9 @@ function raDocsView(mode){
   else body=`<pre class="ra-doc">${_e(B[tab])}</pre>`;
   const all=`<span class="ra-picks" title="저장할 문서">`+RA_DOCS[mode].map(([k,l])=>`<label class="ra-pk-c"><input type="checkbox" class="ra-docpick" value="${k}" checked><span>${raIc(RA_DOC_IC[k]||'doc')}${l}</span></label>`).join('')+`</span>`;
   return `<div class="ra-dtabs">${tabs}</div><div class="ra-docbox">${body}</div>`+
+    `<div id="raKdLint">${raKdLintView(mode)}</div>`+
     `<div class="ra-save">${all}<div class="ra-row"><button class="svc-btn ghost" onclick="raCopyDoc('${mode}')">복사</button><button class="svc-btn ghost" onclick="raPrintDoc('${mode}')">인쇄</button>`+
-    `<span class="ra-sep"></span><button class="svc-btn yes" onclick="raExport('${mode}','hwpx')">한글(.hwpx)</button><button class="svc-btn" onclick="raExport('${mode}','docx')">Word(.docx)</button></div></div>`+
+    `<span class="ra-sep"></span><button class="svc-btn yes" onclick="raExport('${mode}','hwpx')" title="이유서·사전예고문·의견수렴 공고·사전검토 의견서는 kordoc 공문서 서식(항목부호·여백·글꼴 표준)으로, 규정안·신구조문대비표는 밑줄 표시를 살린 기본 서식으로 만듭니다. 여러 문서는 ZIP으로 묶습니다.">한글(.hwpx)</button><button class="svc-btn" onclick="raExport('${mode}','docx')">Word(.docx)</button></div></div>`+
     `<div class="ra-meta"><span class="ra-days">사전예고 ${RA_ORG.notice_days}일↑</span><span class="ra-days">직원 의견수렴 ${RA_ORG.staff_days}일↑</span>${raTip(`사전예고는 국민 권리·의무 관련 ${RA_ORG.reg_word}(「${raRules()}」 제15조의3제2항)일 때, 직원 의견수렴은 제15조의4 — 절차 안내를 확인하세요.`)}</div>`;
 }
 function raCopyDoc(mode){
@@ -854,11 +886,65 @@ async function raSaveFile(fmt, name, blocks, label){
     _toast(`${label||name}을(를) ${fmt==='docx'?'Word':'한글'} 파일로 저장했습니다.`);
   }catch(e){ _toast('서버 연결에 실패했습니다.'); }
 }
-function raExport(mode, fmt){
+async function raExport(mode, fmt){
   const picks=[...document.querySelectorAll('.ra-docpick:checked')].map(x=>x.value);
   if(!picks.length){ _toast('저장할 문서를 고르세요.'); return; }
   const B=raDocsBuild(mode), names=Object.fromEntries(RA_DOCS[mode]);
+  // 한글은 kordoc 공문서 서식(항목부호·여백·글꼴 표준)으로 문서별 파일을 만들고, 안 되면 기본 생성기로 한 파일에 담는다
+  if(fmt==='hwpx' && await raKdReady()){ const ran=await raOnce('kdExport:'+mode, ()=>raExportKordoc(mode, picks)); if(!ran||_raKdOk) return; }
   raSaveFile(fmt, `${B.c.title}_${B.c.word}안`, raDocBlocks(B,picks), picks.map(k=>names[k]).join('·'));
+}
+// ── kordoc(https://github.com/chrisryugj/kordoc) 연동: 공문서 서식 HWPX·표기법 점검 ─────────
+let RA_KD=null, _raKdOk=false;                 // RA_KD: null 미확인 · true/false 서버에서 사용 가능 여부
+async function raKdReady(){ if(RA_KD!==null) return RA_KD; const d=await raGet('/api/kordoc/status'); RA_KD=!!(d&&d.success); return RA_KD; }
+function raB64(buf){ const u=new Uint8Array(buf); let s=''; for(let i=0;i<u.length;i+=0x8000) s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000)); return btoa(s); }
+function raDispName(r, dflt){ const m=/filename\*=UTF-8''([^;]+)/i.exec(r.headers.get('Content-Disposition')||''); try{ return m?decodeURIComponent(m[1]):dflt; }catch(e){ return dflt; } }
+async function raExportKordoc(mode, picks){
+  _raKdOk=false;
+  const B=raDocsBuild(mode), names=Object.fromEntries(RA_DOCS[mode]), files=[], skipped=[];
+  _toast('공문서 서식(kordoc)으로 한글 파일을 만드는 중...');
+  try{
+    for(const k of picks){
+      const name=`${B.c.title}_${names[k]}`, md=raDocMd(B,k,mode);
+      if(md) files.push({name, preset:RA_KD_PRESET[k], markdown:md});
+      else if(k==='review'){ skipped.push(names[k]); }
+      else {                                              // 규정안·신구조문대비표: 밑줄 표시가 있는 기본 생성기
+        const r=await fetch('/api/regagent/hwpx',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:name, blocks:raDocBlocks(B,[k])})});
+        if(!r.ok) throw new Error('hwpx');
+        files.push({name, data_b64:raB64(await r.arrayBuffer())});
+      }
+    }
+    if(!files.length){ _toast('저장할 문서가 없습니다. 심의 사전검토를 먼저 실행하세요.'); _raKdOk=true; return; }
+    const r=await fetch('/api/kordoc/bundle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:`${B.c.title}_${B.c.word}안_문서세트`, files})});
+    if(!r.ok) throw new Error('bundle '+r.status);
+    const blob=await r.blob(), fname=raDispName(r, `${B.c.title}_${B.c.word}안.hwpx`);
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fname; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },500);
+    _raKdOk=true;
+    _toast(`${files.length}개 문서를 공문서 서식 한글 파일로 저장했습니다${files.length>1?'(ZIP)':''}.`+(skipped.length?` ${skipped.join('·')}는 심의 사전검토 후 저장하세요.`:''), 5000);
+  }catch(e){ console.warn('[kordoc]', e); RA_KD=null; _toast('공문서 서식 변환에 실패해 기본 한글 파일로 저장합니다.'); }
+}
+// 공문서 표기 점검(kordoc lint): 날짜·기간·붙임·끝·쌍점·금액 표기, 생성형 AI 문체 흔적
+const RA_KD_DOCS=['reason','notice','staff','review'];
+async function raKdLint(mode){
+  if(!await raKdReady()){ _toast('표기 점검 엔진(kordoc)을 쓸 수 없는 서버입니다.'); return; }
+  const B=raDocsBuild(mode), texts={};
+  RA_KD_DOCS.forEach(k=>{ if(k!=='review'||RA[mode].review) texts[k]=B[k]; });
+  const box=document.getElementById('raKdLint'); if(box) box.innerHTML=raSpin('공문서 표기를 점검하는 중...');
+  const d=await raPost('/api/kordoc/lint',{texts});
+  if(!d.success){ if(box) box.innerHTML=raErr(d.error||'점검 실패'); return; }
+  RA[mode].kdLint={at:raToday(0), res:d.results}; _raSave(); if(box) box.innerHTML=raKdLintView(mode);
+}
+function raKdLintView(mode){
+  const L=RA[mode].kdLint, names=Object.fromEntries(RA_DOCS[mode]), tab=RA[mode].docTab||'law';
+  const btn=`<button class="svc-btn sm" onclick="raKdLint('${mode}')">${raIc('check')}공문서 표기 점검</button>`;
+  const tip=raTip('kordoc 공문서 규칙(행정업무운영편람)으로 이유서·사전예고문·의견수렴 공고·사전검토 의견서의 날짜·기간·붙임·끝·쌍점·금액 표기와 생성형 AI 문체 흔적(줄표 등)을 점검합니다. 문서를 고친 뒤에는 다시 점검하세요.');
+  if(!L) return `<div class="ra-row ra-kd">${btn}${tip}</div>`;
+  const chips=Object.entries(L.res).map(([k,f])=>{ const e=f.filter(x=>x.severity==='error').length;
+    return `<button class="ra-chip btn ${f.length?(e?'hi':'warn'):''}" onclick="raSet('${mode}.docTab','${k}');raRerender('${mode}')">${_e(names[k]||k)} ${f.length?f.length+'건':'✓'}</button>`; }).join('');
+  const cur=L.res[tab];
+  const list=cur&&cur.length?`<ul class="ra-lint">`+cur.map(f=>`<li class="lv-${f.severity==='error'?'error':'warn'}"><span>${raIc(f.severity==='error'?'bad':'alert')}</span><span>${f.line?`${f.line}행 `:''}“${_e(f.match)}” — ${_e(f.message)}${f.suggest?` <em class="ra-fix">${_e(f.suggest)}</em>`:''}</span></li>`).join('')+`</ul>`
+    :cur?`<div class="ra-ok">${raIc('check')}${_e(names[tab]||'')} 표기 문제 없음</div>`:'';
+  return `<div class="ra-row ra-kd">${btn}${tip}<span class="ra-sub">${_e(L.at)} 점검</span>${chips}</div>${list}`;
 }
 
 // ══════════════════════════════════════════════════════════════════════════

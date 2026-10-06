@@ -67,6 +67,10 @@
 ### 📄 문서 세트
 내규안(개정문)·제·개정 이유서·신구조문대비표·대국민 사전예고문·직원 의견수렴 공고·사전검토 의견서를 미리 보고, **복사·인쇄·한글(.hwpx)·Word(.docx) 저장**합니다.
 
+- **공문서 서식(kordoc)**: 이유서·사전예고문·의견수렴 공고·사전검토 의견서는 [kordoc](https://github.com/chrisryugj/kordoc)의 공문서 모드로 행정업무운영편람 서식(항목부호 1. 가. 1) 가), 내어쓰기, 여백·글꼴)의 한글 파일로 만듭니다. 규정안·신구조문대비표는 밑줄 표시를 살린 기본 서식으로 만들고, 여러 문서는 ZIP으로 묶습니다.
+- **공문서 표기 점검**: kordoc 규칙으로 날짜(“2026. 10. 6.”)·기간(“∼”)·“붙임  … 1부.  끝.”·쌍점·금액 표기와 생성형 AI 문체 흔적(줄표 등)을 점검합니다.
+- AI 초안 작성 기준에도 같은 공문서 표기법을 넣어, 제·개정 이유·주요 내용이 처음부터 개조식·표준 표기로 나오게 합니다.
+
 ### 붙여넣은 규정으로 개정
 개정 탭에서 **원문 붙여넣기**를 고르면 등록되지 않은 내규나 다른 기관 규정도 바로 불러와 수정안·대비표·인용 정정·점검·사전검토를 할 수 있습니다.
 
@@ -92,6 +96,7 @@
 | 기관 내규 원문 | 저장소 `regulations/` (KOAT 126건) · 상단 **📤 내규 등록**(`/upload`) 또는 `scripts/import_regulations.py`로 등록·갱신 |
 | 상위 법령 조문 | 법제처 국가법령정보센터 Open API |
 | 작성 기준·절차·심의기준 | 기관 프로필 `org_config.json` (KOAT: 「내규관리규칙」 제5조·제6조·제8조·제14조~제28조) |
+| 공문서 서식·표기 규칙 | [kordoc](https://github.com/chrisryugj/kordoc) (MIT, chrisryugj) — 행정안전부 「행정업무운영편람」 기준 |
 
 ---
 
@@ -119,6 +124,7 @@
 | `GET·POST /api/regagent/health` | 규정 건강검진(점수·등급·우선순위) |
 | `POST /api/regagent/health/laws` | 상위법 현행 시행일 조회(법제처, 6건씩) |
 | `GET /api/regagent/graph` | 내규 인용 관계망(노드·간선·옛 명칭/없는 내규명 인용) |
+| `POST /api/kordoc/bundle` · `/lint` · `GET /status` | kordoc 공문서 서식 한글 파일(여러 개면 ZIP)·공문서 표기 점검 |
 | `GET /api/regagent/config` | 기관 프로필 |
 | `/upload`, `/api/regs/upload`·`/status`·`/delete` | 내규 원문 등록·되돌리기(토큰 보호, 저장소 자동 커밋) |
 | `POST /api/regagent/hwpx` · `/docx` | 문서 세트 한글(.hwpx)·Word(.docx) 생성 |
@@ -127,8 +133,10 @@
 ### 로컬 실행
 ```bash
 pip install -r requirements.txt
+npm install                  # 선택: 공문서 서식 한글 파일·표기 점검(kordoc, Node.js 20 이상)
 python run_local.py          # http://localhost:5100 (PORT 환경변수로 변경 가능)
 ```
+`npm install`을 하지 않으면 한글 파일은 기본 서식으로 저장되고 표기 점검은 쓸 수 없습니다. Vercel은 `api/kordoc.mjs`(Node 함수)로 자동 처리합니다.
 
 ### 테스트
 ```bash
@@ -196,6 +204,7 @@ python scripts/import_regulations.py <폴더> --dry-run          # 변환만 시
 ├── index.html                 # 화면 틀·AI 설정
 ├── assets/reg_agent.js·css    # 규정 제·개정 에이전트 화면
 ├── reg_agent.py               # 에이전트 API(/api/regagent/*)
+├── kordoc_core.mjs            # kordoc 공문서 HWPX 생성·표기 점검(api/kordoc.mjs·kordoc_cli.mjs·kordoc_bridge.py가 사용)
 ├── org_config.json            # 기관 프로필(명칭·절차·심의기준) — 다른 기관은 이 파일을 고침
 ├── reg_import.py              # 내규 원문(HWPX·DOCX·TXT…) → 에이전트 데이터 변환
 ├── reg_upload.py              # 내규 원문 등록(/upload)·되돌리기·저장소 자동 커밋

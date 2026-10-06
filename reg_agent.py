@@ -756,9 +756,20 @@ def similar_search(query: str, exclude: str = "", limit: int = 8) -> dict:
 # ══════════════════════════════════════════════════════════════════════════
 # 5. AI 프롬프트
 # ══════════════════════════════════════════════════════════════════════════
+# 공문서 표기법 — 행정안전부 「행정업무운영편람」 기준(kordoc gongmunseo 스킬 규칙을 따름). 제·개정 이유·주요 내용·검토의견에 적용
+_GONGMUN_RULES = [
+    "날짜는 “2026. 10. 6.”처럼 온점 뒤 한 칸, 월·일의 0은 쓰지 않고 끝에도 온점. 기간은 물결표를 붙여 “10. 6.∼10. 26.”",
+    "법령·내규명은 낫표 「」로 쓰고, 쌍점은 앞말에 붙이고 뒤에 한 칸(“시행일: …”)",
+    "제·개정 이유와 주요 내용은 개조식 명사형(“…하려는 것임”, “…을 정함”)으로 씀(조문 본문은 종전대로 “…한다” 체)",
+    "줄표(— – ―)·작은따옴표 강조·선언형 문장은 쓰지 않고, 외래어는 행정용어로(파일럿→시범, 리스크→위험 요인, 벤치마크→준용)",
+    "금액은 숫자와 한글을 함께(“금30,000원(금삼만원)”), 시각은 24시각제(“09:00”)",
+]
+
+
 def _rules() -> str:
     lines = [ofmt(x) for x in ORG.get("drafting_rules") or []]
-    return f"[{ORG['org_short']} 내규 작성 기준 — 「{ORG['rules_name']}」]\n" + "\n".join("- " + x for x in lines)
+    return (f"[{ORG['org_short']} 내규 작성 기준 — 「{ORG['rules_name']}」]\n" + "\n".join("- " + x for x in lines)
+            + "\n[공문서 표기법 — 행정업무운영편람]\n" + "\n".join("- " + x for x in _GONGMUN_RULES))
 
 
 def _json_from(text: str):
@@ -1561,7 +1572,7 @@ def review_draft(b: dict) -> dict:
         f("clear", "check", f"알기 쉬운 표기 제안 {len(style)}건: " + "; ".join(i["fix"] or i["msg"] for i in style[:5]))
     longs = [a for a in arts for s_ in re.split(r"(?<=[.다])\s", a.get("body", "")) if len(s_) > 180]
     if longs:
-        f("clear", "check", "한 문장이 180자를 넘는 조문: " + ", ".join(sorted({art_label(a["no"]) for a in longs}, key=lambda x: art_key(re.sub(r"[제조]", "", x)))[:6]) + " — 나누어 쓰는 것을 검토하세요.")
+        f("clear", "check", "한 문장이 180자를 넘는 조문: " + ", ".join(sorted({art_label(a["no"]) for a in longs}, key=lambda x: art_key(re.sub(r"[제조]", "", x)))[:6]) + ". 나누어 쓰는 것을 검토하세요.")
     if not style and not longs:
         f("clear", "ok", "표기·문장 길이에서 특이사항이 없습니다.")
     # 체제·효력
@@ -1579,13 +1590,13 @@ def review_draft(b: dict) -> dict:
         f("open", "check", "절차 안내 탭에서 해당 여부(국민 권리·의무 관련, 부서 협의 등)를 답하면 필요한 절차를 확인합니다.")
     else:
         if ans.get("public") == "y":
-            f("open", "check", f"국민 권리·의무 관련 — 대국민 사전예고({ORG['notice_days']}일 이상) 대상입니다.")
+            f("open", "check", f"국민 권리·의무 관련: 대국민 사전예고({ORG['notice_days']}일 이상) 대상입니다.")
         if ans.get("multi") == "y":
-            f("open", "check", "2개 이상 부서 소관 — 사전 합의·협의 결과를 첨부하세요.")
+            f("open", "check", "2개 이상 부서 소관: 사전 합의·협의 결과를 첨부하세요.")
         if ans.get("impact") == "y":
-            f("open", "check", "국민 생활·기업 영향 — 부패영향평가 요청 대상입니다.")
+            f("open", "check", "국민 생활·기업 영향: 부패영향평가 요청 대상입니다.")
         if ans.get("burden") == "y":
-            f("open", "check", "유사 행정규제 — 자체 규제심사서를 함께 제출하세요.")
+            f("open", "check", "유사 행정규제: 자체 규제심사서를 함께 제출하세요.")
         if not F.get("open"):
             f("open", "ok", "추가 협의·예고 대상이 아닌 것으로 답했습니다.")
     rows = []
