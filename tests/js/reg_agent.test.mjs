@@ -157,3 +157,36 @@ test('raProcState: 앞 국면의 미정 단계도 관문을 막는다', () => {
   const st = c.raProcState();
   assert.ok(st.live.find(s => s.id === 'review').locked);
 });
+
+// ── kordoc 공문서 표기: 우리가 만드는 이유서·사전예고문·공고가 kordoc 점검을 통과해야 한다 ──
+const kordocCore = await import(path.join(root, 'kordoc_core.mjs')).catch(() => null);
+
+function docCtx(c) {
+  const RA = c.__RA();
+  RA.amend = Object.assign(RA.amend, { title: '여비규정', purpose: '일비를 현실화하려는 것임.', main: ['일비를 3만원으로 상향함(안 제15조)'],
+    changes: [{ type: 'modify', no: '15', title: '일비', body: '일비는 3만원으로 한다.' }], addenda: '이 규정은 발령한 날부터 시행한다.' });
+  return c.raDocsBuild('amend');
+}
+
+test('공문서 문서: 붙임은 쌍점 없이 두 칸, 기간은 물결표 붙여 씀', () => {
+  const c = load(); const B = docCtx(c);
+  for (const k of ['reason', 'notice', 'staff']) {
+    assert.ok(!/붙임\s*:/.test(B[k]), k);
+    assert.match(B[k], /붙임 {2}신구조문대비표 1부\. {2}끝\.$/);
+  }
+  assert.match(B.notice, /\d+\. \d+\. \d+\.∼\d+\. \d+\. \d+\./);
+  const md = c.raDocMd(B, 'notice', 'amend');
+  assert.match(md, /^# 「여비규정」/);
+  assert.match(md, /\n1\. 여비규정|\n1\. 내규명/);
+  assert.match(md, /\n {2}- /);                    // 하위 항목 → kordoc 가. 부호
+  assert.equal(c.raDocMd(B, 'law', 'amend'), null);  // 규정안은 기본 생성기
+});
+
+test('공문서 문서가 kordoc 표기 점검(오류)을 통과', { skip: !kordocCore && 'kordoc 미설치' }, async () => {
+  const c = load(); const B = docCtx(c);
+  const r = await kordocCore.handle('lint', { texts: { reason: B.reason, notice: B.notice, staff: B.staff } });
+  for (const [k, f] of Object.entries(r.json.results)) {
+    const errs = f.filter(x => x.severity === 'error');
+    assert.equal(errs.length, 0, `${k}: ${JSON.stringify(errs)}`);
+  }
+});

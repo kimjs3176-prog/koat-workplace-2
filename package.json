@@ -1,0 +1,10 @@
+{
+  "name": "koat-regagent",
+  "private": true,
+  "description": "규정 제·개정 에이전트 — kordoc 공문서 HWPX 생성·표기법 점검(Node 서버리스)",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "kordoc": "^4.18.13"
+  }
+}
