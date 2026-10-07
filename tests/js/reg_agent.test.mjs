@@ -275,3 +275,12 @@ test('완성도: 절차 — 대안 단계는 조건이 맞는(soft) 쪽을 고�
   assert.ok(sc.total > 0);
   assert.equal(typeof sc.tbd, 'number');
 });
+
+test('알리오: 검색어 추정·옛 판 괄호 제거', () => {
+  const c = load();
+  const RA = c.__RA();
+  RA.enact.title = '임직원 여비규정'; assert.equal(c.raAlioGuess('enact'), '여비');
+  RA.enact.title = '업무용 드론 운영지침'; assert.equal(c.raAlioGuess('enact'), '드론');
+  RA.amend.title = '여비규정'; assert.equal(c.raAlioGuess('amend'), '여비');
+  assert.equal(c.alioBase('인사규정(2023년 1월 개정)'), '인사규정');
+});

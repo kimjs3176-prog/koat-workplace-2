@@ -357,7 +357,9 @@ function raEnactView(){
     `<div class="ra-grid2"><label class="ra-f"><span>제정 목적</span>${raTa('enact.purpose',E.purpose,'왜 이 내규가 필요한지 — 예) 업무용 드론의 안전한 운영과 사고 예방',4)}</label>`+
     `<label class="ra-f"><span>주요 내용 ${raTip('한 줄에 하나씩 — “제목: 내용” 형식이면 조 제목으로 씁니다')}</span>${raTa('enact.contents',E.contents,'운영책임자: 부서별 드론 운영책임자를 지정\n비행승인: 비행 3일 전까지 운영책임자 승인\n보험: 배상책임보험 가입 의무',4)}</label></div>`;
   const s2=raDelegView();
-  const s3=`<div class="ra-row"><button class="svc-btn" onclick="raFindSimilar()">${raIc('search')}유사 규정 찾기</button>${raTip(`목적·주요 내용으로 기관 내규${_raCatalog?' '+_raCatalog.length+'건':''}에서 비슷한 조문을 찾습니다. 체크한 조문은 초안 작성 때 참고합니다.`)}</div><div id="raSim">${raSimView()}</div>`;
+  const simSeg=`<div class="ra-seg sm" style="margin-bottom:10px"><button class="${E.simSrc!=='alio'?'on':''}" onclick="raSet('enact.simSrc','own');raRerender('enact')">우리 기관</button><button class="${E.simSrc==='alio'?'on':''}" onclick="raSet('enact.simSrc','alio');raRerender('enact')">다른 기관(알리오)</button></div>`;
+  const s3=simSeg+(E.simSrc==='alio'?raAlioView('enact'):`<div class="ra-row"><button class="svc-btn" onclick="raFindSimilar()">${raIc('search')}유사 규정 찾기</button>${raTip(`목적·주요 내용으로 기관 내규${_raCatalog?' '+_raCatalog.length+'건':''}에서 비슷한 조문을 찾습니다. 체크한 조문은 초안 작성 때 참고합니다.`)}</div><div id="raSim">${raSimView()}</div>`)+
+    (E.simSrc==='alio'&&Object.keys(E.refs||{}).length?`<div class="ra-meta">참고로 고른 조문 <b id="raRefCnt">${Object.keys(E.refs).length}</b>개${Object.values(E.refs).some(r=>r.src==='alio')?` (다른 기관 ${Object.values(E.refs).filter(r=>r.src==='alio').length}개)`:''} <button class="ra-link" onclick="RA.enact.refs={};_raSave();raRerender('enact')">모두 빼기</button></div>`:'');
   const s4=`<div class="ra-row"><button class="svc-btn yes" onclick="raEnactDraft()">${raIc('spark')}조문 초안 작성</button>`+
     `${raTip(`${raHasAi()?'AI가 위 내용·위임 조항·참고 조문으로 조문 체계와 표준 조문을 씁니다.':'AI 키가 없으면 표준 조문 골격(목적·정의·적용범위·본칙·세부사항·부칙)을 만들어 드립니다.'}`)}</div><div id="raDraft">${raEnactDraftView()}</div>`;
   return raSec(1,'기본 정보','',s1)+raPair(raSec(2,'상위법 위임 조항','선택',s2),raSec(3,'유사 규정 참고','',s3))+raSec(4,'조문 초안','',s4,'raSecDraft')+
@@ -522,7 +524,8 @@ function raAmendView(){
     `<div><label class="ra-f"><span>시행일</span>${raIn('amend.effective',A.effective,'비우면 “발령한 날”')}</label>`+
     `<label class="ra-f"><span>참고 자료 ${raTip('상위법 개정 내용 등(선택)')}</span>${raTa('amend.refText',A.refText,'예) 「공무원 여비 규정」 별표 개정(2026.1.1.)',2)}</label></div></div>`+
     `<div class="ra-row"><button class="svc-btn yes" onclick="raAmendDraft()">${raIc('spark')}수정안 작성</button><button class="svc-btn" onclick="raAmendManual()">선택 조문 직접 고치기</button><button class="svc-btn ghost" onclick="raAddInsert()">＋ 조문 신설</button>${raClausePick('amend')}`+
-    `${raTip(`${raHasAi()?'체크한 조문(없으면 AI가 목차를 보고 고름)에 개정 의도를 반영합니다.':'AI 키가 없으면 체크한 조문을 직접 고쳐 쓰세요.'}`)}</div>`;
+    `${raTip(`${raHasAi()?'체크한 조문(없으면 AI가 목차를 보고 고름)에 개정 의도를 반영합니다.':'AI 키가 없으면 체크한 조문을 직접 고쳐 쓰세요.'}`)}</div>`+
+    `<details class="ra-det"${A.alioOpen?' open':''} ontoggle="RA.amend.alioOpen=this.open;_raSave();if(this.open&&!document.getElementById('raAlio'))this.querySelector('.ra-det-b').innerHTML=raAlioView('amend')"><summary>${raIc('bulk')}다른 기관 사규 참고(알리오) · 고른 조문 <b id="raAlioCnt">${Object.keys(A.alioRefs||{}).length}</b>개 ${raTip('같은 종류 규정을 다른 공공기관은 어떻게 정했는지 보고, 고른 조문을 AI 수정안 작성 때 참고합니다.')}</summary><div class="ra-det-b">${A.alioOpen?raAlioView('amend'):''}</div></details>`;
   const s3=`<div id="raChanges">${raChangesView()}</div>`;
   return raSec(1,'대상 내규·조문','',s1)+raSec(2,'개정 의도','',s2)+raSec(3,'조문 수정안','',s3,'raSecChg')+
     (A.changes.length?raSec(4,'신구조문대비표',`<span class="ra-leg"><u class="ra-d">삭제</u><u class="ra-i">추가</u></span>`,`<label class="ra-chk"><input type="checkbox" ${A.abbr?'checked':''} onchange="raSet('amend.abbr',this.checked);raRefreshCmp()"> 바뀌지 않은 항·호는 “(현행과 같음)”으로 줄이기</label><div id="raCmp">${raCmpView()}</div>`)+
@@ -605,7 +608,7 @@ async function _raAmendDraft(){
   const targets=Object.keys(A.sel).map(no=>raOld(no)).filter(Boolean).map(a=>({no:a.no,title:a.title,body:a.body}));
   const dels=A.refText.trim()?[{law:'참고',art:'',text:A.refText}]:[];
   const gen=_raGen.amend;
-  const d=await raPost('/api/regagent/draft',{mode:'amend', ...raRegPayload(), intent:A.intent, effective:A.effective, targets, delegations:dels, ...raAi()});
+  const d=await raPost('/api/regagent/draft',{mode:'amend', ...raRegPayload(), intent:A.intent, effective:A.effective, targets, delegations:dels, refs:Object.values(A.alioRefs||{}), ...raAi()});
   if(gen!==_raGen.amend||A!==RA.amend) return;            // 그사이 다른 내규로 바꿈
   if(!d.success){ if(box) box.innerHTML=raErr(d.error||'수정안 작성 실패', d.need_key); return; }
   const r=d.draft;
@@ -1916,6 +1919,118 @@ function raProcView(){
     `<details class="ra-sec ra-sec-det"><summary class="ra-sec-h"><span class="ra-num">5</span><div class="ra-sec-t"><h2>작성 기준 요약 — 「${_e(raRules())}」</h2></div>${raTip('절차·심의기준·기관 명칭은 기관 프로필(org_config.json)에서 바꿀 수 있습니다')}</summary><div class="ra-rules">${sum||'<div class="ra-empty">기관 프로필에 작성 기준 요약이 없습니다.</div>'}</div></details>`+
     `<div class="ra-foot"><button class="svc-btn ghost sm" onclick="if(confirm('해당 여부 답변·진행 체크·일정을 모두 지울까요?')){RA.proc={ans:{},chk:{},plan:{}};_raSave();raRender();}">절차 초기화</button></div></div>`;
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// 다른 기관 사규(알리오) — 공공기관 경영정보 공개시스템의 내부규정을 찾아 조문을 참고로 쓴다
+// 서버(/api/regagent/alio/*)가 알리오에서 기관 목록·규정 검색·현행본 파일을 받아 조문으로 바꾼다.
+// 기관이 많으면 화면이 12곳씩 나눠 부르고(진행률·중지), 고른 조문은 제정 초안·개정 수정안 작성 때 참고 자료로 넘긴다.
+// ══════════════════════════════════════════════════════════════════════════
+let _raAlioOrgs=null, _raAlioRun=0;
+function raAl(){ RA.alio=RA.alio||{q:'',cat:'',scope:'peer',picked:[],res:null,open:{},old:false}; return RA.alio; }
+async function raAlioOrgs(){
+  if(_raAlioOrgs) return _raAlioOrgs;
+  const d=await raGet('/api/regagent/alio/orgs'); if(!d.success) throw new Error(d.error||'알리오 기관 목록을 불러오지 못했습니다.');
+  _raAlioOrgs=d; return d;
+}
+// 검색어 추정: 내규명에서 종류 끝말을 뗀 핵심어(“업무용 드론 운영지침” → “드론”, “여비규정” → “여비”)
+function raAlioGuess(mode){
+  const t=String(mode==='enact'?RA.enact.title:RA.amend.title||'').replace(/\s*(시행세칙|운영지침|운영규정|운영규칙|관리규정|관리규칙|관리지침|규정|규칙|세칙|지침|요령|기준|예규)$/,'').trim();
+  // 끝말이 핵심어인 경우가 많다(“임직원 여비” → “여비”). 꾸밈말·흔한 말은 뺀다
+  const w=t.split(/\s+/).map(x=>x.replace(/(에관한|에대한|에|의)$/,'')).filter(x=>x.length>=2&&!/^(업무용|관한|대한|운영|관리|및|등|임직원|직원|기관|한국\S*|공공)$/.test(x));
+  return (w[w.length-1]||t).slice(0,20);
+}
+function raAlioScopeIds(D){
+  const S=raAl(), me=D.self, all=D.orgs.filter(o=>o.id!==me);
+  if(S.scope==='pick') return S.picked.filter(id=>D.orgs.some(o=>o.id===id));
+  if(S.scope==='type'){ const t=(D.orgs.find(o=>o.id===me)||{}).type; return all.filter(o=>!t||o.type===t).map(o=>o.id); }
+  if(S.scope==='all') return all.map(o=>o.id);
+  return D.peers.slice();
+}
+function raAlioView(mode){
+  const S=raAl(), D=_raAlioOrgs;
+  if(!D&&!_raBusy.alioOrgs){ _raBusy.alioOrgs=true; raAlioOrgs().then(()=>raAlioRedraw(mode)).catch(()=>{}).finally(()=>{ _raBusy.alioOrgs=false; }); }
+  if(!S.q) S.q=raAlioGuess(mode);
+  const cats=D?Object.entries(D.categories):[['K1100','인사·복무·징계'],['K1200','보수'],['K1300','직제'],['K1400','기타'],['K1500','정관']];
+  const n=k=>{ if(!D) return ''; const o=S.scope; S.scope=k; const c=raAlioScopeIds(D).length; S.scope=o; return ` ${c}곳`; };
+  const scopes=[['peer','유관 기관'],['type','같은 유형'],['all','전체(오래 걸림)'],['pick','직접 고르기']];
+  const head=`<div class="ra-row ra-al-q"><input class="ra-in" style="max-width:200px" placeholder="규정명 검색어 (예: 여비, 드론)" value="${_e(S.q)}" oninput="raAl().q=this.value;_raSave()" onkeydown="if(event.key==='Enter')raAlioSearch('${mode}')">`+
+    `<select class="ra-in sm" style="max-width:130px" onchange="raAl().cat=this.value;_raSave()"><option value="">모든 분류</option>${cats.map(([k,l])=>`<option value="${k}"${S.cat===k?' selected':''}>${_e(l)}</option>`).join('')}</select>`+
+    `<select class="ra-in sm" style="max-width:170px" onchange="raAl().scope=this.value;_raSave();raAlioRedraw('${mode}')">${scopes.map(([k,l])=>`<option value="${k}"${S.scope===k?' selected':''}>${l}${n(k)}</option>`).join('')}</select>`+
+    (S.busy?`<button class="svc-btn ghost" onclick="raAlioStop()">중지</button>`:`<button class="svc-btn" onclick="raAlioSearch('${mode}')">${raIc('search')}알리오에서 찾기</button>`)+
+    raTip('공공기관 경영정보 공개시스템(알리오)에 공시된 다른 기관 내부규정을 규정명으로 찾습니다. 조문을 열어 체크하면 초안·수정안 작성 때 참고합니다. 기관명·직위는 우리 기관에 맞게 바꿔 쓰세요.')+`</div>`;
+  let pick='';
+  if(S.scope==='pick'&&D){ const q=(S.pq||'').replace(/\s+/g,'');
+    const list=D.orgs.filter(o=>o.id!==D.self&&(!q||(o.name+o.dept).replace(/\s+/g,'').includes(q))).slice(0,60);
+    pick=`<div class="ra-pick"><div class="ra-pick-h">기관 고르기 <b>${S.picked.length}</b>곳 <input class="ra-in sm" placeholder="기관명·주무부처" value="${_e(S.pq||'')}" oninput="raAl().pq=this.value;raAlioRedraw('${mode}')"></div><div class="ra-pick-l">`+
+      list.map(o=>`<label class="ra-pick-i"><input type="checkbox" ${S.picked.includes(o.id)?'checked':''} onchange="raAlioPick('${_a(o.id)}',this.checked)"><span><b>${_e(o.name)}</b> <em>${_e(o.dept)} · ${_e(o.type)}</em></span></label>`).join('')+`</div></div>`; }
+  return `<div class="ra-al" id="raAlio">`+head+pick+`<div id="raAlioRes">${raAlioResView(mode)}</div></div>`;
+}
+function raAlioRedraw(mode){ const b=document.getElementById('raAlio'); if(b) b.outerHTML=raAlioView(mode); }
+function raAlioPick(id,on){ const S=raAl(); S.picked=S.picked.filter(x=>x!==id); if(on) S.picked.push(id); _raSave(); }
+function raAlioStop(){ _raAlioRun++; const S=raAl(); S.busy=false; _raSave(); }
+async function raAlioSearch(mode){
+  const S=raAl(); if(!String(S.q).trim()&&!S.cat){ _toast('규정명 검색어를 넣으세요.'); return; }
+  const box=document.getElementById('raAlioRes'); if(box) box.innerHTML=raSpin('알리오 기관 목록을 불러오는 중...');
+  let D; try{ D=await raAlioOrgs(); }catch(e){ if(box) box.innerHTML=raErr(e.message); return; }
+  const ids=raAlioScopeIds(D); if(!ids.length){ if(box) box.innerHTML=raErr('조회할 기관을 고르세요.'); return; }
+  const run=++_raAlioRun, B=D.batch||12;
+  S.busy=true; S.res={q:S.q.trim(), cat:S.cat, total:ids.length, searched:0, hits:[], failed:[], timedOut:[]}; S.open={}; raAlioRedraw(mode);
+  for(let i=0;i<ids.length;i+=B){
+    if(run!==_raAlioRun) return;
+    const d=await raPost('/api/regagent/alio/search',{q:S.res.q, category:S.cat, orgs:ids.slice(i,i+B)});
+    if(run!==_raAlioRun) return;
+    if(!d.success){ S.res.error=d.error||'알리오 조회 실패'; break; }
+    S.res.hits.push(...d.hits); S.res.failed.push(...d.failed); S.res.timedOut.push(...d.timedOut); S.res.searched+=d.searched;
+    const b=document.getElementById('raAlioRes'); if(b) b.innerHTML=raAlioResView(mode);
+  }
+  S.busy=false; _raSave(); raAlioRedraw(mode);
+}
+function raAlioResView(mode){
+  const S=raAl(), R=S.res; if(!R) return `<div class="ra-empty sm">${raIc('search')}다른 기관 사규를 찾아보세요 ${raTip('예) 제정 “드론 운영지침” → 검색어 “드론”, 개정 “여비규정” → “여비”')}</div>`;
+  const hits=R.hits.filter(h=>S.old||!h.superseded);
+  const pct=R.total?Math.round(R.searched/R.total*100):0;
+  let html=(S.busy?`<div class="ra-prog"><i style="width:${pct}%"></i></div>`:'')+
+    `<div class="ra-meta">${R.searched}/${R.total}곳 조회 · 규정 <b>${hits.length}</b>건${R.hits.length>hits.length?` <button class="ra-link" onclick="raAl().old=true;raAlioRedraw('${mode}')">옛 판 ${R.hits.length-hits.length}건 보기</button>`:''}`+
+    (R.failed.length+R.timedOut.length?` · <span class="ra-chip warn" title="${_e([...R.failed,...R.timedOut].map(f=>f.org+': '+f.error).join('\n'))}">조회 못 한 기관 ${R.failed.length+R.timedOut.length}곳</span>`:'')+`</div>`;
+  if(R.error) html+=raErr(R.error);
+  if(!hits.length) return html+(S.busy?'':`<div class="ra-empty sm">찾은 규정이 없습니다. 검색어를 줄이거나(예: “여비규정” → “여비”) 조회 범위를 넓혀 보세요.</div>`);
+  const sel=raAlioSel(mode);
+  html+=`<ul class="ra-al-l">`+hits.slice(0,80).map(h=>{ const k=h.orgId+'|'+h.idx, O=S.open[k];
+    const nsel=Object.keys(sel).filter(x=>x.startsWith('alio|'+k+'|')).length;
+    return `<li class="${O?'on':''}"><div class="ra-al-h"><button class="ra-link ra-al-t" onclick="raAlioOpen('${mode}','${_a(k)}')">${_e(h.title)}</button>`+
+      `<span class="ra-sub">${_e(h.org)} · ${_e(h.categoryName)} · 시행 ${_e(h.enf||'-')}</span>${h.superseded?'<span class="ra-chip">옛 판</span>':''}${nsel?`<span class="ra-chip sem">참고 ${nsel}</span>`:''}</div>`+
+      (O?`<div class="ra-al-b">${raAlioRuleView(mode,k,h,O)}</div>`:'')+`</li>`; }).join('')+`</ul>`+(hits.length>80?`<div class="ra-meta">외 ${hits.length-80}건 — 검색어를 더 구체적으로 넣으세요</div>`:'');
+  return html;
+}
+function raAlioSel(mode){ const S=RA[mode]; if(mode==='enact') return S.refs=S.refs||{}; return S.alioRefs=S.alioRefs||{}; }
+async function raAlioOpen(mode, k){
+  const S=raAl(); if(S.open[k]&&!S.open[k].err){ delete S.open[k]; raAlioResRedraw(mode); return; }
+  const h=S.res.hits.find(x=>x.orgId+'|'+x.idx===k); if(!h) return;
+  S.open[k]={loading:true}; raAlioResRedraw(mode);
+  const ctx=mode==='enact'?[S.res.q,RA.enact.purpose,RA.enact.contents].join(' '):[S.res.q,RA.amend.intent,...Object.keys(RA.amend.sel||{}).map(no=>(raOld(no)||{}).title||'')].join(' ');
+  const d=await raPost('/api/regagent/alio/rule',{orgId:h.orgId, idx:h.idx, category:h.category, table:h.table, idxName:h.idxName, mod:h.mod, q:ctx.slice(0,300)});
+  S.open[k]=d.success?{data:d}:{err:d.error||'규정 파일을 읽지 못했습니다.'}; raAlioResRedraw(mode);
+}
+function raAlioResRedraw(mode){ const b=document.getElementById('raAlioRes'); if(b) b.innerHTML=raAlioResView(mode); }
+function raAlioRuleView(mode,k,h,O){
+  if(O.loading) return raSpin('알리오에서 현행본 파일을 받아 조문을 읽는 중... (5~15초)');
+  if(O.err) return raErr(O.err)+`<button class="ra-link" onclick="raAlioOpen('${mode}','${_a(k)}')">다시 시도</button>`;
+  const d=O.data, sel=raAlioSel(mode);
+  const arts=d.articles.filter(a=>a.score>0||!d.articles.some(x=>x.score>0)).slice(0,8);
+  return `<div class="ra-meta">${_e(d.file.fileName)} · ${d.count}개 조${d.versions>1?` · 제·개정 이력 ${d.versions}건 중 현행본`:''} <a class="ra-link" href="${_e(d.url)}" target="_blank" rel="noopener">알리오 원문↗</a></div>`+
+    (d.warning?`<div class="ra-note ra-note-i">${raIc('info')}<span>${_e(d.warning)}</span></div>`+(d.excerpt?`<pre class="ra-doc" style="max-height:220px">${_e(d.excerpt)}</pre>`:''):'')+
+    arts.map(a=>{ const key=`alio|${k}|${a.no}`;
+      return `<label class="ra-sima"><input type="checkbox" ${sel[key]?'checked':''} onchange="raAlioRef('${mode}','${_a(key)}',this.checked)"><span><b>${_e(raLbl(a.no))}(${_e(a.title)})</b>${a.score>0?' <span class="ra-chip sem">관련</span>':''}<br><em>${_e(a.body.slice(0,320))}${a.body.length>320?'…':''}</em></span></label>`; }).join('')+
+    (d.toc.length?`<details class="ra-det"><summary>조문 체계 ${d.toc.length}개 조</summary><div class="ra-toc" style="display:block">${d.toc.map(_e).join(' · ')}</div></details>`:'');
+}
+function raAlioRef(mode, key, on){
+  const S=raAl(), sel=raAlioSel(mode); const [,org,idx,no]=key.split('|');
+  const h=S.res.hits.find(x=>x.orgId===org&&x.idx===idx), O=S.open[org+'|'+idx]; const a=O&&O.data&&O.data.articles.find(x=>x.no===no);
+  if(on&&h&&a) sel[key]={reg:alioBase(h.title), org:h.org, no:a.no, title:a.title, body:a.body, src:'alio'}; else delete sel[key];
+  _raSave(); const c=document.getElementById('raRefCnt'); if(c) c.textContent=Object.keys(sel).length;
+  const t=document.getElementById('raAlioCnt'); if(t) t.textContent=Object.keys(sel).length;
+}
+function alioBase(t){ return String(t||'').replace(/[(（\[]\s*(?:제정|개정|시행|전부개정|일부개정)?\s*[`'’]?[\d.\s년월일~-]{4,}\s*(?:제정|개정|시행)?\s*[)）\]]/g,'').trim(); }
 
 function raReset(mode){
   if(!confirm(mode==='enact'?'제정 작업 내용을 지우고 새로 시작할까요?':'개정 작업 내용을 지우고 새로 시작할까요?')) return;
