@@ -13,6 +13,8 @@ import re
 import unicodedata
 import xml.etree.ElementTree as ET
 import zipfile
+
+import hwp5
 from datetime import datetime, timedelta, timezone
 
 try:
@@ -489,13 +491,26 @@ def _convert_upload(filename: str, raw: bytes, title: str, meta: dict) -> dict:
                 f'<a class="btn s" href="{src}" download>다운로드</a></div>'
                 f'<p style="margin-top:16px;font-size:12px">본문 검색이 필요하면 한/글에서 '
                 f'HWPX 또는 DOCX로 저장해 다시 올려주세요.</p></div></body></html>')
+        ptext = hwp5.pdf_text(raw)               # 글자 층이 있으면 본문 검색·개정에 쓴다(화면은 원본 PDF)
+        if ptext and re.search(r"제\s*\d+\s*조", ptext):
+            return {"view_html": html, "text": ptext, "converted": False,
+                    "warning": "PDF에서 글자를 뽑아 본문 검색에 씁니다. 줄바꿈이 어긋날 수 있으니 조문을 확인하세요."}
         return {"view_html": html, "text": "", "converted": False,
                 "warning": "PDF는 원본 열기·다운로드로 제공됩니다. 본문 검색이 필요하면 HWPX 또는 DOCX로 올려주세요."}
     elif ext == ".hwp":
-        blocks = []
+        try:                                      # HWP 5.0 본문 추출(암호·배포용·HWP 3.x 는 안내)
+            blocks = [{"type": "p", "text": ln} for ln in hwp5.hwp_text(raw).split("\n")]
+        except ValueError as e:
+            blocks, hwp_err = [], str(e)
+        else:
+            hwp_err = "" if any(b["text"] for b in blocks) else "본문 글자가 없습니다."
     else:
         raise ValueError(f"지원하지 않는 형식입니다: {ext}")
 
+    if ext == ".hwp" and not hwp_err:
+        return {"view_html": _blocks_to_view_html(title, meta, blocks, orig_name=filename),
+                "text": _blocks_to_text(blocks), "converted": True,
+                "warning": "HWP(구버전)에서 본문을 뽑았습니다. 표·각주 배치가 원본과 다를 수 있습니다."}
     if ext == ".hwp":
         html = _blocks_to_view_html(
             title, meta,
@@ -505,7 +520,7 @@ def _convert_upload(filename: str, raw: bytes, title: str, meta: dict) -> dict:
                                    "본문까지 조회·검색됩니다. 원본 파일은 아래 링크로 내려받을 수 있습니다."}],
             orig_name=filename)
         return {"view_html": html, "text": "", "converted": False,
-                "warning": "HWP(구버전)는 본문 자동 변환을 지원하지 않습니다. HWPX로 저장해 올리면 본문까지 검색됩니다."}
+                "warning": f"HWP 본문을 변환하지 못했습니다({hwp_err}). HWPX로 저장해 올리면 본문까지 검색됩니다."}
 
     text = _blocks_to_text(blocks)
     if not text:

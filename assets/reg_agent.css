@@ -699,3 +699,13 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 .ra-stale .ic{color:var(--warn);flex:none;}
 .ra-pk-c.dis{opacity:.5;cursor:not-allowed;}
 .ra-chip[hidden]{display:none;}
+
+/* ── 다른 기관 사규(알리오) ── */
+.ra-al-q{flex-wrap:wrap;}
+.ra-al-l{list-style:none;margin:8px 0 0;padding:0 4px 0 0;display:flex;flex-direction:column;gap:6px;max-height:620px;overflow:auto;}
+.ra-al-l>li{border:1px solid var(--bd);border-radius:10px;padding:8px 10px;background:var(--sf);}
+.ra-al-l>li.on{border-color:var(--g);box-shadow:0 0 0 2px var(--g-ring);}
+.ra-al-h{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:baseline;}
+.ra-al-t{font-size:13.5px;font-weight:700;text-align:left;}
+.ra-al-b{margin-top:8px;border-top:1px dashed var(--bd);padding-top:8px;}
+.ra-det-b:empty{display:none;}

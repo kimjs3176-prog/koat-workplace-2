@@ -26,6 +26,7 @@ import zipfile
 
 from flask import Blueprint, Response, jsonify, request
 
+import alio
 import notation
 import reg_chunks
 
@@ -873,7 +874,8 @@ def _ai_conf(body: dict):
 def _ref_block(refs: list, cap: int = 7000) -> str:
     out, n = [], 0
     for r in refs or []:
-        t = f"- 「{r.get('reg', '')}」 {art_label(r.get('no', ''))}({r.get('title', '')}) {r.get('body', '')}"
+        org = f"[다른 기관: {r['org']}] " if r.get("org") else ""     # 알리오에서 고른 다른 기관 사규(참고만, 그대로 옮기지 않음)
+        t = f"- {org}「{r.get('reg', '')}」 {art_label(r.get('no', ''))}({r.get('title', '')}) {r.get('body', '')}"
         t = t[:1400]
         if n + len(t) > cap:
             break
@@ -974,7 +976,7 @@ def ai_enact(b: dict):
             f"소관부서: {b.get('dept', '')}\n시행일: {b.get('effective', '') or '공포(발령)한 날'}\n"
             f"제정 목적: {b.get('purpose', '')}\n주요 내용:\n{b.get('contents', '')}\n\n"
             f"[상위법 위임 조항]\n{_deleg_block(b.get('delegations')) or '(없음)'}\n\n"
-            f"[참고할 유사 내규 조문]\n{_ref_block(b.get('refs')) or '(없음)'}")
+            f"[참고할 유사 내규 조문(“다른 기관”은 알리오 공시 사규 — 구조·표현만 참고하고 기관명·직위는 우리 기관에 맞게)]\n{_ref_block(b.get('refs')) or '(없음)'}")
     text, err = _CTX["ai_generate"](provider, key, mdl, system, user,
                                     max_tokens=6000, temperature=0.2, json_mode=True)
     if err:
@@ -1758,6 +1760,12 @@ def review_draft(b: dict) -> dict:
         f("need", "ok", "제·개정 이유가 적혀 있습니다.")
     if not main:
         f("need", "warn", "주요 내용이 정리되지 않았습니다.")
+    al = [r for r in (b.get("alio_refs") or []) if isinstance(r, dict) and r.get("org")][:12]
+    if al:
+        orgs = sorted({str(r["org"]) for r in al})
+        f("need", "ok", f"다른 공공기관 운영 사례 {len(orgs)}곳(알리오): " + "; ".join(
+            f"{r['org']} 「{r.get('reg', '')}」 {art_label(str(r.get('no', '')))}({r.get('title', '')})" for r in al[:4])
+          + (f" 외 {len(al) - 4}건" if len(al) > 4 else ""))
     # 적합성
     if mode == "enact" and _kind_of(title) in ("시행세칙", "세칙") and not dels:
         f("fit", "warn", "시행세칙인데 위임 근거(상위 규정 조항)가 없습니다.")
@@ -2227,6 +2235,87 @@ def citation_graph() -> dict:
     return v
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 다른 기관 사규(알리오) — 기관 목록·규정 검색·본문(조문) 참고
+# ══════════════════════════════════════════════════════════════════════════
+def _alio_err(e):
+    kind = getattr(e, "kind", "")
+    hint = {"SCHEMA": " 알리오 사이트가 바뀌었을 수 있습니다.", "NETWORK": " 잠시 뒤 다시 시도하세요."}.get(kind, "")
+    return jsonify({"success": False, "error": f"{e}{hint}", "kind": kind}), 502 if kind in ("NETWORK", "SCHEMA", "HTTP") else 400
+
+
+@bp.route("/api/regagent/alio/orgs")
+def ra_alio_orgs():
+    """알리오 기관 목록 + 우리 기관·유관 기관(org_config.json alio.peer_depts·peers)."""
+    try:
+        orgs = alio.list_orgs()
+    except alio.AlioError as e:
+        return _alio_err(e)
+    cfg = ORG.get("alio") or {}
+    me = cfg.get("apba_id") or next((o["id"] for o in orgs if _nk(o["name"]) == _nk(ORG["org_name"])), "")
+    depts = set(cfg.get("peer_depts") or [])
+    if not depts and me:
+        depts = {o["dept"] for o in orgs if o["id"] == me}
+    peers = [o["id"] for o in orgs if o["id"] != me and (o["dept"] in depts or o["id"] in set(cfg.get("peers") or []))]
+    return jsonify({"success": True, "orgs": orgs, "self": me, "peers": peers, "categories": alio.CATEGORIES,
+                    "batch": alio.MAX_ORGS_PER_CALL})
+
+
+@bp.route("/api/regagent/alio/search", methods=["POST"])
+def ra_alio_search():
+    """알리오 규정명 검색. body: {q, orgs:[기관ID ≤12], category}. 화면이 기관을 나눠 여러 번 부른다."""
+    b = _body()
+    q = (b.get("q") or "").strip()[:40]
+    ids = [str(x) for x in (b.get("orgs") or []) if re.fullmatch(r"[A-Za-z0-9]{2,12}", str(x))]
+    cat = b.get("category") if b.get("category") in alio.CATEGORIES else ""
+    if not ids:
+        return jsonify({"success": False, "error": "조회할 기관을 고르세요."}), 400
+    if not q and not cat and not b.get("all"):
+        return jsonify({"success": False, "error": "규정명 검색어(예: 여비, 드론)를 넣으세요."}), 400
+    try:
+        r = alio.search(q, ids[:alio.MAX_ORGS_PER_CALL], cat)
+    except alio.AlioError as e:
+        return _alio_err(e)
+    return jsonify({"success": True, **r})
+
+
+def _alio_rank(arts: list, q: str) -> list:
+    """조문을 검색어 일치도로 정렬(조 제목 일치에 가중). 검색어가 없으면 원래 순서."""
+    toks = _tokens(q)
+    out = []
+    for a in arts:
+        if a["deleted"]:
+            continue
+        sc = sum(3 * a["title"].count(t) + min(a["body"].count(t), 5) for t in toks) if toks else 0
+        out.append({"no": a["no"], "title": a["title"], "body": a["body"][:1500], "score": sc})
+    if toks:
+        out.sort(key=lambda x: (-x["score"], art_key(x["no"])))
+    return out
+
+
+@bp.route("/api/regagent/alio/rule", methods=["POST"])
+def ra_alio_rule():
+    """알리오 규정 현행본 → 조문. body: {orgId, idx, category, table, idxName, mod, q}"""
+    b = _body()
+    rule = {"orgId": str(b.get("orgId") or ""), "idx": str(b.get("idx") or ""), "category": str(b.get("category") or ""),
+            "table": str(b.get("table") or "COMM_RULE"), "idxName": str(b.get("idxName") or "RULE_NO"), "mod": str(b.get("mod") or "")}
+    if not re.fullmatch(r"[A-Za-z0-9]{2,12}", rule["orgId"]) or not re.fullmatch(r"\d{1,12}", rule["idx"]) \
+            or not re.fullmatch(r"[A-Z_]{1,30}", rule["table"]) or not re.fullmatch(r"[A-Z_]{1,30}", rule["idxName"]) \
+            or (rule["category"] and rule["category"] not in alio.CATEGORIES):
+        return jsonify({"success": False, "error": "규정 정보가 올바르지 않습니다."}), 400
+    try:
+        r = alio.rule_text(rule)
+    except alio.AlioError as e:
+        return _alio_err(e)
+    p = parse_text(r["text"], clean=True)
+    ranked = _alio_rank(p["articles"], b.get("q") or "")
+    warn = "" if p["articles"] else "“제N조” 형식의 조문을 찾지 못했습니다. 원문 링크로 확인하세요."
+    return jsonify({"success": True, "file": r["file"], "versions": len(r["files"]), "count": len(p["articles"]),
+                    "toc": [f"{art_label(a['no'])}({a['title']})" for a in p["articles"] if not a["deleted"]][:80],
+                    "articles": ranked[:12], "url": alio.BASE + alio.detail_url(rule), "warning": warn,
+                    "excerpt": "" if p["articles"] else r["text"][:3000]})
+
+
 @bp.route("/api/regagent/graph")
 def ra_graph():
     return jsonify({"success": True, **citation_graph()})
@@ -2241,9 +2330,38 @@ _ARROW_RE = re.compile(r"[“\"'「]?([가-힣A-Za-z0-9·()]{2,24})[”\"'」]?\
 _LAW_IN_RE = re.compile(r"「([^」]{2,40}(?:법|법률|시행령|시행규칙))」|([가-힣·\s]{2,30}?(?:법|법률)(?:\s*시행령|\s*시행규칙)?)(?=\s|이|가|의|을|를|에|$)")
 
 
+_COMPARE_RE = re.compile(r"(다른\s*(?:공공)?기관|타\s*기관|타\s*공공기관|공공기관들?|알리오|ALIO|벤치마킹|사례)", re.I)
+_COMPARE_STOP = {"다른", "기관", "기관은", "기관들", "공공기관", "타기관", "알리오", "어떻게", "규정했", "규정했는지", "정했는지",
+                 "정했어", "알려줘", "알려", "찾아줘", "찾아", "보여줘", "비교", "비교해줘", "사례", "있는지", "있어", "궁금해",
+                 "벤치마킹", "참고", "하는지", "운영하는지", "운영", "관리", "규정", "규칙", "지침", "내규", "사규", "기준"}
+
+
+def compare_keyword(t: str) -> str:
+    """“다른 기관은 재택근무를 어떻게 규정했어?” → “재택근무” (규정명 검색어)."""
+    q = re.search(r"[「“\"']([^」”\"']{2,20})[」”\"']", t or "")
+    if q:
+        return re.sub(r"\s*(규정|규칙|지침|요령|기준|세칙)$", "", q.group(1)).strip()
+    best = ""
+    for w in re.findall(r"[가-힣A-Za-z0-9]{2,}", t or ""):
+        w2 = _JOSA_TAIL.sub("", w) if len(w) > 2 else w
+        w2 = re.sub(r"(규정|규칙|지침|요령|기준|세칙)$", "", w2) or w2
+        if (len(w2) < 2 or w in _COMPARE_STOP or w2 in _COMPARE_STOP or w2 in _STOP
+                or re.search(r"기관들?$", w2) or re.match(r"(규정|정했|정하|어떻|알려|찾아|보여|궁금|있는|하는|되어|됐|했)", w2)):
+            continue
+        if len(w2) > len(best):
+            best = w2
+    return best[:20]
+
+
 def heuristic_plan(req: str) -> dict:
     t = (req or "").strip()
     plan = {"mode": "amend", "intent": t, "reasoning": []}
+    if _COMPARE_RE.search(t) and not _ENACT_RE.search(t) and not re.search(r"(개정|고쳐|바꿔|바꾸)", t):
+        kw = compare_keyword(t)
+        if kw:
+            plan.update(mode="compare", keyword=kw)
+            plan["reasoning"].append(f"다른 공공기관 사례를 묻는 요청으로 판단 — 알리오에서 “{kw}” 규정 조회")
+            return plan
     bulk_kw = re.search(r"(모든|전체|일괄|모두|전\s*내규|명칭|부서명|직위|기관명|이름이\s*바뀌)", t)
     m = _ARROW_RE.search(t) or (_BULK_RE.search(t) if bulk_kw else None)
     if m and (bulk_kw or "→" in t or "->" in t):
@@ -2331,21 +2449,22 @@ def ra_plan():
         mdl = model or _CTX["default_model_for"](provider, key)
         system = f"""당신은 {ORG['org_name']} {ORG['reg_word']} 제·개정 에이전트의 작업 계획 담당입니다.
 사용자의 한 문장 요청을 분석해 JSON만 반환하세요.
-{{"mode": "enact|amend|bulk|upper",
+{{"mode": "enact|amend|bulk|upper|compare",
   "intent": "개정·제정 의도를 실무 문장으로 1~2문장",
   "reg_hint": "개정 대상 내규명(알 수 있으면, 없으면 빈 문자열)",
   "title": "제정 시 내규명(없으면 제안)", "purpose": "제정 목적", "contents": "제정 시 주요 내용(줄바꿈 구분, '제목: 내용')",
   "old": "일괄 정비 시 바뀌기 전 용어", "new": "바뀐 뒤 용어",
   "law": "상위법 영향 분석 시 법령명", "arts": ["제N조"],
+  "keyword": "compare 일 때 알리오에서 찾을 규정명 핵심어(예: 여비, 재택근무)",
   "why": "이렇게 판단한 이유 1문장"}}
-- enact: 새 내규를 만듦 / amend: 특정 내규 조문을 고침 / bulk: 기관명·부서명·직위·내규명 등 용어를 모든 내규에서 바꿈 / upper: 상위 법령이 바뀌어 영향받는 내규를 찾음"""
+- enact: 새 내규를 만듦 / amend: 특정 내규 조문을 고침 / bulk: 기관명·부서명·직위·내규명 등 용어를 모든 내규에서 바꿈 / upper: 상위 법령이 바뀌어 영향받는 내규를 찾음 / compare: 다른 공공기관(알리오)은 어떻게 정했는지 사례를 찾음"""
         text, err = _CTX["ai_generate"](provider, key, mdl, system, f"요청: {req}", max_tokens=1200, temperature=0.1, json_mode=True)
         if not err:
             try:
                 d = _json_from(text)
-                if d.get("mode") in ("enact", "amend", "bulk", "upper"):
+                if d.get("mode") in ("enact", "amend", "bulk", "upper", "compare"):
                     keep = plan.get("reasoning", [])
-                    plan = {k: v for k, v in d.items() if k in ("mode", "intent", "reg_hint", "title", "purpose", "contents", "old", "new", "law", "arts")}
+                    plan = {k: v for k, v in d.items() if k in ("mode", "intent", "reg_hint", "title", "purpose", "contents", "old", "new", "law", "arts", "keyword")}
                     plan["reasoning"] = [f"AI 판단: {d.get('why') or plan['mode']}"] + [x for x in keep if x.startswith("“")]
                     plan["ai"] = True
                     plan["model"] = f"{provider}:{mdl}"
@@ -2361,6 +2480,10 @@ def ra_plan():
     if plan["mode"] == "enact":
         plan.setdefault("purpose", req)
         plan["title"] = plan.get("title") or ""
+    if plan["mode"] == "compare":
+        plan["keyword"] = str(plan.get("keyword") or compare_keyword(req))[:20]
+        if not plan["keyword"]:
+            return jsonify({"success": False, "error": "무엇에 관한 규정을 찾을지 적어 주세요. 예) 다른 기관은 재택근무를 어떻게 정했어?", "plan": plan}), 400
     if plan["mode"] == "bulk" and not (plan.get("old") and plan.get("new")):
         plan["mode"] = "amend"
         _resolve_targets(plan, req)

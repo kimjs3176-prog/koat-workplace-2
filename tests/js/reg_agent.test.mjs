@@ -275,3 +275,27 @@ test('완성도: 절차 — 대안 단계는 조건이 맞는(soft) 쪽을 고�
   assert.ok(sc.total > 0);
   assert.equal(typeof sc.tbd, 'number');
 });
+
+test('알리오: 검색어 추정·옛 판 괄호 제거', () => {
+  const c = load();
+  const RA = c.__RA();
+  RA.enact.title = '임직원 여비규정'; assert.equal(c.raAlioGuess('enact'), '여비');
+  RA.enact.title = '업무용 드론 운영지침'; assert.equal(c.raAlioGuess('enact'), '드론');
+  RA.amend.title = '여비규정'; assert.equal(c.raAlioGuess('amend'), '여비');
+  assert.equal(c.alioBase('인사규정(2023년 1월 개정)'), '인사규정');
+});
+
+test('알리오: 규정 체계 비교 주제어·이유서 다른 기관 사례', () => {
+  const c = load();
+  const orgs = ['한국농어촌공사'];
+  assert.equal(c.raBenchKey('여비규정(2023년 1월 개정)', orgs), '여비');
+  assert.equal(c.raBenchKey('한국농어촌공사 인사규정 시행세칙', orgs), '인사');
+  assert.equal(c.raBenchKey('임직원 행동강령 운영지침', orgs), '행동강령');
+  assert.ok(c.raBenchHas(['개인정보보호'], '개인정보보호') && !c.raBenchHas(['여비'], '인사'));
+  const RA = c.__RA();
+  RA.enact.refs = { 'alio|C1|9|5': { reg: '드론 운영규정', org: '한국농어촌공사', no: '5', title: '비행 승인', body: '…', src: 'alio' } };
+  RA.enact.title = '드론 운영지침';
+  const o = c.raOutReason(c.raDocCtx('enact'));
+  const it = o.items.find(x => /다른 공공기관 사례/.test(x.t));
+  assert.ok(it && it.s[0] === '한국농어촌공사 「드론 운영규정」 제5조(비행 승인)');
+});
