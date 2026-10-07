@@ -525,6 +525,60 @@ def _lref(key: str) -> str:
     return f"(「{ORG['rules_name']}」 {ref})" if ref else ""
 
 
+# 용어 정의 — 정의 조항의 “X”란 …, 본문의 (이하 “X”라 한다)
+_DEF_LINE = re.compile(r"(?:^|\n)\s*(?:[①-⑳]\s*)?(?:\d{1,2}\.\s*)?[“\"‘']([^”\"’'\n(]{1,30})[”\"’']\s*(?:\([^)]{0,30}\)\s*)?(?:이)?란\s")
+_ABBR_DEF = re.compile(r"\(\s*이하\s*(?:이\s*조에서\s*|이\s*장에서\s*)?[“\"‘']([^”\"’']{1,20})[”\"’']\s*(?:이)?라\s*한다\s*\)")
+_TERM_GENERIC = {"위원회", "위원장", "심의회", "협의회", "위원", "기관", "규정", "규칙", "지침", "세칙", "요령", "기준", "법", "영"}
+
+
+def _term_uses(text: str, term: str) -> int:
+    t, s = re.sub(r"\s+", "", term), re.sub(r"\s+", "", text)
+    if len(t) >= 3:
+        return s.count(t)
+    return len(re.findall(r"(?<![가-힣])" + re.escape(t), s))
+
+
+def term_check(arts: list, cap: int = 8) -> list:
+    """정의한 용어·약칭의 쓰임 점검 → [(level, no, msg)].
+    중복 정의, 정의만 하고 쓰지 않는 용어, 약칭을 정의하기 전에 먼저 쓰는 경우."""
+    live = [a for a in arts if not a.get("deleted")]
+    defs = {}
+    for i, a in enumerate(live):
+        body = a.get("body", "")
+        for m in _DEF_LINE.finditer(body):
+            defs.setdefault(re.sub(r"\s+", " ", m.group(1)).strip(), []).append((i, "def", m))
+        for m in _ABBR_DEF.finditer(body):
+            defs.setdefault(re.sub(r"\s+", " ", m.group(1)).strip(), []).append((i, "abbr", m))
+    out = []
+    for term, occ in defs.items():
+        if not term:
+            continue
+        i, kind, m = occ[0]
+        no = live[i]["no"]
+        if len(occ) > 1:
+            where = sorted({art_label(live[o[0]]["no"]) for o in occ}, key=lambda x: art_key(x))
+            out.append(("warn", live[occ[1][0]]["no"],
+                        f"“{term}”{_josa(term, ('을', '를'))} 두 번 정의합니다({', '.join(where)}). 한 곳에서만 정의하세요."))
+        body = live[i].get("body", "")
+        if kind == "def":                 # 정의 줄(“X”란 … 말한다) 자체는 쓰임으로 세지 않는다
+            end = body.find("\n", m.end())
+            rest = body[:m.start()] + body[(len(body) if end < 0 else end):]
+            others = "\n".join(x.get("body", "") for j, x in enumerate(live) if j != i)
+        else:
+            rest = body[m.end():]
+            others = "\n".join(x.get("body", "") for x in live[i + 1:])
+        if len(re.sub(r"\s+", "", term)) >= 2 and _term_uses(rest + "\n" + others, term) == 0:
+            what = "정의한 용어" if kind == "def" else "약칭으로 정한"
+            out.append(("info", no, f"{art_label(no)}에서 {what} “{term}”{_josa(term, ('이', '가'))} 다른 곳에서 쓰이지 않습니다. 빼거나 본문에서 그 용어로 쓰세요."))
+        if kind == "abbr" and len(re.sub(r"\s+", "", term)) >= 3 and term not in _TERM_GENERIC:
+            pre = [x for x in live[:i] if _term_uses(x.get("body", ""), term)]
+            if pre:
+                out.append(("info", pre[0]["no"],
+                            f"약칭 “{term}”{_josa(term, ('을', '를'))} 정의한 {art_label(no)}보다 앞선 {art_label(pre[0]['no'])}에서 먼저 씁니다. "
+                            "처음 나오는 곳에서 정의하세요."))
+    return out[:cap]
+
+
 def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str = "",
                   full: bool = True) -> list:
     """조문 목록 점검 → [{level, code, no, msg, fix?}]. level: error|warn|info"""
@@ -639,6 +693,9 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
             later = joined[m.end():]
             if full_nm != abbr and full_nm in later:
                 add("info", "abbr", "", f"“{full_nm}”을(를) “{abbr}”(으)로 줄여 정의한 뒤에도 정식 명칭을 다시 씁니다. 약칭으로 통일을 검토하세요.")
+        # (8-2) 용어 정의 — 중복 정의·쓰지 않는 용어·정의 전 사용
+        for lv, tno, msg in term_check(arts):
+            add(lv, "term", tno, msg)
         # (9) 부칙·시행일
         if not (addenda or "").strip():
             add("warn", "addenda", "", f"부칙이 없습니다. 시행일을 정하는 부칙을 두세요{_lref('addenda')}.")
@@ -1576,7 +1633,7 @@ def review_draft(b: dict) -> dict:
         else:
             f("unity", "ok", "내용이 크게 겹치는 내규를 찾지 못했습니다.")
     # 명료성
-    style = [i for i in lint if i["code"] in ("style", "space", "abbr", "notation")]
+    style = [i for i in lint if i["code"] in ("style", "space", "abbr", "term", "notation")]
     if style:
         f("clear", "check", f"알기 쉬운 표기 제안 {len(style)}건: " + "; ".join(i["fix"] or i["msg"] for i in style[:5]))
     longs = [a for a in arts for s_ in re.split(r"(?<=[.다])\s", a.get("body", "")) if len(s_) > 180]

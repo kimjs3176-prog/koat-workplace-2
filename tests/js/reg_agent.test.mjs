@@ -175,3 +175,63 @@ test('공문서 문서: 붙임은 쌍점 없이 두 칸, 기간은 물결표 붙
   assert.match(B.notice, /\d+\. \d+\. \d+\.∼\d+\. \d+\. \d+\./);
   assert.ok(!/[—–―]/.test(B.reason + B.notice + B.staff));
 });
+
+test('raAmendSentences: 바뀐 곳만 짚는 일부개정 문형', () => {
+  const c = load();
+  const S = (o, n) => { const r = c.raAmendSentences(o, n); return r.head + (r.lines.length ? ' | ' + r.lines.join(' / ') : ''); };
+  const base = { no: '5', title: '여비', body: '① 숙박비는 3만원을 한도로 한다.\n② 식비는 실비로 한다.' };
+  assert.equal(S(base, { ...base, body: '① 숙박비는 5만원을 한도로 한다.\n② 식비는 실비로 한다.' }), '제5조제1항 중 “3만원”을 “5만원”으로 한다.');
+  assert.equal(S(base, { ...base, title: '여비의 지급', body: base.body + '\n③ 교통비는 실비로 한다.' }),
+    '제5조의 제목 “여비”를 “여비의 지급”으로 하고, 같은 조에 제3항을 다음과 같이 신설한다. | ③ 교통비는 실비로 한다.');
+  // 받침에 따라 바뀌는 조사(으로/로)는 따옴표 밖으로
+  assert.equal(S({ no: '7', title: '신청', body: '신청서를 서면으로 제출한다.' }, { no: '7', title: '신청', body: '신청서를 전자결재로 제출한다.' }),
+    '제7조 중 “서면”을 “전자결재”로 한다.');
+  // 같은 바꿈은 “각각”으로 묶는다
+  assert.equal(S({ no: '9', title: 'a', body: '① 원장은 정한다.\n② 원장은 승인한다.\n③ x' }, { no: '9', title: 'a', body: '① 기관장은 정한다.\n② 기관장은 승인한다.\n③ x' }),
+    '제9조제1항 및 제2항 중 “원장”을 각각 “기관장”으로 한다.');
+  // 호가 있으면 “각 호 외의 부분”, 끝에 덧붙인 호는 신설
+  assert.equal(S({ no: '8', title: '대상', body: '다음 사람에게 지급한다.\n1. 임원\n2. 직원' }, { no: '8', title: '대상', body: '다음 사람에게 준다.\n1. 임원\n2. 직원\n3. 계약직' }),
+    '제8조 각 호 외의 부분 중 “지급한다”를 “준다”로 하고, 같은 조에 제3호를 다음과 같이 신설한다. | 3. 계약직');
+  assert.equal(S({ no: '9', title: 'a', body: '① aa\n② bb\n③ cc' }, { no: '9', title: 'a', body: '① aa\n② bb' }), '제9조제3항을 삭제한다.');
+  // 중간에 항을 끼우면(번호가 밀림) 조 전체를 다시 쓴다
+  assert.match(S({ no: '4', title: 'a', body: '① 가.\n② 나.' }, { no: '4', title: 'a', body: '① 가.\n② 새 항.\n③ 나.' }), /^제4조를 다음과 같이 한다\./);
+  assert.equal(S({ no: '3', title: 'a', body: 'x' }, { type: 'delete', no: '3' }), '제3조를 삭제한다.');
+  assert.match(S(null, { type: 'insert', no: '3의2', title: '특례', body: '내용' }), /^제3조의2를 다음과 같이 신설한다\. \| 제3조의2\(특례\) 내용$/);
+});
+
+test('raRo·raEul: 받침·숫자 읽기에 따른 조사', () => {
+  const c = load();
+  assert.equal(c.raRo('16일'), '로');      // ㄹ 받침
+  assert.equal(c.raRo('3만원'), '으로');
+  assert.equal(c.raRo('5'), '로');
+  assert.equal(c.raRo('3'), '으로');
+  assert.equal(c.raEul('규정'), '을');
+  assert.equal(c.raEul('규칙서'), '를');
+});
+
+test('raAbBuild: 부칙 도우미 — 시행일만이면 한 문장, 여럿이면 조로 나눔', () => {
+  const c = load();
+  const RA = c.__RA();
+  RA.amend.title = '여비규정';
+  RA.amend.changes = [{ type: 'modify', no: '5', title: '여비', body: 'x' }];
+  RA.amend.ab = { eff: 'after', months: '3', apply: false, trans: false, other: false };
+  assert.equal(c.raAbBuild('amend'), '이 규정은 발령 후 3개월이 경과한 날부터 시행한다.');
+  Object.assign(RA.amend.ab, { eff: 'date', date: '2027년 1월 1일', apply: true, applyWhat: '출장을 명하는 경우', trans: true });
+  const t = c.raAbBuild('amend').split('\n');
+  assert.equal(t[0], '제1조(시행일) 이 규정은 2027년 1월 1일부터 시행한다.');
+  assert.equal(t[1], '제2조(적용례) 제5조의 개정규정은 이 규정 시행 이후 최초로 출장을 명하는 경우부터 적용한다.');
+  assert.match(t[2], /^제3조\(경과조치\) /);
+  // 다른 내규의 개정: 영향 분석의 조 인용 정정에서 만든다
+  RA.amend.ab = { eff: 'issue', other: true };
+  RA.amend.impact = { outer: [{ reg: '국외여비지침', hits: [{ no: '3', cites: '5', text: '「여비규정」 제5조', suggest: '「여비규정」 제5조 → 제6조' }] }] };
+  const o = c.raAbBuild('amend').split('\n');
+  assert.equal(o[1], '제2조(다른 내규의 개정) 「국외여비지침」 일부를 다음과 같이 개정한다.');
+  assert.equal(o[2], '제3조 중 “「여비규정」 제5조”를 “「여비규정」 제6조”로 한다.');
+});
+
+test('raClauseFmt: 표준 조문 자리표시자와 조사', () => {
+  const c = load();
+  const t = c.raClauseFmt('{head:이} 정하고 {deputy:은} 돕는다. 이 {kind}에 따른다.', '지침');
+  assert.ok(!/[{}]/.test(t));
+  assert.match(t, /이 지침에 따른다\.$/);
+});
