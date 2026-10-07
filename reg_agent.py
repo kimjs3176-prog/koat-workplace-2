@@ -26,6 +26,7 @@ import zipfile
 
 from flask import Blueprint, Response, jsonify, request
 
+import notation
 import reg_chunks
 
 bp = Blueprint("reg_agent", __name__)
@@ -36,7 +37,7 @@ _STR_KEYS = {"text", "title", "reg", "slug", "query", "exclude", "law", "old", "
              "effective", "contents", "filename", "request", "category", "dept", "provider", "api_key", "model"}
 _STRLIST_KEYS = {"nos", "arts", "slugs", "names", "main"}
 _DICTLIST_KEYS = {"delegations", "targets", "refs", "blocks"}
-_DICT_KEYS = {"moves", "ans", "law_info"}
+_DICT_KEYS = {"moves", "ans", "law_info", "texts", "kinds"}
 _MAX_LIST = 2000
 
 
@@ -621,6 +622,14 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                         f"“{mm.group(0).strip()}” → “{rep.strip()}”")
             if re.search(r"제\s+\d+\s+조", body):
                 add("info", "space", no, f"{lbl}: “제 N 조”는 붙여 “제N조”로 씁니다.")
+            # (7-2) 공문서 표기(행정업무운영편람): 날짜·기간·시각·금액·쌍점·낫표 등 — 조문에서는 표기 제안(info)으로, 규칙당 1건
+            seen_rule = set()
+            for fnd in notation.check(body, "law"):
+                if fnd["rule"] in seen_rule or len(seen_rule) >= 3:
+                    continue
+                seen_rule.add(fnd["rule"])
+                fix = "" if fnd["suggest"].startswith(("예)", "…")) else f"“{fnd['match']}” → “{fnd['suggest']}”"
+                add("info", "notation", no, f"{lbl}: {fnd['label']}, “{fnd['match']}”. {fnd['message']}", fix)
 
     if full:
         # (8) 약칭 정의 후 정식 명칭 재사용
@@ -1567,7 +1576,7 @@ def review_draft(b: dict) -> dict:
         else:
             f("unity", "ok", "내용이 크게 겹치는 내규를 찾지 못했습니다.")
     # 명료성
-    style = [i for i in lint if i["code"] in ("style", "space", "abbr")]
+    style = [i for i in lint if i["code"] in ("style", "space", "abbr", "notation")]
     if style:
         f("clear", "check", f"알기 쉬운 표기 제안 {len(style)}건: " + "; ".join(i["fix"] or i["msg"] for i in style[:5]))
     longs = [a for a in arts for s_ in re.split(r"(?<=[.다])\s", a.get("body", "")) if len(s_) > 180]
@@ -1901,6 +1910,27 @@ def ra_health_laws():
         ex.shutdown(wait=False, cancel_futures=True)
     return jsonify({"success": True, "laws": out,
                     "failed": sum(1 for v in out.values() if v.get("error"))})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 11-1. 공문서 표기 점검(행정업무운영편람) — 이유서·사전예고문·공고·의견서 등 문서 글
+# ══════════════════════════════════════════════════════════════════════════
+@bp.route("/api/regagent/notation", methods=["POST"])
+def ra_notation():
+    """body: {texts:{문서키: 글}, kind:"doc"|"law", kinds:{문서키: "law"}} → {results:{문서키: [발견]}}
+    kind: doc(이유서·공고처럼 붙임·끝이 있는 문서, 기본) · law(조문 — 붙임·끝 규칙 제외)"""
+    b = _body()
+    texts = b.get("texts") if isinstance(b.get("texts"), dict) else {}
+    kinds = b.get("kinds") if isinstance(b.get("kinds"), dict) else {}
+    dflt = "law" if b.get("kind") == "law" else "doc"
+    if not texts:
+        return jsonify({"success": False, "error": "점검할 글이 없습니다."}), 400
+    results = {}
+    for k, v in list(texts.items())[:12]:
+        if isinstance(v, str):
+            kind = "law" if kinds.get(k) == "law" else ("doc" if kinds.get(k) == "doc" else dflt)
+            results[str(k)[:40]] = notation.check(v[:300_000], kind)
+    return jsonify({"success": True, "results": results})
 
 
 # ══════════════════════════════════════════════════════════════════════════

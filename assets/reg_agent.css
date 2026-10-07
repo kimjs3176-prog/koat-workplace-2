@@ -673,3 +673,9 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 .ra-gb li{display:flex;align-items:center;gap:8px;border:1px solid var(--bd);border-radius:10px;padding:9px 12px;font-size:13px;}
 .ra-gb li>div{flex:1;min-width:0;}
 .ra-gb .svc-btn{margin:0;}
+
+/* 공문서 표기 점검 */
+.ra-nota{margin:2px 0 10px;}
+.ra-nota .ra-chip.btn.hi{color:var(--bad);border-color:transparent;background:var(--bad-l);}
+.ra-nota .ra-chip.btn.warn{color:var(--warn);border-color:transparent;background:var(--warn-l);}
+.ra-lint li.lv-info{background:var(--sf2);}

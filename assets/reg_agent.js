@@ -834,9 +834,32 @@ function raDocsView(mode){
   else body=`<pre class="ra-doc">${_e(B[tab])}</pre>`;
   const all=`<span class="ra-picks" title="저장할 문서">`+RA_DOCS[mode].map(([k,l])=>`<label class="ra-pk-c"><input type="checkbox" class="ra-docpick" value="${k}" checked><span>${raIc(RA_DOC_IC[k]||'doc')}${l}</span></label>`).join('')+`</span>`;
   return `<div class="ra-dtabs">${tabs}</div><div class="ra-docbox">${body}</div>`+
+    `<div id="raNota">${raNotaView(mode)}</div>`+
     `<div class="ra-save">${all}<div class="ra-row"><button class="svc-btn ghost" onclick="raCopyDoc('${mode}')">복사</button><button class="svc-btn ghost" onclick="raPrintDoc('${mode}')">인쇄</button>`+
     `<span class="ra-sep"></span><button class="svc-btn yes" onclick="raExport('${mode}','hwpx')">한글(.hwpx)</button><button class="svc-btn" onclick="raExport('${mode}','docx')">Word(.docx)</button></div></div>`+
     `<div class="ra-meta"><span class="ra-days">사전예고 ${RA_ORG.notice_days}일↑</span><span class="ra-days">직원 의견수렴 ${RA_ORG.staff_days}일↑</span>${raTip(`사전예고는 국민 권리·의무 관련 ${RA_ORG.reg_word}(「${raRules()}」 제15조의3제2항)일 때, 직원 의견수렴은 제15조의4 — 절차 안내를 확인하세요.`)}</div>`;
+}
+// ── 공문서 표기 점검(행정업무운영편람) — 서버 notation.py 규칙: 날짜·기간·시각·금액·쌍점·붙임·끝·낫표·줄표·외래어 ──
+const RA_NOTA_DOCS=['law','reason','notice','staff','review'];
+async function raNotaLint(mode){
+  const B=raDocsBuild(mode), texts={}, kinds={};
+  RA_NOTA_DOCS.forEach(k=>{ if(k==='review'&&!RA[mode].review) return; texts[k]=B[k]; if(k==='law') kinds[k]='law'; });
+  const box=document.getElementById('raNota'); if(box) box.innerHTML=raSpin('공문서 표기를 점검하는 중...');
+  const d=await raPost('/api/regagent/notation',{texts, kinds});
+  if(!d.success){ if(box) box.innerHTML=raErr(d.error||'점검 실패'); return; }
+  RA[mode].nota={at:raToday(0), res:d.results}; _raSave(); if(box) box.innerHTML=raNotaView(mode);
+}
+function raNotaView(mode){
+  const L=RA[mode].nota, names=Object.fromEntries(RA_DOCS[mode]), tab=RA[mode].docTab||'law';
+  const btn=`<button class="svc-btn sm" onclick="raNotaLint('${mode}')">${raIc('check')}공문서 표기 점검</button>`;
+  const tip=raTip('행정업무운영편람 기준으로 날짜(2026. 10. 6.)·기간(∼)·시각(09:00)·금액(금30,000원(금삼만원))·쌍점·“붙임  … 1부.  끝.”·법령명 낫표, 줄표와 외래어를 점검합니다. 문서를 고친 뒤에는 다시 점검하세요.');
+  if(!L||!L.res) return `<div class="ra-row ra-nota">${btn}${tip}</div>`;
+  const chips=Object.entries(L.res).map(([k,f])=>{ const e=f.filter(x=>x.level==='error').length, w=f.filter(x=>x.level==='warn').length;
+    return `<button class="ra-chip btn ${e?'hi':w?'warn':''}" onclick="raSet('${mode}.docTab','${k}');raRerender('${mode}')">${_e(names[k]||k)} ${f.length?f.length+'건':'✓'}</button>`; }).join('');
+  const cur=L.res[tab], ic={error:'bad',warn:'alert',info:'tip'};
+  const list=cur&&cur.length?`<ul class="ra-lint">`+cur.map(f=>`<li class="lv-${f.level}"><span>${raIc(ic[f.level]||'tip')}</span><span><b>${_e(f.label)}</b> ${f.line?`${f.line}행 `:''}“${_e(f.match)}”: ${_e(f.message)}${f.suggest?` <em class="ra-fix">${_e(f.suggest)}</em>`:''}</span></li>`).join('')+`</ul>`
+    :cur?`<div class="ra-ok">${raIc('check')}${_e(names[tab]||'')} 표기 문제 없음</div>`:'';
+  return `<div class="ra-row ra-nota">${btn}${tip}<span class="ra-sub">${_e(L.at)} 점검</span>${chips}</div>${list}`;
 }
 function raCopyDoc(mode){
   const B=raDocsBuild(mode), tab=RA[mode].docTab||'law';
