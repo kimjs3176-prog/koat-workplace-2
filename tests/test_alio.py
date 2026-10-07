@@ -120,3 +120,27 @@ def test_hwp_rejects_non_hwp():
         hwp5.hwp_paragraphs(b"not a hwp")
     with pytest.raises(ValueError, match="3.x"):
         hwp5.hwp_paragraphs(b"HWP Document File V3.00 \x1a\x01\x02\x03\x04\x05")
+
+
+# ── 에이전트·심의 사전검토·규정 체계 비교 ─────────────────────────────────────
+def test_plan_compare_mode(ra):
+    for q, kw in [("다른 기관은 재택근무를 어떻게 규정했어?", "재택근무"), ("다른 기관은 여비를 어떻게 규정했어?", "여비"),
+                  ("타 기관 「여비규정」 사례 찾아줘", "여비"), ("공공기관들의 드론 운영 사례 알려줘", "드론")]:
+        p = ra.heuristic_plan(q)
+        assert p["mode"] == "compare" and p["keyword"] == kw, (q, p)
+    # 제정·개정 요청은 사례라는 말이 있어도 제정·개정으로
+    assert ra.heuristic_plan("다른 기관 사례 참고해서 드론 운영지침 만들어줘")["mode"] == "enact"
+    assert ra.heuristic_plan("여비규정 제15조 일비를 올려줘")["mode"] == "amend"
+
+
+def test_review_cites_other_agency_cases(ra):
+    r = ra.review_draft({"mode": "enact", "title": "드론 운영지침", "text": "제1조(목적) 이 지침은 드론 운영을 정한다.",
+                         "purpose": "업무용 드론의 안전한 운영을 위하여 필요한 사항을 정하려는 것임",
+                         "alio_refs": [{"org": "한국농어촌공사", "reg": "드론 운영규정", "no": "5", "title": "비행 승인"}]})
+    need = next(x for x in r["rows"] if x["id"] == "need")
+    assert any("다른 공공기관 운영 사례 1곳" in i["msg"] and "한국농어촌공사 「드론 운영규정」 제5조(비행 승인)" in i["msg"] for i in need["items"])
+
+
+def test_alio_search_all_without_keyword(client, fake_alio):
+    d = client.post("/api/regagent/alio/search", json={"q": "", "all": True, "orgs": ["C0105"]}).get_json()
+    assert d["success"] and len(d["hits"]) == 91

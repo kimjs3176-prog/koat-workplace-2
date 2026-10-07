@@ -1760,6 +1760,12 @@ def review_draft(b: dict) -> dict:
         f("need", "ok", "제·개정 이유가 적혀 있습니다.")
     if not main:
         f("need", "warn", "주요 내용이 정리되지 않았습니다.")
+    al = [r for r in (b.get("alio_refs") or []) if isinstance(r, dict) and r.get("org")][:12]
+    if al:
+        orgs = sorted({str(r["org"]) for r in al})
+        f("need", "ok", f"다른 공공기관 운영 사례 {len(orgs)}곳(알리오): " + "; ".join(
+            f"{r['org']} 「{r.get('reg', '')}」 {art_label(str(r.get('no', '')))}({r.get('title', '')})" for r in al[:4])
+          + (f" 외 {len(al) - 4}건" if len(al) > 4 else ""))
     # 적합성
     if mode == "enact" and _kind_of(title) in ("시행세칙", "세칙") and not dels:
         f("fit", "warn", "시행세칙인데 위임 근거(상위 규정 조항)가 없습니다.")
@@ -2264,7 +2270,7 @@ def ra_alio_search():
     cat = b.get("category") if b.get("category") in alio.CATEGORIES else ""
     if not ids:
         return jsonify({"success": False, "error": "조회할 기관을 고르세요."}), 400
-    if not q and not cat:
+    if not q and not cat and not b.get("all"):
         return jsonify({"success": False, "error": "규정명 검색어(예: 여비, 드론)를 넣으세요."}), 400
     try:
         r = alio.search(q, ids[:alio.MAX_ORGS_PER_CALL], cat)
@@ -2324,9 +2330,38 @@ _ARROW_RE = re.compile(r"[“\"'「]?([가-힣A-Za-z0-9·()]{2,24})[”\"'」]?\
 _LAW_IN_RE = re.compile(r"「([^」]{2,40}(?:법|법률|시행령|시행규칙))」|([가-힣·\s]{2,30}?(?:법|법률)(?:\s*시행령|\s*시행규칙)?)(?=\s|이|가|의|을|를|에|$)")
 
 
+_COMPARE_RE = re.compile(r"(다른\s*(?:공공)?기관|타\s*기관|타\s*공공기관|공공기관들?|알리오|ALIO|벤치마킹|사례)", re.I)
+_COMPARE_STOP = {"다른", "기관", "기관은", "기관들", "공공기관", "타기관", "알리오", "어떻게", "규정했", "규정했는지", "정했는지",
+                 "정했어", "알려줘", "알려", "찾아줘", "찾아", "보여줘", "비교", "비교해줘", "사례", "있는지", "있어", "궁금해",
+                 "벤치마킹", "참고", "하는지", "운영하는지", "운영", "관리", "규정", "규칙", "지침", "내규", "사규", "기준"}
+
+
+def compare_keyword(t: str) -> str:
+    """“다른 기관은 재택근무를 어떻게 규정했어?” → “재택근무” (규정명 검색어)."""
+    q = re.search(r"[「“\"']([^」”\"']{2,20})[」”\"']", t or "")
+    if q:
+        return re.sub(r"\s*(규정|규칙|지침|요령|기준|세칙)$", "", q.group(1)).strip()
+    best = ""
+    for w in re.findall(r"[가-힣A-Za-z0-9]{2,}", t or ""):
+        w2 = _JOSA_TAIL.sub("", w) if len(w) > 2 else w
+        w2 = re.sub(r"(규정|규칙|지침|요령|기준|세칙)$", "", w2) or w2
+        if (len(w2) < 2 or w in _COMPARE_STOP or w2 in _COMPARE_STOP or w2 in _STOP
+                or re.search(r"기관들?$", w2) or re.match(r"(규정|정했|정하|어떻|알려|찾아|보여|궁금|있는|하는|되어|됐|했)", w2)):
+            continue
+        if len(w2) > len(best):
+            best = w2
+    return best[:20]
+
+
 def heuristic_plan(req: str) -> dict:
     t = (req or "").strip()
     plan = {"mode": "amend", "intent": t, "reasoning": []}
+    if _COMPARE_RE.search(t) and not _ENACT_RE.search(t) and not re.search(r"(개정|고쳐|바꿔|바꾸)", t):
+        kw = compare_keyword(t)
+        if kw:
+            plan.update(mode="compare", keyword=kw)
+            plan["reasoning"].append(f"다른 공공기관 사례를 묻는 요청으로 판단 — 알리오에서 “{kw}” 규정 조회")
+            return plan
     bulk_kw = re.search(r"(모든|전체|일괄|모두|전\s*내규|명칭|부서명|직위|기관명|이름이\s*바뀌)", t)
     m = _ARROW_RE.search(t) or (_BULK_RE.search(t) if bulk_kw else None)
     if m and (bulk_kw or "→" in t or "->" in t):
@@ -2414,21 +2449,22 @@ def ra_plan():
         mdl = model or _CTX["default_model_for"](provider, key)
         system = f"""당신은 {ORG['org_name']} {ORG['reg_word']} 제·개정 에이전트의 작업 계획 담당입니다.
 사용자의 한 문장 요청을 분석해 JSON만 반환하세요.
-{{"mode": "enact|amend|bulk|upper",
+{{"mode": "enact|amend|bulk|upper|compare",
   "intent": "개정·제정 의도를 실무 문장으로 1~2문장",
   "reg_hint": "개정 대상 내규명(알 수 있으면, 없으면 빈 문자열)",
   "title": "제정 시 내규명(없으면 제안)", "purpose": "제정 목적", "contents": "제정 시 주요 내용(줄바꿈 구분, '제목: 내용')",
   "old": "일괄 정비 시 바뀌기 전 용어", "new": "바뀐 뒤 용어",
   "law": "상위법 영향 분석 시 법령명", "arts": ["제N조"],
+  "keyword": "compare 일 때 알리오에서 찾을 규정명 핵심어(예: 여비, 재택근무)",
   "why": "이렇게 판단한 이유 1문장"}}
-- enact: 새 내규를 만듦 / amend: 특정 내규 조문을 고침 / bulk: 기관명·부서명·직위·내규명 등 용어를 모든 내규에서 바꿈 / upper: 상위 법령이 바뀌어 영향받는 내규를 찾음"""
+- enact: 새 내규를 만듦 / amend: 특정 내규 조문을 고침 / bulk: 기관명·부서명·직위·내규명 등 용어를 모든 내규에서 바꿈 / upper: 상위 법령이 바뀌어 영향받는 내규를 찾음 / compare: 다른 공공기관(알리오)은 어떻게 정했는지 사례를 찾음"""
         text, err = _CTX["ai_generate"](provider, key, mdl, system, f"요청: {req}", max_tokens=1200, temperature=0.1, json_mode=True)
         if not err:
             try:
                 d = _json_from(text)
-                if d.get("mode") in ("enact", "amend", "bulk", "upper"):
+                if d.get("mode") in ("enact", "amend", "bulk", "upper", "compare"):
                     keep = plan.get("reasoning", [])
-                    plan = {k: v for k, v in d.items() if k in ("mode", "intent", "reg_hint", "title", "purpose", "contents", "old", "new", "law", "arts")}
+                    plan = {k: v for k, v in d.items() if k in ("mode", "intent", "reg_hint", "title", "purpose", "contents", "old", "new", "law", "arts", "keyword")}
                     plan["reasoning"] = [f"AI 판단: {d.get('why') or plan['mode']}"] + [x for x in keep if x.startswith("“")]
                     plan["ai"] = True
                     plan["model"] = f"{provider}:{mdl}"
@@ -2444,6 +2480,10 @@ def ra_plan():
     if plan["mode"] == "enact":
         plan.setdefault("purpose", req)
         plan["title"] = plan.get("title") or ""
+    if plan["mode"] == "compare":
+        plan["keyword"] = str(plan.get("keyword") or compare_keyword(req))[:20]
+        if not plan["keyword"]:
+            return jsonify({"success": False, "error": "무엇에 관한 규정을 찾을지 적어 주세요. 예) 다른 기관은 재택근무를 어떻게 정했어?", "plan": plan}), 400
     if plan["mode"] == "bulk" and not (plan.get("old") and plan.get("new")):
         plan["mode"] = "amend"
         _resolve_targets(plan, req)
