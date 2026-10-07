@@ -175,6 +175,8 @@ _REG_SUFFIX = ("정관", "규정", "규칙", "세칙", "지침", "요령", "기�
 # 기관명·직위 변경 전 구 명칭(기관 프로필 stale_terms·stale_words)
 _STALE_TERMS = [tuple(x) for x in ORG.get("stale_terms") or []]
 _STALE_WORDS = [tuple(x) for x in ORG.get("stale_words") or []]   # 단어 경계로만 찾는 짧은 말
+# 이름이 내규처럼 보이지만 국가 법령·정부 규정인 것(인용 관계·명칭 점검에서 외부 규범으로 본다)
+_EXTERNAL_REGS = {re.sub(r"\s+", "", str(x)) for x in ORG.get("external_regs") or [] if str(x).strip()}
 # 알기 쉬운 표기(법제처 「알기 쉬운 법령 정비기준」 중 내규에 자주 나오는 것)
 _B = r"(?<![가-힣])"      # 앞이 한글이 아님(“공동조사”의 “동조”, “비상기구”의 “상기” 제외)
 _STYLE_RULES = [
@@ -186,10 +188,14 @@ _STYLE_RULES = [
 ]
 
 
+_DINGBAT_HANG = {0x2780 + i: 0x2460 + i for i in range(10)}     # ➀➁…➉ → ①②…⑩
+
+
 def _tidy(s: str) -> str:
     """hwp 변환 잔재(괄호·따옴표 안쪽 공백, 가운뎃점 변형) 정리."""
     s = (s.replace("․", "·").replace("ㆍ", "·").replace("\u00a0", " ")
-         .replace("｢", "「").replace("｣", "」").replace("➀", "①"))
+         .replace("｢", "「").replace("｣", "」").replace("ⓛ", "①"))
+    s = s.translate(_DINGBAT_HANG)
     s = re.sub(r"([「『“‘(\[［〔])\s+", r"\1", s)
     s = re.sub(r"\s+([」』”’)\]］〕])", r"\1", s)
     s = re.sub(r"\s*·\s*", "·", s)
@@ -301,7 +307,7 @@ def parse_text(text: str, clean: bool = True) -> dict:
         body = "\n".join(a["lines"]).strip()
         if clean:
             body = "\n".join(x for x in (strip_annot(l) for l in body.split("\n")) if x)
-        deleted = not a["title"] and (not body or bool(re.match(r"^[<＜〔\[]?\s*(?:삭제|종전)", body)))
+        deleted = (not body and not a["title"]) or bool(re.match(r"^[<＜〔\[]?\s*(?:삭제|종전)\s*(?:[<＜〔\[(（][^\n]{0,40}[>＞〕\])）]|\d{4}\s*\.\s*\d{1,2}\s*\.\s*\d{1,2}\s*\.?)?\s*$", body))
         out.append({"no": a["no"], "title": a["title"], "body": body,
                     "chapter": a["chapter"], "deleted": deleted})
     return {"articles": out, "chapters": chapters, "addenda": "\n".join(add),
@@ -551,7 +557,7 @@ def term_check(arts: list, cap: int = 8) -> list:
             defs.setdefault(re.sub(r"\s+", " ", m.group(1)).strip(), []).append((i, "abbr", m))
     out = []
     for term, occ in defs.items():
-        if not term:
+        if not term or re.search(r"[○△□◇]", term):
             continue
         i, kind, m = occ[0]
         no = live[i]["no"]
@@ -567,7 +573,8 @@ def term_check(arts: list, cap: int = 8) -> list:
         else:
             rest = body[m.end():]
             others = "\n".join(x.get("body", "") for x in live[i + 1:])
-        if len(re.sub(r"\s+", "", term)) >= 2 and _term_uses(rest + "\n" + others, term) == 0:
+        if (len(re.sub(r"\s+", "", term)) >= 2 and term not in (ORG["org_short"], ORG["org_name"])
+                and _term_uses(rest + "\n" + others, term) == 0):
             what = "정의한 용어" if kind == "def" else "약칭으로 정한"
             out.append(("info", no, f"{art_label(no)}에서 {what} “{term}”{_josa(term, ('이', '가'))} 다른 곳에서 쓰이지 않습니다. 빼거나 본문에서 그 용어로 쓰세요."))
         if kind == "abbr" and len(re.sub(r"\s+", "", term)) >= 3 and term not in _TERM_GENERIC:
@@ -608,6 +615,7 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
     if arts and art_key(arts[0]["no"]) != (1, 0):
         add("warn", "first", arts[0]["no"], "첫 조문이 제1조가 아닙니다.")
     have = {art_key(a["no"]) for a in arts}
+    gone = {art_key(a["no"]) for a in arts if a.get("deleted")}
 
     for a in arts:
         no, body = a["no"], a.get("body", "")
@@ -644,6 +652,9 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
             if art_key(rno) not in have and rno not in seen:
                 seen.add(rno)
                 add("error", "ref", no, f"{lbl}에서 인용한 {art_label(rno)}가 이 내규에 없습니다: “{raw.strip()}”")
+            elif art_key(rno) in gone and rno not in seen:
+                seen.add(rno)
+                add("error", "ref", no, f"{lbl}에서 삭제된 {art_label(rno)}를 인용합니다: “{raw.strip()}”")
         # (5) 「내규명」 확인
         for m in _QUOTED_NAME.finditer(body):
             nm = m.group(1).strip()
@@ -651,22 +662,22 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                 continue
             if not nm.endswith(_REG_SUFFIX):
                 continue
-            if _nk(nm) in regnames or _nk(nm) == _nk(title) or nm == "정관":
+            if _nk(nm) in regnames or _nk(nm) == _nk(title) or nm == "정관" or re.sub(r"\s+", "", nm) in _EXTERNAL_REGS:
                 continue
             near = [regnames[k] for k in difflib.get_close_matches(_nk(nm), list(regnames), n=2, cutoff=0.8)]
             own = any(t and t in nm for t in [ORG["org_short"], ORG["org_name"]] + [o for o, _ in _STALE_TERMS + _STALE_WORDS])
             if not near and not own:
                 continue                  # 정부 규정·지침 등 외부 규범으로 본다
             add("warn", "regname", no,
-                f"{lbl}의 「{nm}」은(는) 현행 내규 목록에 없습니다. 명칭 변경·폐지 여부를 확인하세요."
+                f"{lbl}의 「{nm}」{_josa(nm)} 현행 내규 목록에 없습니다. 명칭 변경·폐지 여부를 확인하세요."
                 + (f" (유사: {', '.join('「'+x+'」' for x in near)})" if near else ""))
         # (6) 구 명칭
         for old, new in _STALE_TERMS:
             if old in body:
-                add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”이(가) 있습니다.", f"“{old}” → “{new}”")
+                add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”{_josa(old, ('이', '가'))} 있습니다.", f"“{old}” → “{new}”")
         for old, new in _STALE_WORDS:
             if re.search(r"(?<![가-힣])" + re.escape(old) + r"(?:은|는|이|가|의|에|에서|과|와|을|를)?(?![가-힣])", body):
-                add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”이(가) 있습니다.", f"“{old}” → “{new}”")
+                add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”{_josa(old, ('이', '가'))} 있습니다.", f"“{old}” → “{new}”")
         # (7) 알기 쉬운 표기
         if full:
             for pat, rep in _STYLE_RULES:
@@ -692,7 +703,7 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
             full_nm, abbr = m.group(1), m.group(2)
             later = joined[m.end():]
             if full_nm != abbr and full_nm in later:
-                add("info", "abbr", "", f"“{full_nm}”을(를) “{abbr}”(으)로 줄여 정의한 뒤에도 정식 명칭을 다시 씁니다. 약칭으로 통일을 검토하세요.")
+                add("info", "abbr", "", f"“{full_nm}”{_josa(full_nm, ('을', '를'))} “{abbr}”{_ro(abbr)} 줄여 정의한 뒤에도 정식 명칭을 다시 씁니다. 약칭으로 통일을 검토하세요.")
         # (8-2) 용어 정의 — 중복 정의·쓰지 않는 용어·정의 전 사용
         for lv, tno, msg in term_check(arts):
             add(lv, "term", tno, msg)
@@ -883,6 +894,23 @@ def _deleg_block(dels: list, cap: int = 6000) -> str:
     return "\n".join(out)
 
 
+def _clean_addenda(v) -> list:
+    """AI 부칙 → 줄 목록. 머리말 “부칙”은 문서에서 따로 붙이므로 뗀다."""
+    items = v if isinstance(v, list) else [v] if isinstance(v, str) else []
+    out = []
+    for x in items:
+        t = re.sub(r"^\s*부\s*칙\s*(?:[<＜〈(（][^>＞〉)）]{0,30}[>＞〉)）])?\s*", "", str(x or "")).strip()
+        if t:
+            out.append(t)
+    return out
+
+
+def _del_ref(d: dict) -> str:
+    """위임 조항 표기: 「법령」 제N조(제목은 뺀다)."""
+    art = re.sub(r"\s*\([^)]*\)\s*$", "", str(d.get("art") or "")).strip()
+    return f"「{d.get('law', '')}」 {art}".strip()
+
+
 def template_enact(b: dict) -> dict:
     """AI 없이 쓰는 표준 조문 골격."""
     title = (b.get("title") or "○○ 운영규칙").strip()
@@ -893,12 +921,12 @@ def template_enact(b: dict) -> dict:
     basis = ""
     if dels:
         d0 = dels[0]
-        basis = f"「{d0.get('law', '')}」 {d0.get('art', '')}".strip() + "에 따라 "
+        basis = _del_ref(d0) + "에 따라 "
     arts = [
         {"no": "1", "title": "목적",
          "body": f"이 {kind}{eun} {basis}{ORG['org_name']}(이하 “{ORG['org_short']}”{_josa(ORG['org_short'], ('이라', '라'))} 한다)의 {purpose}에 필요한 사항을 정함을 목적으로 한다."},
         {"no": "2", "title": "정의",
-         "body": f"이 {kind}에서 사용하는 용어의 뜻은 다음과 같다.\n1. “○○”이란 ○○을 말한다.\n2. “○○”이란 ○○을 말한다."},
+         "body": f"이 {kind}에서 사용하는 용어의 뜻은 다음과 같다.\n1. “○○”이란 ○○을 말한다.\n2. “△△”이란 △△을 말한다."},
         {"no": "3", "title": "적용범위",
          "body": f"○○에 관하여 다른 내규에 특별한 규정이 있는 경우를 제외하고는 이 {kind}에서 정하는 바에 따른다."},
     ]
@@ -915,8 +943,9 @@ def template_enact(b: dict) -> dict:
     eff = (b.get("effective") or "").strip() or "발령한 날"
     addenda = f"이 {kind}{eun} {eff}부터 시행한다."
     return {"title": title, "articles": arts, "addenda": [addenda],
-            "reason": {"purpose": f"{purpose}에 필요한 사항을 정하기 위하여 「{title}」을(를) 제정하려는 것임.",
-                       "main": [f"{a['title']}에 관한 사항을 정함(안 {art_label(a['no'])})" for a in arts[2:-1]]},
+            "reason": {"purpose": f"{purpose}에 필요한 사항을 정하기 위하여 「{title}」{_josa(title, ('을', '를'))} 제정하려는 것임.",
+                       "main": [f"{a['title']}에 관한 사항을 정함(안 {art_label(a['no'])})" for a in arts[3:-1]]
+                       or [f"{purpose}에 필요한 사항을 정함"]},
             "template": True}
 
 
@@ -934,7 +963,7 @@ def ai_enact(b: dict):
 {{
   "title": "내규명",
   "articles": [{{"chapter": "제1장 총칙(장을 두지 않으면 빈 문자열)", "no": "1", "title": "목적", "body": "조문 본문(항은 줄바꿈 후 ①, 호는 줄바꿈 후 1.)"}}],
-  "addenda": ["부칙 ① 시행일 …", "② 경과조치 …(필요할 때만)"],
+  "addenda": ["제1조(시행일) 이 규칙은 … 시행한다.", "제2조(경과조치) …(필요할 때만. 시행일만 있으면 “이 규칙은 발령한 날부터 시행한다.” 한 문장)"],
   "reason": {{"purpose": "제정 이유(2~3문장, ~하려는 것임 체)", "main": ["주요내용 1(안 제N조)", "주요내용 2(안 제N조)"]}},
   "notes": ["입안 시 확인할 점(상위법 저촉 여부, 다른 내규와 중복, 위임 근거 등)"]
 }}
@@ -963,6 +992,7 @@ def ai_enact(b: dict):
     if not arts:
         return None, "AI가 조문을 만들지 못했습니다. 입력을 보완해 다시 시도해 주세요."
     d["articles"] = arts
+    d["addenda"] = _clean_addenda(d.get("addenda"))
     d["title"] = d.get("title") or title
     d["model"] = f"{provider}:{mdl}"
     return d, ""
@@ -988,7 +1018,7 @@ def ai_amend(b: dict):
 {{
   "changes": [{{"type": "modify|insert|delete", "no": "5 또는 5의2", "title": "조 제목", "body": "개정 후 조문 본문 전체(삭제는 빈 문자열)", "why": "이 조문을 바꾸는 이유(1문장)"}}],
   "reason": {{"purpose": "개정 이유(2~3문장, ~하려는 것임 체)", "main": ["주요내용(안 제N조)"]}},
-  "addenda": ["① 시행일 …", "② 경과조치 …(필요할 때만)"],
+  "addenda": ["제1조(시행일) 이 규정은 … 시행한다.", "제2조(경과조치) …(필요할 때만. 시행일만 있으면 한 문장)"],
   "notes": ["함께 고쳐야 할 수 있는 다른 조문·별표·서식, 상위법 저촉 여부 등"]
 }}
 - modify 는 기존 조문 번호 그대로, 본문은 개정 후 전체 문장으로.
@@ -1024,6 +1054,7 @@ def ai_amend(b: dict):
     if not ch:
         return None, "AI가 수정안을 만들지 못했습니다. 개정 의도를 구체적으로 적어 다시 시도해 주세요."
     d["changes"] = ch
+    d["addenda"] = _clean_addenda(d.get("addenda"))
     d["model"] = f"{provider}:{mdl}"
     return d, ""
 
@@ -1246,7 +1277,7 @@ def ra_lint():
         if not r:
             return jsonify({"success": False, "error": "내규를 찾을 수 없습니다."}), 404
         iss = lint_articles(r["articles"], r["addenda"], r["appendix"], r["title"])
-        return jsonify({"success": True, "mode": "reg", "reg": r["title"], "issues": iss})
+        return jsonify({"success": True, "mode": "reg", "reg": r["title"], "slug": r["slug"], "issues": iss})
     text = b.get("text") or ""
     if not text.strip():
         return jsonify({"success": False, "error": "점검할 조문이 없습니다."}), 400
@@ -1292,8 +1323,11 @@ def ra_draft():
 
 
 # ── 한글(.hwpx) 문서 세트 ─────────────────────────────────────────────────
+_XML_BAD = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+
+
 def _xesc(s):
-    return (str(s or "").replace("&", "&amp;").replace("<", "&lt;")
+    return (_XML_BAD.sub("", str(s or "")).replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;").replace('"', "&quot;"))
 
 
@@ -1301,22 +1335,46 @@ _LS = ('<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="1000" tex
        'baseline="850" spacing="600" horzpos="0" horzsize="{w}" flags="393216"/></hp:linesegarray>')
 
 
-def _para(text, width=47628, page_break=False):
-    return (f'<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="{1 if page_break else 0}" '
-            f'columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t>{_xesc(text)}</hp:t></hp:run>'
+# 문서 서식: 블록·셀 글자 모양 이름 → HWPX charPr/paraPr 번호(build_hwpx 가 header.xml 에 추가해 채운다)
+_HS = {"char": {"": "0"}, "para": {"": "0"}}
+
+
+def _seg_lines(c: dict) -> list:
+    """셀 → 줄 목록. 줄은 [(글, 서식)]. 서식: ""·"d"(삭제 밑줄)·"i"(추가 밑줄)·"b"(굵게)."""
+    segs = c.get("r") or [{"s": c.get("t", ""), "u": ""}]
+    base = "b" if c.get("hd") else ""
+    lines = [[]]
+    for sg in segs:
+        parts = str(sg.get("s", "")).split("\n")
+        for k, part in enumerate(parts):
+            if k:
+                lines.append([])
+            if part:
+                lines[-1].append((part, sg.get("u") or base))
+    return lines
+
+
+def _para(text, width=47628, page_break=False, style="", align=""):
+    ch, pa = _HS["char"].get(style, "0"), _HS["para"].get(align, "0")
+    return (f'<hp:p id="0" paraPrIDRef="{pa}" styleIDRef="0" pageBreak="{1 if page_break else 0}" '
+            f'columnBreak="0" merged="0"><hp:run charPrIDRef="{ch}"><hp:t>{_xesc(text)}</hp:t></hp:run>'
             + _LS.format(w=width) + '</hp:p>')
 
 
-def _cell(text, col, row, cspan, width, bf):
-    lines = str(text or "").split("\n") or [""]
+def _cell(c, col, row, cspan, width, bf):
+    lines = _seg_lines(c)
+    pa = _HS["para"].get("center" if c.get("hd") else "", "0")
     paras = "".join(
-        f'<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
-        f'<hp:run charPrIDRef="0"><hp:t>{_xesc(ln)}</hp:t></hp:run>{_LS.format(w=max(1000, width - 400))}</hp:p>'
+        f'<hp:p id="0" paraPrIDRef="{pa}" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
+        + ("".join(f'<hp:run charPrIDRef="{_HS["char"].get(u, "0")}"><hp:t>{_xesc(t)}</hp:t></hp:run>' for t, u in ln)
+           or '<hp:run charPrIDRef="0"><hp:t></hp:t></hp:run>')
+        + f'{_LS.format(w=max(1000, width - 400))}</hp:p>'
         for ln in lines)
+    lines = ["".join(t for t, _ in ln) for ln in lines]
     # 줄 수·폭으로 높이를 어림(한글이 열 때 다시 계산)
     est = sum(max(1, int(len(ln) * 1000 / max(1500, width - 1000)) + 1) for ln in lines)
     h = max(1848, est * 1600 + 600)
-    return (f'<hp:tc name="" header="0" hasMargin="1" protect="0" editable="0" dirty="0" borderFillIDRef="{bf}">'
+    return (f'<hp:tc name="" header="{1 if c.get("hd") else 0}" hasMargin="1" protect="0" editable="0" dirty="0" borderFillIDRef="{bf}">'
             f'<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" '
             f'linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
             f'{paras}</hp:subList><hp:cellAddr colAddr="{col}" rowAddr="{row}"/>'
@@ -1332,7 +1390,7 @@ def _table(rows, col_w, bf):
         for c in cells:
             cs = int(c.get("cs") or 1)
             w = sum(col_w[col:col + cs])
-            x, h = _cell(c.get("t", ""), col, r, cs, w, bf)
+            x, h = _cell(c, col, r, cs, w, bf)
             tcs.append(x)
             rh = max(rh, h)
             col += cs
@@ -1359,6 +1417,50 @@ def _clamp_int(v, lo, hi, default):
         return default
 
 
+def _norm_runs(v) -> list:
+    """셀 서식 구간 [{s, u}] 검증(u: d=삭제·i=추가 밑줄, b=굵게). 잘못된 값이면 빈 목록(평문 t 사용)."""
+    if not isinstance(v, list):
+        return []
+    out = []
+    for x in v[:4000]:
+        if isinstance(x, dict) and isinstance(x.get("s"), str):
+            out.append({"s": x["s"][:20000], "u": x.get("u") if x.get("u") in ("d", "i", "b") else ""})
+    return out
+
+
+def _hwpx_styles(header: str) -> str:
+    """header.xml 에 굵게·밑줄(삭제 빨강/추가 파랑 굵게)·제목 글자 모양과 가운데 정렬 문단 모양을 덧붙이고 번호를 _HS 에 담는다."""
+    _HS["char"], _HS["para"] = {"": "0"}, {"": "0"}
+    m = re.search(r'<hh:charProperties itemCnt="(\d+)">', header)
+    c0 = re.search(r'<hh:charPr id="0".*?</hh:charPr>', header, re.S)
+    if m and c0:
+        n = int(m.group(1))
+        add, specs = [], [("b", "#000000", "<hh:bold/>", None), ("d", "#C00000", "", "#C00000"),
+                          ("i", "#1F3FBF", "<hh:bold/>", "#1F3FBF"), ("title", "#000000", "<hh:bold/>", None)]
+        for k, (name, color, bold, ul) in enumerate(specs):
+            x = re.sub(r'id="0"', f'id="{n + k}"', c0.group(0), count=1)
+            x = re.sub(r'textColor="[^"]*"', f'textColor="{color}"', x, count=1)
+            if name == "title":
+                x = re.sub(r'height="\d+"', 'height="1600"', x, count=1)
+            x = re.sub(r"<hh:(?:bold|italic)/>|<hh:underline\b[^>]*/>", "", x)
+            x = x.replace("<hh:strikeout", bold + (f'<hh:underline type="BOTTOM" shape="SOLID" color="{ul}"/>' if ul else "") + "<hh:strikeout", 1)
+            add.append(x)
+            _HS["char"][name] = str(n + k)
+        end = header.find("</hh:charProperties>")
+        header = header[:end] + "".join(add) + header[end:]
+        header = header.replace(m.group(0), f'<hh:charProperties itemCnt="{n + len(add)}">', 1)
+    m = re.search(r'<hh:paraProperties itemCnt="(\d+)">', header)
+    p0 = re.search(r'<hh:paraPr id="0".*?</hh:paraPr>', header, re.S)
+    if m and p0:
+        n = int(m.group(1))
+        x = re.sub(r'id="0"', f'id="{n}"', p0.group(0), count=1).replace('horizontal="JUSTIFY"', 'horizontal="CENTER"', 1)
+        end = header.find("</hh:paraProperties>")
+        header = header[:end] + x + header[end:]
+        header = header.replace(m.group(0), f'<hh:paraProperties itemCnt="{n + 1}">', 1)
+        _HS["para"]["center"] = str(n)
+    return header
+
+
 def _norm_blocks(blocks) -> list:
     """문서 블록 정리 — 표의 열 병합(cs)·열 수·행 수를 제한하고 colWidths 를 검증한다(메모리 폭주·0 나누기 방지)."""
     out = []
@@ -1372,7 +1474,8 @@ def _norm_blocks(blocks) -> list:
         for r in (blk.get("rows") if isinstance(blk.get("rows"), list) else [])[:2000]:
             if not isinstance(r, list):
                 continue
-            cells = [{"t": str(c.get("t", "")), "hd": bool(c.get("hd")), "cs": _clamp_int(c.get("cs") or 1, 1, 20, 1)}
+            cells = [{"t": str(c.get("t", "")), "hd": bool(c.get("hd")), "cs": _clamp_int(c.get("cs") or 1, 1, 20, 1),
+                      "r": _norm_runs(c.get("r"))}
                      for c in r[:20] if isinstance(c, dict)]
             if cells:
                 rows.append(cells)
@@ -1393,6 +1496,15 @@ def build_hwpx(blocks: list) -> bytes:
     header = zin.read("Contents/header.xml").decode("utf-8", "ignore")
     sec = zin.read("Contents/section0.xml").decode("utf-8", "ignore")
     bf = _CTX["hwpx_full_border"](header)
+    with _HWPX_LOCK:
+        header = _hwpx_styles(header)
+        return _build_hwpx(zin, header, sec, bf, blocks)
+
+
+_HWPX_LOCK = threading.Lock()
+
+
+def _build_hwpx(zin, header, sec, bf, blocks) -> bytes:
     m = re.search(r'<hs:sec\b[^>]*>', sec)
     prefix, body = sec[:m.end()], sec[m.end():]
     pi = body.find('<hp:p')
@@ -1408,16 +1520,27 @@ def build_hwpx(blocks: list) -> bytes:
             parts.append(_para("", page_break=True))
         else:
             txt = str(blk.get("text") or "")
+            ttl = bool(blk.get("titleBold"))
             for j, ln in enumerate(txt.split("\n")):
-                parts.append(_para(ln, page_break=bool(blk.get("pageBreak")) and j == 0))
+                parts.append(_para(ln, page_break=bool(blk.get("pageBreak")) and j == 0,
+                                   style="title" if ttl and j == 0 else "", align="center" if ttl and j == 0 else ""))
     new_sec = prefix + first + "".join(parts) + _para("") + "</hs:sec>"
+    plain = "\n".join(str(b_.get("text") or "") for b_ in _norm_blocks(blocks) if b_.get("t") not in ("table", "break"))
     out = io.BytesIO()
     zout = zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED)
     zout.writestr(zipfile.ZipInfo("mimetype"), "application/hwp+zip", compress_type=zipfile.ZIP_STORED)
     for n in zin.namelist():
         if n in ("mimetype", "Preview/PrvImage.png"):
             continue
-        zout.writestr(n, new_sec.encode("utf-8") if n == "Contents/section0.xml" else zin.read(n))
+        if n == "Contents/section0.xml":
+            data = new_sec.encode("utf-8")
+        elif n == "Contents/header.xml":
+            data = header.encode("utf-8")
+        elif n == "Preview/PrvText.txt":            # 미리보기 글: 기본 서식의 옛 내용 대신 이 문서의 앞부분
+            data = plain[:1000].encode("utf-8")
+        else:
+            data = zin.read(n)
+        zout.writestr(n, data)
     zout.close()
     zin.close()
     return out.getvalue()
@@ -1487,8 +1610,12 @@ def _rjosa(word: str, part: str) -> str:
     return part
 
 
+# 받침과 상관없는 조사 — 짧은 용어 뒤에 붙어도 다른 낱말이 아니다(“이사장의”·“이사장에게”·“재단도”)
+_NEUTRAL_JOSA = re.compile(r"(?:의|에게|에서|에|도|만|께서|께|부터|까지|보다|마다|처럼)(?:는|도|만|의|서)?(?![가-힣])")
+
+
 def replace_term(text: str, old: str, new: str, whole: bool = True):
-    """old→new 치환 + 뒤따르는 조사 교정. 반환: (새 본문, [(위치, 원래 표기)])."""
+    """old→new 치환 + 뒤따르는 조사 교정. 반환: (새 본문, [(위치, 원래 표기, 바뀐 표기)])."""
     if not old:
         return text, []
     pat = re.compile((r"(?<![가-힣A-Za-z0-9])" if whole else "") + re.escape(old)
@@ -1499,7 +1626,8 @@ def replace_term(text: str, old: str, new: str, whole: bool = True):
         after = text[m.end():m.end() + 1]
         # 낱말 단위(whole)일 때 짧은 용어(3자 이하)는 뒤에 한글이 바로 붙으면 다른 낱말로 본다(“이사”→“이사장”·“이사회” 제외).
         # 긴 명칭(“기획운영본부장”의 “기획운영본부”)은 파생어까지 바꾼다.
-        if whole and len(old) <= 3 and not part and after and "가" <= after <= "힣":
+        if (whole and len(old) <= 3 and not part and after and "가" <= after <= "힣"
+                and not _NEUTRAL_JOSA.match(text, m.end())):
             continue
         if part and after and "가" <= after <= "힣":
             # “와의·과는·로부터·으로서”처럼 조사가 겹친 경우만 조사로 보고 고친다(“이사이며”의 “이”는 그대로)
@@ -1509,7 +1637,7 @@ def replace_term(text: str, old: str, new: str, whole: bool = True):
             part_fixed = _rjosa(new, part) if part else ""
         out.append(text[last:m.start()] + new + part_fixed)
         last = m.end()
-        hits.append((m.start(), m.group(0)))
+        hits.append((m.start(), m.group(0), new + part_fixed))
     out.append(text[last:])
     return "".join(out), hits
 
@@ -1533,6 +1661,26 @@ def _loc_label(art: dict, pos: int) -> str:
 _BULK_MAX_ARTS = 400
 
 
+def _ro(w: str) -> str:
+    return "로" if (not _has_batchim(w) or (("가" <= w[-1] <= "힣") and (ord(w[-1]) - 0xAC00) % 28 == 8)) else "으로"
+
+
+def _bulk_sentence(pairs: list, old: str, new: str) -> str:
+    """[(위치, (원래 표기, 바뀐 표기))] → 개정문 한 문장.
+    조사만 바뀌는 곳(“부원장은”→“총괄이사는”)은 그 표기째 쓴다. 같은 바꿈은 “각각”으로 묶고 “…하고,”로 잇는다."""
+    groups = {}
+    for lb, (o_, n_) in pairs:
+        key = (old, new) if (o_[len(old):] == n_[len(new):]) else (o_, n_)
+        locs = groups.setdefault(key, [])
+        if lb not in locs:
+            locs.append(lb)
+    parts = []
+    for (o_, n_), locs in groups.items():
+        each = "각각 " if len(locs) > 1 else ""
+        parts.append(f"{', '.join(locs)} 중 “{o_}”{_josa(o_, ('을', '를'))} {each}“{n_}”{_ro(n_)} ")
+    return "하고, ".join(parts) + "한다."
+
+
 @bp.route("/api/regagent/bulk", methods=["POST"])
 def ra_bulk():
     """용어·명칭 일괄 정비. body: {old, new, whole:true, slugs:[...](선택)}"""
@@ -1554,30 +1702,32 @@ def ra_bulk():
             nt, thits = replace_term(a["title"], old, new, whole)
             if not hits and not thits:
                 continue
-            locs = []
-            for pos, _ in hits:
+            locs, pairs = [], []
+            for pos, o_, n_ in hits:
                 lb = _loc_label(a, pos)
                 if lb not in locs:
                     locs.append(lb)
+                pairs.append((lb, (o_, n_)))
             if thits:
                 locs.insert(0, f"{art_label(a['no'])} 제목")
+                pairs[:0] = [(f"{art_label(a['no'])} 제목", (o_, n_)) for _, o_, n_ in thits[:1]]
             arts.append({"no": a["no"], "title": a["title"], "new_title": nt, "old_body": a["body"],
-                         "new_body": nb, "count": len(hits) + len(thits), "locs": locs})
+                         "new_body": nb, "count": len(hits) + len(thits), "locs": locs, "pairs": pairs})
             total += len(hits) + len(thits)
         if arts:
             regs_out.append({"slug": r["slug"], "reg": r["title"], "articles": arts,
                              "count": sum(x["count"] for x in arts)})
     regs_out.sort(key=lambda x: -x["count"])
     n_arts = sum(len(g["articles"]) for g in regs_out)
-    if n_arts > _BULK_MAX_ARTS:      # “한다”·“따라”처럼 흔한 말은 명칭 정비 대상이 아니다(응답도 수 MB 로 커짐)
-        return jsonify({"success": False, "error": f"“{old}”이(가) {len(regs_out)}개 내규 {n_arts}개 조문에 있어 일괄 정비 범위를 넘습니다. "
+    # “한다”·“따라”처럼 흔한 말은 명칭 정비 대상이 아니다(응답도 수 MB 로 커짐). 기관장·부기관장·옛 명칭처럼
+    # 기관이 명칭으로 등록한 말은 직제 개편 때 실제로 모든 내규를 고쳐야 하므로 상한을 넓힌다
+    named = old in {ORG["head"], ORG["deputy"], ORG["org_name"], ORG["org_short"]} | {o_ for o_, _ in _STALE_TERMS + _STALE_WORDS}
+    if n_arts > (_BULK_MAX_ARTS * 4 if named else _BULK_MAX_ARTS):
+        return jsonify({"success": False, "error": f"“{old}”{_josa(old, ('이', '가'))} {len(regs_out)}개 내규 {n_arts}개 조문에 있어 일괄 정비 범위를 넘습니다. "
                                                    f"더 구체적인 명칭(예: 부서명·직위명 전체)으로 찾으세요."}), 400
-    q_old = f"“{old}”{_josa(old, ('을', '를'))}"
-    q_new = f"“{new}”{'로' if (not _has_batchim(new) or (('가' <= new[-1] <= '힣') and (ord(new[-1]) - 0xAC00) % 28 == 8)) else '으로'}"
     for g in regs_out:
-        locs = [l for a in g["articles"] for l in a["locs"]]
-        each = "각각 " if len(locs) > 1 else ""
-        g["amend_text"] = f"「{g['reg']}」 일부를 다음과 같이 개정한다.\n{', '.join(locs)} 중 {q_old} {each}{q_new} 한다."
+        g["amend_text"] = f"「{g['reg']}」 일부를 다음과 같이 개정한다.\n" + _bulk_sentence(
+            [pr for a in g["articles"] for pr in a.pop("pairs")], old, new)
     return jsonify({"success": True, "old": old, "new": new, "total": total,
                     "reg_count": len(regs_out), "regs": regs_out})
 
@@ -1612,7 +1762,7 @@ def review_draft(b: dict) -> dict:
     if mode == "enact" and _kind_of(title) in ("시행세칙", "세칙") and not dels:
         f("fit", "warn", "시행세칙인데 위임 근거(상위 규정 조항)가 없습니다.")
     if dels:
-        f("fit", "ok", "상위 근거: " + ", ".join(f"「{d.get('law', '')}」 {d.get('art', '')}".strip() for d in dels[:4]))
+        f("fit", "ok", "상위 근거: " + ", ".join(_del_ref(d) for d in dels[:4]))
     laws = sorted({m.group(1) for a in arts for m in _QUOTED_NAME.finditer(a.get("body", ""))
                    if re.search(r"법|령$", m.group(1))})
     if laws:
@@ -1622,7 +1772,7 @@ def review_draft(b: dict) -> dict:
             f("fit", "warn", i["msg"])
     # 통일성·조화성
     if mode == "enact" and title and _nk(title) in _reg_names():
-        f("unity", "warn", f"같은 이름의 {ORG['reg_word']}이(가) 이미 있습니다: 「{title}」")
+        f("unity", "warn", f"같은 이름의 {ORG['reg_word']}{_josa(ORG['reg_word'], ('이', '가'))} 이미 있습니다: 「{title}」")
     q = " ".join([title, purpose] + [str(x) for x in main])[:600]
     if len(q) >= 4:
         sim = similar_search(q, b.get("slug") or "", 4)
@@ -1722,8 +1872,10 @@ def ra_review():
 # ══════════════════════════════════════════════════════════════════════════
 # 10. Word(.docx) 저장 — 한글이 없는 기관용
 # ══════════════════════════════════════════════════════════════════════════
-def _w_run(t):
-    return f'<w:r><w:t xml:space="preserve">{_xesc(t)}</w:t></w:r>'
+def _w_run(t, u=""):
+    rpr = {"b": "<w:b/>", "d": '<w:color w:val="C00000"/><w:u w:val="single"/>',
+           "i": '<w:b/><w:color w:val="1F3FBF"/><w:u w:val="single"/>'}.get(u, "")
+    return f'<w:r>{"<w:rPr>" + rpr + "</w:rPr>" if rpr else ""}<w:t xml:space="preserve">{_xesc(t)}</w:t></w:r>'
 
 
 def _w_para(t, bold=False, center=False, page_break=False):
@@ -1744,18 +1896,21 @@ def build_docx(blocks: list) -> bytes:
             continue
         if t == "table":
             rows, ncol = blk["rows"], blk["ncol"]
-            grid = "".join(f'<w:gridCol w:w="{int(9000 / ncol)}"/>' for _ in range(ncol))
+            cw = blk["colWidths"] or [1] * ncol             # 화면에서 준 열 너비 비율을 본문 폭(9000)에 맞춘다
+            ws = [max(300, int(9000 * w / sum(cw))) for w in cw]
+            grid = "".join(f'<w:gridCol w:w="{w}"/>' for w in ws)
             trs = []
             for i, r in enumerate(rows):
-                tcs = []
+                tcs, col = [], 0
                 for c in r:
                     cs = c["cs"]
-                    paras = "".join(_w_para(x, bold=bool(c.get("hd")), center=bool(c.get("hd")))
-                                    for x in str(c.get("t", "")).split("\n"))
-                    tcs.append(f'<w:tc><w:tcPr><w:tcW w:w="{int(9000 / ncol) * cs}" w:type="dxa"/>'
+                    jc = '<w:pPr><w:jc w:val="center"/></w:pPr>' if c.get("hd") else ""
+                    paras = "".join(f"<w:p>{jc}" + "".join(_w_run(t, u) for t, u in ln) + "</w:p>" for ln in _seg_lines(c))
+                    tcs.append(f'<w:tc><w:tcPr><w:tcW w:w="{sum(ws[col:col + cs])}" w:type="dxa"/>'
                                + (f'<w:gridSpan w:val="{cs}"/>' if cs > 1 else "")
                                + (('<w:shd w:val="clear" w:color="auto" w:fill="EAF2FE"/>') if c.get("hd") else "")
                                + f'</w:tcPr>{paras}</w:tc>')
+                    col += cs
                 trs.append("<w:tr>" + ('<w:trPr><w:tblHeader/></w:trPr>' if i == 0 else "") + "".join(tcs) + "</w:tr>")
             bd = "".join(f'<w:{s} w:val="single" w:sz="4" w:space="0" w:color="444444"/>'
                          for s in ("top", "left", "bottom", "right", "insideH", "insideV"))
@@ -1767,7 +1922,8 @@ def build_docx(blocks: list) -> bytes:
                         f'</w:tblPr><w:tblGrid>{grid}</w:tblGrid>{"".join(trs)}</w:tbl>')
             continue
         for j, ln in enumerate(str(blk.get("text") or "").split("\n")):
-            body.append(_w_para(ln, bold=(j == 0 and bool(blk.get("titleBold"))), page_break=(pb and j == 0)))
+            ttl = j == 0 and bool(blk.get("titleBold"))
+            body.append(_w_para(ln, bold=ttl, center=ttl, page_break=(pb and j == 0)))
         pb = False
     doc = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'
@@ -1880,12 +2036,14 @@ def health_row(r: dict, law_info: dict, today: str) -> dict:
         ap = 15 if age >= 5 else 8 if age >= 3 else 4 if age >= 2 else 0
         if ap:
             pen += ap
-            reasons.append(f"{age:g}년째 개정 없음")
+            reasons.append(f"개정 후 {age:g}년 경과")
     laws = cited_laws(r)
     stale_laws = []
     for nm in laws:
         info = law_info.get(nm) or {}
         ef = re.sub(r"\D", "", str(info.get("ef") or ""))[:8]
+        if info.get("found") is False:
+            continue
         if rd and len(ef) == 8 and rd < ef <= today:
             stale_laws.append({"law": nm, "ef": ef})
     if stale_laws:
@@ -2026,7 +2184,8 @@ def citation_graph() -> dict:
             kc = _nk(cur)
             if kc != k and kc in idx:
                 res = (idx[kc], True, regs[idx[kc]]["title"])
-            elif "법" in nm or nm.endswith(("령", "조례")) or not nm.endswith(_REG_SUFFIX) or nm == "정관":
+            elif ("법" in nm or nm.endswith(("령", "조례")) or not nm.endswith(_REG_SUFFIX)
+                  or re.sub(r"^(?:" + "|".join(re.escape(t) for t in own[:2]) + r")\s*", "", nm) == "정관"):
                 res = (None, False, None)
             else:
                 near = difflib.get_close_matches(k, names, n=1, cutoff=0.8)
@@ -2036,9 +2195,17 @@ def citation_graph() -> dict:
         return res
 
     for i, r in enumerate(regs):
-        for m in _QUOTED_NAME.finditer(_reg_text(r)):
+        txt = _reg_text(r)
+        for m in _QUOTED_NAME.finditer(txt):
             nm = m.group(1).strip()
+            # 「보안업무규정」(대통령령)·「…규정」(이하 “영”이라 한다)처럼 국가 법령으로 밝힌 인용은 외부 규범
+            if re.match(r"\s*\(\s*(?:대통령령|총리령|[가-힣]+부령|이하\s*[“\"‘']?(?:영|시행령|규정)[”\"’']?)", txt[m.end():m.end() + 24]):
+                continue
+            if re.sub(r"\s+", "", nm) in _EXTERNAL_REGS:
+                continue
             j, stale, near = resolve(nm)
+            if near and _nk(near) == _nk(r["title"]):
+                near = None                    # 자기 자신과 비슷한 이름은 상위 법령을 인용한 것으로 본다
             if j is not None and j != i:
                 edges[(i, j)] = edges.get((i, j), 0) + 1
             if (j is None and near is not None) or stale:
@@ -2091,7 +2258,10 @@ def heuristic_plan(req: str) -> dict:
             if nm and not nm.endswith(("규정", "규칙")) or (nm and "법" in nm):
                 lm = nm
                 break
-    if lm and re.search(r"(상위법|법령|법률|시행령|시행규칙|「)", t) and not re.search(r"(내규|규정|규칙|지침)을\s*(?:고치|개정)", t):
+    short_law = re.search(r"([가-힣]{2,30}법)\s*(?:이|가|은|는|을|를)?\s*(?:개정|바뀌|변경|시행)", t)   # “청탁금지법이 바뀌었어”
+    if not lm and short_law:
+        lm = short_law.group(1)
+    if lm and (re.search(r"(상위법|법령|법률|시행령|시행규칙|「)", t) or short_law) and not re.search(r"(내규|규정|규칙|지침)을\s*(?:고치|개정)", t):
         plan.update(mode="upper", law=re.sub(r"\s+", " ", lm),
                     arts=[re.sub(r"\s+", "", x) for x in re.findall(r"제\s*\d+\s*조(?:\s*의\s*\d+)?", t)])
         plan["reasoning"].append(f"상위 법령 「{plan['law']}」 개정에 따른 영향 분석으로 판단")
@@ -2119,14 +2289,20 @@ def _resolve_targets(plan: dict, req: str):
     sim = similar_search(q, "", 15)
     if not reg and sim["regs"]:
         reg = find_reg(sim["regs"][0]["slug"])
-        plan["reasoning"].append(f"유사 검색으로 「{reg['title']}」을(를) 대상으로 선택(관련도 1위)")
+        plan["reasoning"].append(f"유사 검색으로 「{reg['title']}」{_josa(reg['title'], ('을', '를'))} 대상으로 선택(관련도 1위)")
     elif reg:
-        plan["reasoning"].append(f"요청에 내규명 「{reg['title']}」이(가) 있어 대상으로 선택")
+        plan["reasoning"].append(f"요청에 내규명 「{reg['title']}」{_josa(reg['title'], ('이', '가'))} 있어 대상으로 선택")
     if not reg:
         return
     plan["reg"] = {"slug": reg["slug"], "title": reg["title"], "category": reg["category"]}
     nos = [re.sub(r"\s+", "", x).replace("제", "").replace("조", "") for x in re.findall(r"제\s*\d+\s*조(?:\s*의\s*\d+)?", req)]
-    nos = [n for n in nos if any(a["no"] == n for a in reg["articles"])]
+    asked = nos
+    nos = [n for n in nos if any(a["no"] == n and not a["deleted"] for a in reg["articles"])]
+    missing = [n for n in asked if n not in nos]
+    if missing:
+        plan["reasoning"].append(f"요청한 {', '.join(art_label(n) for n in missing)}는 「{reg['title']}」에 없거나 삭제된 조라 "
+                                 + ("나머지 조문만 대상으로 합니다" if nos else "내용 일치도로 조문을 골랐습니다"))
+        plan["missing"] = missing
     if not nos:
         g = next((g for g in sim["regs"] if g["slug"] == reg["slug"]), None)
         if not g:

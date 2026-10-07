@@ -124,7 +124,12 @@ def _write_reg_files(slug: str, view_html: str, text: str,
     if text:
         with open(os.path.join(d, "text.txt"), "w", encoding="utf-8") as f:
             f.write(text)
+    elif os.path.exists(os.path.join(d, "text.txt")):
+        os.remove(os.path.join(d, "text.txt"))       # 본문을 못 읽은 개정판(PDF·HWP)이면 옛 본문으로 개정·검색하지 않게 지운다
     ext = os.path.splitext(orig_filename)[1].lower()
+    for fn_ in os.listdir(d):                         # 확장자가 다른 옛 원본은 지운다
+        if fn_.startswith("original.") and os.path.splitext(fn_)[1].lower() != ext:
+            os.remove(os.path.join(d, fn_))
     stored = ("original.pdf" if ext == ".pdf" else f"original{ext}")
     with open(os.path.join(d, stored), "wb") as f:
         f.write(raw)

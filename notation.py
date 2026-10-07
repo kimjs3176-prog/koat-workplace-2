@@ -109,16 +109,28 @@ def check(text: str, kind: str = "doc") -> list:
         for m in _TILDE_RE.finditer(ln):
             raw = m.group(0)
             msg = "기간을 나타내는 물결표(∼)는 앞뒤를 붙여 씁니다." if raw.strip() in ("∼",) else "기간은 물결표 ‘∼’를 붙여 씁니다."
-            _f(out, n, "TILDE", "warn", raw.strip() or raw, msg, "예) 2026. 10. 6.∼10. 26.")
+            a_ = re.search(r"\S{1,12}$", ln[:m.start()])
+            b_ = re.match(r"\S{1,12}", ln[m.end():])
+            sug = (a_.group(0) if a_ else "") + "∼" + (b_.group(0) if b_ else "") if (a_ or b_) else "예) 2026. 10. 6.∼10. 26."
+            _f(out, n, "TILDE", "warn", raw.strip() or raw, msg, sug)
         # 시각: 24시각제, 시·분 두 자리
         for m in _TIME_RE.finditer(ln):
             h, mi = int(m.group(1)), int(m.group(2))
-            if h <= 24 and mi < 60 and len(m.group(1)) == 1:
+            if re.search(r"(?:https?|www|\.[a-z]{2,})\S*$", ln[:m.start()], re.I):
+                continue                                   # 주소의 포트 번호
+            ap = re.search(r"(오전|오후)\s*$", ln[:m.start()])
+            if ap and h <= 12 and mi < 60:                  # “오후 2:00” → 14:00
+                h24 = (h % 12) + (12 if ap.group(1) == "오후" else 0)
+                _f(out, n, "TIME", "warn", ap.group(0) + m.group(0), "시각은 오전·오후 없이 24시각제로 씁니다.", f"{h24:02d}:{mi:02d}")
+            elif h <= 24 and mi < 60 and len(m.group(1)) == 1:
                 _f(out, n, "TIME", "warn", m.group(0), "시각은 24시각제로 시·분을 두 자리로 씁니다.", f"{h:02d}:{mi:02d}")
         # 금액: 쉼표·한글 병기
         for m in _MONEY_RE.finditer(ln):
             v = int(m.group(1))
             _f(out, n, "MONEY", "warn", m.group(0), "금액은 세 자리마다 쉼표를 찍고 한글을 함께 씁니다.", f"금{v:,}원(금{hangul_amount(v)}원)")
+        for m in re.finditer(r"금\s+(\d{1,3}(?:,\d{3})+)\s*원\s*\(\s*금\s*([가-힣]+)\s*원?\s*\)|금(\d{1,3}(?:,\d{3})+)원\s+\(\s*금([가-힣]+)원\s*\)", ln):
+            v = int((m.group(1) or m.group(3)).replace(",", ""))
+            _f(out, n, "MONEY", "warn", m.group(0), "금액 표기는 띄우지 않고 붙여 씁니다.", f"금{v:,}원(금{hangul_amount(v)}원)")
         if kind == "doc":
             for m in _MONEY_COMMA_RE.finditer(ln):
                 v = int(m.group(2).replace(",", ""))
@@ -126,6 +138,8 @@ def check(text: str, kind: str = "doc") -> list:
         # 쌍점: 앞말에 붙이고 뒤는 한 칸(시각·비율·URL 제외)
         if "://" not in ln:
             for m in _COLON_RE.finditer(ln):
+                if re.search(r"[A-Za-z0-9-]+\.[A-Za-z]{2,}$", ln[:m.end() - 1]) and re.match(r"\d", ln[m.end():]):
+                    continue                               # www.example.kr:8080 같은 주소
                 _f(out, n, "COLON_SPACE", "warn", m.group(0).strip(), "쌍점은 앞말에 붙이고 뒤는 한 칸 띄웁니다.", "예) 시행일: 2026. 1. 1.")
         # 줄표·작은따옴표 강조(생성형 문체 흔적)
         for m in _DASH_RE.finditer(ln):
@@ -143,11 +157,15 @@ def check(text: str, kind: str = "doc") -> list:
             _f(out, n, "LOANWORD", "info", m.group(0), "외래어 대신 행정용어를 씁니다.", _LOAN[m.group(0)])
         if kind == "doc":
             mb = re.match(r"\s*(?:\d+\.\s*)?붙임(\s*:\s*|\s?)(?=\S)", ln)
+            # 붙임 표시 줄만 본다: “붙임  ○○ 1부.” 꼴이거나 “붙임”·“붙임:” 뒤에 목록이 오는 경우(“붙임 자료 참고 …” 같은 문장은 제외)
+            if mb and not (re.search(r"\d+\s*부\.?\s*(?:끝\.)?\s*$", ln) or re.fullmatch(r"\s*(?:\d+\.\s*)?붙임\s*:?\s*", ln)):
+                mb = None
             if mb:
+                sug = re.sub(r"^\s*(?:\d+\.\s*)?붙임\s*:?\s*", "붙임  ", ln).rstrip()
                 if ":" in mb.group(1):
-                    _f(out, n, "BUNIM_COLON", "error", ln.strip()[:20], "‘붙임’ 다음에 쌍점을 쓰지 않고 두 칸 띄웁니다.", "붙임  신구조문대비표 1부.  끝.")
+                    _f(out, n, "BUNIM_COLON", "error", ln.strip()[:20], "‘붙임’ 다음에 쌍점을 쓰지 않고 두 칸 띄웁니다.", sug)
                 elif mb.group(1) == " " or mb.group(1) == "":
-                    _f(out, n, "BUNIM_SPACE", "warn", ln.strip()[:20], "‘붙임’ 다음은 두 칸 띄웁니다.", "붙임  신구조문대비표 1부.  끝.")
+                    _f(out, n, "BUNIM_SPACE", "warn", ln.strip()[:20], "‘붙임’ 다음은 두 칸 띄웁니다.", sug)
             for m in re.finditer(r"(\S)( ?)끝\.\s*$", ln):
                 if m.group(2) != "  " and not re.search(r"\S {2}끝\.\s*$", ln) and ln.strip() != "끝.":
                     _f(out, n, "END_SPACE", "warn", ln.strip()[-12:], "‘끝’은 본문·붙임 마지막 글자에서 두 칸 띄웁니다.", "…1부.  끝.")
