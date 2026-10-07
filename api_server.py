@@ -1221,8 +1221,6 @@ def serve_asset_file(subpath):
 
 import reg_upload as _reg_upload  # noqa: E402
 _reg_upload.register(app)            # 내규 원문 등록(/upload) + 저장소 자동 커밋
-import kordoc_bridge as _kordoc  # noqa: E402
-_kordoc.register(app)                # kordoc 공문서 HWPX·표기법 점검(로컬: Node 하위 프로세스, Vercel: api/kordoc.mjs)
 
 import reg_agent as _reg_agent  # noqa: E402
 _reg_agent.register(
