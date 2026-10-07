@@ -674,7 +674,23 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 .ra-gb li>div{flex:1;min-width:0;}
 .ra-gb .svc-btn{margin:0;}
 
-/* kordoc 공문서 표기 점검 */
-.ra-kd{margin:2px 0 10px;}
-.ra-kd .ra-chip.btn.hi{color:var(--bad);border-color:transparent;background:var(--bad-l);}
-.ra-kd .ra-chip.btn.warn{color:var(--warn);border-color:transparent;background:var(--warn-l);}
+/* 공문서 표기 점검 */
+.ra-nota{margin:2px 0 10px;}
+.ra-nota .ra-chip.btn.hi{color:var(--bad);border-color:transparent;background:var(--bad-l);}
+.ra-nota .ra-chip.btn.warn{color:var(--warn);border-color:transparent;background:var(--warn-l);}
+.ra-lint li.lv-info{background:var(--sf2);}
+
+/* ── 제·개정 도우미: 개정문 미리보기·개정 규모·부칙 도우미 ── */
+.ra-sen{display:flex;gap:6px;align-items:flex-start;margin:6px 0 2px;padding:6px 10px;border-radius:8px;background:var(--gl);color:var(--tx);font-size:12.5px;line-height:1.55;}
+.ra-sen .ic{flex:none;color:var(--g);margin-top:2px;}
+.ra-scale{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:10px 0;font-size:12.5px;color:var(--mu);}
+.ra-scale-m{display:inline-flex;gap:6px;align-items:center;}
+.ra-scale-m b{color:var(--tx);}
+.ra-scale-b{display:inline-block;width:90px;height:6px;border-radius:3px;background:var(--sf2);overflow:hidden;vertical-align:middle;}
+.ra-scale-b>i{display:block;height:100%;background:var(--g);}
+.ra-seg.sm button{padding:4px 9px;font-size:12px;}
+.ra-ab-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px 18px;}
+.ra-ab-g .ra-chk{margin-right:8px;}
+.ra-ab-g input.ra-in.sm{margin:2px 8px 6px 0;}
+.ra-chk.dis{opacity:.5;}
+.ra-ab-p{white-space:pre-wrap;font:12.5px/1.6 var(--mono,ui-monospace,monospace);background:var(--sf2);border:1px solid var(--bd);border-radius:8px;padding:8px 10px;margin:10px 0 6px;max-height:220px;overflow:auto;}

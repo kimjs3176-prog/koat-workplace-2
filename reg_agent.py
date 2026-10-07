@@ -26,6 +26,7 @@ import zipfile
 
 from flask import Blueprint, Response, jsonify, request
 
+import notation
 import reg_chunks
 
 bp = Blueprint("reg_agent", __name__)
@@ -36,7 +37,7 @@ _STR_KEYS = {"text", "title", "reg", "slug", "query", "exclude", "law", "old", "
              "effective", "contents", "filename", "request", "category", "dept", "provider", "api_key", "model"}
 _STRLIST_KEYS = {"nos", "arts", "slugs", "names", "main"}
 _DICTLIST_KEYS = {"delegations", "targets", "refs", "blocks"}
-_DICT_KEYS = {"moves", "ans", "law_info"}
+_DICT_KEYS = {"moves", "ans", "law_info", "texts", "kinds"}
 _MAX_LIST = 2000
 
 
@@ -524,6 +525,60 @@ def _lref(key: str) -> str:
     return f"(「{ORG['rules_name']}」 {ref})" if ref else ""
 
 
+# 용어 정의 — 정의 조항의 “X”란 …, 본문의 (이하 “X”라 한다)
+_DEF_LINE = re.compile(r"(?:^|\n)\s*(?:[①-⑳]\s*)?(?:\d{1,2}\.\s*)?[“\"‘']([^”\"’'\n(]{1,30})[”\"’']\s*(?:\([^)]{0,30}\)\s*)?(?:이)?란\s")
+_ABBR_DEF = re.compile(r"\(\s*이하\s*(?:이\s*조에서\s*|이\s*장에서\s*)?[“\"‘']([^”\"’']{1,20})[”\"’']\s*(?:이)?라\s*한다\s*\)")
+_TERM_GENERIC = {"위원회", "위원장", "심의회", "협의회", "위원", "기관", "규정", "규칙", "지침", "세칙", "요령", "기준", "법", "영"}
+
+
+def _term_uses(text: str, term: str) -> int:
+    t, s = re.sub(r"\s+", "", term), re.sub(r"\s+", "", text)
+    if len(t) >= 3:
+        return s.count(t)
+    return len(re.findall(r"(?<![가-힣])" + re.escape(t), s))
+
+
+def term_check(arts: list, cap: int = 8) -> list:
+    """정의한 용어·약칭의 쓰임 점검 → [(level, no, msg)].
+    중복 정의, 정의만 하고 쓰지 않는 용어, 약칭을 정의하기 전에 먼저 쓰는 경우."""
+    live = [a for a in arts if not a.get("deleted")]
+    defs = {}
+    for i, a in enumerate(live):
+        body = a.get("body", "")
+        for m in _DEF_LINE.finditer(body):
+            defs.setdefault(re.sub(r"\s+", " ", m.group(1)).strip(), []).append((i, "def", m))
+        for m in _ABBR_DEF.finditer(body):
+            defs.setdefault(re.sub(r"\s+", " ", m.group(1)).strip(), []).append((i, "abbr", m))
+    out = []
+    for term, occ in defs.items():
+        if not term:
+            continue
+        i, kind, m = occ[0]
+        no = live[i]["no"]
+        if len(occ) > 1:
+            where = sorted({art_label(live[o[0]]["no"]) for o in occ}, key=lambda x: art_key(x))
+            out.append(("warn", live[occ[1][0]]["no"],
+                        f"“{term}”{_josa(term, ('을', '를'))} 두 번 정의합니다({', '.join(where)}). 한 곳에서만 정의하세요."))
+        body = live[i].get("body", "")
+        if kind == "def":                 # 정의 줄(“X”란 … 말한다) 자체는 쓰임으로 세지 않는다
+            end = body.find("\n", m.end())
+            rest = body[:m.start()] + body[(len(body) if end < 0 else end):]
+            others = "\n".join(x.get("body", "") for j, x in enumerate(live) if j != i)
+        else:
+            rest = body[m.end():]
+            others = "\n".join(x.get("body", "") for x in live[i + 1:])
+        if len(re.sub(r"\s+", "", term)) >= 2 and _term_uses(rest + "\n" + others, term) == 0:
+            what = "정의한 용어" if kind == "def" else "약칭으로 정한"
+            out.append(("info", no, f"{art_label(no)}에서 {what} “{term}”{_josa(term, ('이', '가'))} 다른 곳에서 쓰이지 않습니다. 빼거나 본문에서 그 용어로 쓰세요."))
+        if kind == "abbr" and len(re.sub(r"\s+", "", term)) >= 3 and term not in _TERM_GENERIC:
+            pre = [x for x in live[:i] if _term_uses(x.get("body", ""), term)]
+            if pre:
+                out.append(("info", pre[0]["no"],
+                            f"약칭 “{term}”{_josa(term, ('을', '를'))} 정의한 {art_label(no)}보다 앞선 {art_label(pre[0]['no'])}에서 먼저 씁니다. "
+                            "처음 나오는 곳에서 정의하세요."))
+    return out[:cap]
+
+
 def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str = "",
                   full: bool = True) -> list:
     """조문 목록 점검 → [{level, code, no, msg, fix?}]. level: error|warn|info"""
@@ -621,6 +676,14 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                         f"“{mm.group(0).strip()}” → “{rep.strip()}”")
             if re.search(r"제\s+\d+\s+조", body):
                 add("info", "space", no, f"{lbl}: “제 N 조”는 붙여 “제N조”로 씁니다.")
+            # (7-2) 공문서 표기(행정업무운영편람): 날짜·기간·시각·금액·쌍점·낫표 등 — 조문에서는 표기 제안(info)으로, 규칙당 1건
+            seen_rule = set()
+            for fnd in notation.check(body, "law"):
+                if fnd["rule"] in seen_rule or len(seen_rule) >= 3:
+                    continue
+                seen_rule.add(fnd["rule"])
+                fix = "" if fnd["suggest"].startswith(("예)", "…")) else f"“{fnd['match']}” → “{fnd['suggest']}”"
+                add("info", "notation", no, f"{lbl}: {fnd['label']}, “{fnd['match']}”. {fnd['message']}", fix)
 
     if full:
         # (8) 약칭 정의 후 정식 명칭 재사용
@@ -630,6 +693,9 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
             later = joined[m.end():]
             if full_nm != abbr and full_nm in later:
                 add("info", "abbr", "", f"“{full_nm}”을(를) “{abbr}”(으)로 줄여 정의한 뒤에도 정식 명칭을 다시 씁니다. 약칭으로 통일을 검토하세요.")
+        # (8-2) 용어 정의 — 중복 정의·쓰지 않는 용어·정의 전 사용
+        for lv, tno, msg in term_check(arts):
+            add(lv, "term", tno, msg)
         # (9) 부칙·시행일
         if not (addenda or "").strip():
             add("warn", "addenda", "", f"부칙이 없습니다. 시행일을 정하는 부칙을 두세요{_lref('addenda')}.")
@@ -756,7 +822,7 @@ def similar_search(query: str, exclude: str = "", limit: int = 8) -> dict:
 # ══════════════════════════════════════════════════════════════════════════
 # 5. AI 프롬프트
 # ══════════════════════════════════════════════════════════════════════════
-# 공문서 표기법 — 행정안전부 「행정업무운영편람」 기준(kordoc gongmunseo 스킬 규칙을 따름). 제·개정 이유·주요 내용·검토의견에 적용
+# 공문서 표기법 — 행정안전부 「행정업무운영편람」 기준. 제·개정 이유·주요 내용·검토의견에 적용
 _GONGMUN_RULES = [
     "날짜는 “2026. 10. 6.”처럼 온점 뒤 한 칸, 월·일의 0은 쓰지 않고 끝에도 온점. 기간은 물결표를 붙여 “10. 6.∼10. 26.”",
     "법령·내규명은 낫표 「」로 쓰고, 쌍점은 앞말에 붙이고 뒤에 한 칸(“시행일: …”)",
@@ -1567,7 +1633,7 @@ def review_draft(b: dict) -> dict:
         else:
             f("unity", "ok", "내용이 크게 겹치는 내규를 찾지 못했습니다.")
     # 명료성
-    style = [i for i in lint if i["code"] in ("style", "space", "abbr")]
+    style = [i for i in lint if i["code"] in ("style", "space", "abbr", "term", "notation")]
     if style:
         f("clear", "check", f"알기 쉬운 표기 제안 {len(style)}건: " + "; ".join(i["fix"] or i["msg"] for i in style[:5]))
     longs = [a for a in arts for s_ in re.split(r"(?<=[.다])\s", a.get("body", "")) if len(s_) > 180]
@@ -1901,6 +1967,27 @@ def ra_health_laws():
         ex.shutdown(wait=False, cancel_futures=True)
     return jsonify({"success": True, "laws": out,
                     "failed": sum(1 for v in out.values() if v.get("error"))})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 11-1. 공문서 표기 점검(행정업무운영편람) — 이유서·사전예고문·공고·의견서 등 문서 글
+# ══════════════════════════════════════════════════════════════════════════
+@bp.route("/api/regagent/notation", methods=["POST"])
+def ra_notation():
+    """body: {texts:{문서키: 글}, kind:"doc"|"law", kinds:{문서키: "law"}} → {results:{문서키: [발견]}}
+    kind: doc(이유서·공고처럼 붙임·끝이 있는 문서, 기본) · law(조문 — 붙임·끝 규칙 제외)"""
+    b = _body()
+    texts = b.get("texts") if isinstance(b.get("texts"), dict) else {}
+    kinds = b.get("kinds") if isinstance(b.get("kinds"), dict) else {}
+    dflt = "law" if b.get("kind") == "law" else "doc"
+    if not texts:
+        return jsonify({"success": False, "error": "점검할 글이 없습니다."}), 400
+    results = {}
+    for k, v in list(texts.items())[:12]:
+        if isinstance(v, str):
+            kind = "law" if kinds.get(k) == "law" else ("doc" if kinds.get(k) == "doc" else dflt)
+            results[str(k)[:40]] = notation.check(v[:300_000], kind)
+    return jsonify({"success": True, "results": results})
 
 
 # ══════════════════════════════════════════════════════════════════════════
