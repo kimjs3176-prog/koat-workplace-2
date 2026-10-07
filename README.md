@@ -198,6 +198,7 @@ python scripts/import_regulations.py <폴더> --dry-run          # 변환만 시
    - `procedure.actors`: 프로세스 맵의 행위 주체(레인). `m`은 단계 `who`에서 주체를 찾는 정규식입니다.
    - 단계 속성: `phase`(국면) · `days`(최소 기간) · `after`(선행 단계 id) · `optional`(선행 조건에서 제외) · `lanes`·`to`(수행·이관 주체 지정) · `auto`(`draft`·`check` — 도구 결과로 완료 근거 표시). 질문의 `s`는 분기 사유에 쓰는 짧은 이름입니다.
    - `stale_terms`·`stale_words`: 점검 때 찾을 옛 기관명·직위명
+   - `external_regs`(선택): 이름이 내규처럼 보이지만 국가 법령·정부 규정인 것(예: `보안업무규정`). 인용 관계·명칭 점검에서 외부 규범으로 봅니다.
    - `clauses`(선택): 표준 조문 목록 `[{"t": "조 제목", "b": "본문"}]`. 본문에 `{org}`·`{head:이}`·`{deputy:은}`·`{kind}`를 쓰면 기관명·직위와 조사, 내규 종류로 바뀝니다. 없으면 기본 8개 문형을 씁니다.
 2. **내규 원문**: `python scripts/import_regulations.py <폴더> --reset`으로 처음 한 번 넣고, 이후 개정분은 📤 내규 등록에서 올립니다(자동 커밋을 쓰려면 `GITHUB_REPO`를 그 기관 저장소로).
 3. **(선택) 색인**: `python scripts/build_embeddings.py`

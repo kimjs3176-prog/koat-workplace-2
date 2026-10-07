@@ -449,10 +449,14 @@ def _convert_upload(filename: str, raw: bytes, title: str, meta: dict) -> dict:
     ext = os.path.splitext(filename)[1].lower()
     if ext in (".html", ".htm"):
         html = _sanitize_html(raw.decode("utf-8", errors="replace"))
-        text = re.sub(r"<[^>]+>", " ", html)
-        text = re.sub(r"[ \t]+", " ", text)
-        return {"view_html": html, "text": re.sub(r"\n{3,}", "\n\n", text).strip(),
-                "converted": True, "warning": ""}
+        import html as _html_mod
+        t = re.sub(r"(?is)<\s*(head|script|style|title)\b.*?<\s*/\s*\1\s*>", " ", html)
+        t = re.sub(r"(?i)<\s*(br|/p|/div|/tr|/li|/h[1-6]|/table)\s*/?>", "\n", t)
+        t = _html_mod.unescape(re.sub(r"<[^>]+>", " ", t)).replace("\u00a0", " ")
+        t = "\n".join(re.sub(r"[ \t]+", " ", ln).strip() for ln in t.split("\n"))
+        text = re.sub(r"\n{3,}", "\n\n", t).strip()
+        warn = "" if re.search(r"제\s*\d+\s*조", text) else "HTML에서 “제N조” 형식의 조문을 찾지 못했습니다. 조문 검색·개정에 쓰려면 HWPX·DOCX로 올리세요."
+        return {"view_html": html, "text": text, "converted": True, "warning": warn}
     if ext == ".hwpx":
         blocks = _hwpx_blocks(raw)
     elif ext == ".docx":
@@ -546,7 +550,12 @@ def write_reg(slug: str, view_html: str, text: str, orig_filename: str, raw: byt
     if text:
         with open(os.path.join(d, "text.txt"), "w", encoding="utf-8") as f:
             f.write(text)
+    elif os.path.exists(os.path.join(d, "text.txt")):
+        os.remove(os.path.join(d, "text.txt"))       # 본문을 못 읽은 개정판(PDF·HWP)이면 옛 본문으로 개정·검색하지 않게 지운다
     ext = os.path.splitext(orig_filename)[1].lower()
+    for fn_ in os.listdir(d):                         # 확장자가 다른 옛 원본은 지운다
+        if fn_.startswith("original.") and os.path.splitext(fn_)[1].lower() != ext:
+            os.remove(os.path.join(d, fn_))
     stored = f"original{ext}"
     with open(os.path.join(d, stored), "wb") as f:
         f.write(raw)

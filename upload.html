@@ -51,7 +51,8 @@ a{color:var(--g);}
 /* card */
 .card{background:var(--sf);border:1px solid var(--bd);border-radius:var(--rm);
   padding:18px 20px;margin-bottom:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);}
-.card-t{font-size:14px;font-weight:700;margin:0 0 4px;display:flex;align-items:center;gap:7px;}
+.card-t{font-size:14px;font-weight:700;margin:0 0 4px;display:flex;flex-wrap:wrap;align-items:center;gap:7px;}
+.card-t .badge{white-space:normal;}
 .card-d{font-size:12.5px;color:var(--mu);margin:0 0 16px;}
 .badge{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;
   background:var(--gl);color:var(--gd);}
@@ -740,6 +741,7 @@ function renderQueue(){
       (q.status==='uploading'?'<span class="spin" style="border-color:rgba(0,0,0,.2);border-top-color:var(--gd);width:10px;height:10px;margin-right:3px;"></span>':'')+
       esc(statusLabel)+'</span>'
       +(q.status==='error'&&q.result?'<div style="font-size:10px;color:var(--err-tx);margin-top:2px;">'+esc(q.result)+'</div>':'')
+      +(q.status==='done'&&q.result&&q.result.indexOf(' · ')>0?'<div style="font-size:10px;color:var(--mu);margin-top:2px;">'+esc(q.result.split(' · ').slice(1).join(' · '))+'</div>':'')
       +'</td>'
       +'<td data-label=""><button class="q-remove" onclick="removeQueueItem('+i+')" title="제거"'
       +(q.status==='uploading'?' disabled':'')+'>&#x2715;</button></td>'
@@ -799,7 +801,7 @@ async function doBatchUpload(){
   $('uploadProgress').classList.add('show');
   $('batchSummary').className='batch-summary';
 
-  var total=pending.length, done=0, successes=0, failures=0;
+  var total=pending.length, done=0, successes=0, failures=0, committed=0, warned=0;
   var department=$('bDepartment').value.trim();
   var token=$('bToken').value;
 
@@ -832,14 +834,18 @@ async function doBatchUpload(){
         _queue[k].result='ZIP 다운로드 완료';
         successes++;
       }else{
-        var data=await res.json();
+        var data;
+        try{ data=await res.json(); }
+        catch(e){ data={error:res.status===413?'파일이 너무 큽니다(최대 45MB).':('서버 응답을 읽지 못했습니다 ('+res.status+')')}; }
         if(!res.ok||data.error){
           _queue[k].status='error';
           _queue[k].result=data.error||('업로드 실패 ('+res.status+')');
           failures++;
         }else{
           _queue[k].status='done';
-          _queue[k].result=data.committed?'커밋 완료':'등록 완료';
+          _queue[k].result=(data.committed?'커밋 완료':'등록 완료')+(data.warning?' · '+data.warning:'');
+          if(data.committed) committed++;
+          if(data.warning) warned++;
           successes++;
         }
       }
@@ -860,7 +866,8 @@ async function doBatchUpload(){
   if(failures===0){
     sm.className='batch-summary show ok';
     sm.innerHTML='<h4>\u2705 전체 '+successes+'건 업로드 완료</h4>'
-      +'<p style="margin:0;font-size:12.5px;">배포 반영까지 1~2분 걸립니다.</p>';
+      +(committed?'<p style="margin:0;font-size:12.5px;">저장소에 커밋했습니다. 배포 반영까지 1~2분 걸립니다.</p>':'<p style="margin:0;font-size:12.5px;">서버에 바로 반영했습니다.</p>')
+      +(warned?'<p style="margin:4px 0 0;font-size:12.5px;">'+warned+'건은 본문을 읽지 못해 조문 검색·개정에 쓸 수 없습니다(대기열의 안내 참고). HWPX·DOCX로 올리면 됩니다.</p>':'');
   }else{
     sm.className='batch-summary show mixed';
     sm.innerHTML='<h4>\u26A0\uFE0F '+successes+'건 성공, '+failures+'건 실패</h4>'

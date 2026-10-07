@@ -235,3 +235,43 @@ test('raClauseFmt: 표준 조문 자리표시자와 조사', () => {
   assert.ok(!/[{}]/.test(t));
   assert.match(t, /이 지침에 따른다\.$/);
 });
+
+test('완성도: 위임 조항 표시·종류 추정·조 번호 목록', () => {
+  const c = load();
+  assert.equal(c.raDelArt({ art: '제33조(기술지원)' }), '제33조');
+  assert.equal(c.raDelArt({ art: '제33조', title: '기술지원' }), '제33조');
+  assert.equal(c.raCatOf('업무용 드론 운영지침'), '지침');
+  assert.equal(c.raCatOf('여비규정 시행세칙'), '시행세칙');
+  assert.equal(JSON.stringify(c.raArtList('제31조 제2항, 32조의2')), JSON.stringify(['31', '32의2']));
+  assert.equal(JSON.stringify(c.raArtList('31, 32')), JSON.stringify(['31', '32']));
+});
+
+test('완성도: 개정문 조사(제7조의3을)·대비표 <신 설> 표시·밑줄 구간', () => {
+  const c = load();
+  assert.equal(c.raAmendSentences(null, { type: 'insert', no: '7의3', title: 't', body: 'b' }).head, '제7조의3을 다음과 같이 신설한다.');
+  assert.equal(c.raAmendSentences({ no: '7의6', title: 't', body: 'b' }, { type: 'delete', no: '7의6' }).head, '제7조의6을 삭제한다.');
+  const r = c.raCmpCell({ no: '5', title: 'a', body: '① 가.\n② 나.' }, { no: '5', title: 'a', body: '① 가.\n② 나.\n③ 다.' }, false);
+  assert.match(r[2], /<신 설>/);
+  const runs = c.raHtmlRuns('숙박비 <u class="ra-d">3만원&amp;</u><br>끝');
+  assert.equal(JSON.stringify(runs), JSON.stringify([{ s: '숙박비 ', u: '' }, { s: '3만원&', u: 'd' }, { s: '\n끝', u: '' }]));
+});
+
+test('완성도: 손대지 않은 조문은 개정 대상에서 뺀다', () => {
+  const c = load();
+  const RA = c.__RA();
+  RA.amend.changes = [{ type: 'modify', no: '1', title: '목적', body: '같음' }, { type: 'insert', no: '1의2', title: 'x', body: 'y' }];
+  // _raArts 가 없으면(현행 미상) 모두 바뀐 것으로 본다
+  assert.equal(c.raEffChanges().length, 2);
+});
+
+test('완성도: 절차 — 대안 단계는 조건이 맞는(soft) 쪽을 고르고, 일정에 미정 단계를 셈한다', () => {
+  const c = load();
+  const RA = c.__RA();
+  RA.proc.ans = { level: 'reg' };
+  const ids = c.raProcSteps().map(s => s.id);
+  assert.ok(ids.includes('review'), ids.join(','));          // 상급위원회 내규심의가 요약에서 빠지지 않는다
+  const st = c.raProcState();
+  const sc = c.raSchedule(st.live);
+  assert.ok(sc.total > 0);
+  assert.equal(typeof sc.tbd, 'number');
+});
