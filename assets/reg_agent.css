@@ -709,3 +709,66 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 .ra-al-t{font-size:13.5px;font-weight:700;text-align:left;}
 .ra-al-b{margin-top:8px;border-top:1px dashed var(--bd);padding-top:8px;}
 .ra-det-b:empty{display:none;}
+
+/* ── 단계별 화면(제정·개정) ── */
+.ra-layout.one{grid-template-columns:minmax(0,1fr);max-width:1080px;}
+.ra-wiz{display:flex;align-items:center;gap:10px;margin:0 0 14px;position:sticky;top:0;z-index:5;background:var(--bg);padding:8px 0;}
+.ra-wiz ol{display:flex;flex:1;gap:6px;list-style:none;margin:0;padding:0;min-width:0;overflow-x:auto;scrollbar-width:none;}
+.ra-wiz ol::-webkit-scrollbar{display:none;}
+.ra-wiz li{flex:1 1 0;min-width:0;position:relative;}
+.ra-wiz li+li::before{content:"";position:absolute;left:-6px;top:50%;width:6px;height:2px;background:var(--bd2);}
+.ra-wiz li.done+li::before{background:var(--ok);}
+.ra-wiz li>button{display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;border:1px solid var(--bd);border-radius:12px;background:var(--sf);color:var(--mu);font:600 13px var(--font);cursor:pointer;text-align:left;transition:border-color .15s,background .15s;}
+.ra-wiz li>button:hover{border-color:var(--g);color:var(--tx);}
+.ra-wiz li.on>button{border-color:var(--g);background:var(--gl);color:var(--tx);box-shadow:0 0 0 3px var(--g-ring);}
+.ra-wiz li.lock>button{opacity:.55;}
+.ra-wiz-n{flex:none;display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--sf2);border:1px solid var(--bd2);font-size:12px;font-weight:800;color:var(--mu);}
+.ra-wiz-n .ic{width:14px;height:14px;}
+.ra-wiz li.on .ra-wiz-n{background:var(--g);border-color:var(--g);color:#fff;}
+.ra-wiz li.done .ra-wiz-n{background:var(--ok);border-color:var(--ok);color:#fff;}
+.ra-wiz-t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;flex-direction:column;line-height:1.2;}
+.ra-wiz-t small{font-size:10.5px;font-weight:600;color:var(--ht);}
+.ra-wiz-side{flex:none;display:inline-flex;align-items:center;gap:6px;padding:9px 12px;border:1px solid var(--bd);border-radius:12px;background:var(--sf);color:var(--mu);font:600 13px var(--font);cursor:pointer;}
+.ra-wiz-side.on,.ra-wiz-side:hover{border-color:var(--g);color:var(--gd);}
+.ra-wiz-card{padding-bottom:0;}
+.ra-wiz-head{display:flex;gap:12px;align-items:flex-start;margin-bottom:16px;}
+.ra-wiz-head h2{margin:0;font-size:18px;}
+.ra-wiz-head p{margin:4px 0 0;color:var(--mu);font-size:13.5px;}
+.ra-wiz-hint{display:flex;gap:6px;align-items:center;margin:8px 0 12px;color:var(--mu);font-size:13px;}
+.ra-wiz-hint .ic{color:var(--g);flex:none;}
+.ra-wiz-seg{margin-bottom:4px;}
+.ra-wiz-seg .ra-cnt{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:var(--g);color:#fff;font-size:11px;line-height:18px;text-align:center;}
+.ra-wiz-nav{display:flex;align-items:center;gap:10px;justify-content:space-between;margin:20px -22px 0;padding:14px 22px;border-top:1px solid var(--bd);background:var(--sf2);border-radius:0 0 var(--r) var(--r);}
+.ra-wiz-why{margin-left:auto;font-size:12.5px;color:var(--mu);text-align:right;}
+.ra-wiz-nav .svc-btn[disabled]{opacity:.5;cursor:not-allowed;}
+.ra-sub-sec{border-top:1px solid var(--bd);padding-top:14px;margin-top:16px;}
+.ra-sub-sec:first-child{border-top:none;padding-top:0;margin-top:0;}
+.ra-pair>.ra-sub-sec{border-top:1px solid var(--bd);padding-top:14px;margin-top:16px;}
+.ra-sub-sec>h3{margin:0 0 10px;font-size:15px;display:flex;align-items:center;gap:8px;}
+@media (max-width:760px){
+  .ra-wiz li:not(.on) .ra-wiz-t{display:none;}
+  .ra-wiz li:not(.on){flex:0 0 auto;}
+  .ra-wiz li.on{flex:1 1 auto;}
+  .ra-wiz-side span{display:none;}
+  .ra-wiz-nav{flex-wrap:wrap;margin:16px -14px 0;padding:12px 14px;}
+  .ra-wiz-why{order:3;width:100%;text-align:left;margin:0;}
+}
+.ra-runbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 14px;margin-bottom:16px;border:1px dashed var(--g);border-radius:12px;background:var(--gl);}
+/* 단계 화면 보완: 스크롤 여백·라벨 말줄임·화면낭독용 글·점검 중 잠금·좁은 화면 */
+.ra-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
+.ra-wiz-card,.ra-wiz-card [id^="raSec"]{scroll-margin-top:76px;}
+.ra-wiz-head h2:focus{outline:none;}
+.ra-wiz-t{display:block;min-width:0;}
+.ra-wiz-l{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ra-wiz-t small{display:block;}
+.ra-wiz li.done .ra-wiz-n{background:var(--ok);border-color:var(--ok);color:#fff;}
+.ra-wiz li.on .ra-wiz-n{background:var(--g);border-color:var(--g);color:#fff;}
+.ra-wiz li[aria-disabled] > button,.ra-wiz li.lock>button{cursor:not-allowed;}
+.ra-wiz-card.running .ra-sub-sec .svc-btn{pointer-events:none;opacity:.5;}
+.ra-stale{margin:0 0 12px;}
+@media (max-width:1023px){ .ra-wiz{position:static;} .ra-wiz-card,.ra-wiz-card [id^="raSec"]{scroll-margin-top:110px;} }
+@media (max-width:900px){ .ra-layout:not(.one) .ra-side{order:-1;} }
+@media (max-width:760px){
+  .ra-wiz li:not(.on)>button{padding:6px;justify-content:center;border-color:transparent;background:transparent;width:auto;}
+  .ra-wiz li.on .ra-wiz-t{display:block;}
+}

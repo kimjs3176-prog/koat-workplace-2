@@ -13,6 +13,9 @@ import struct
 import zlib
 
 HWPTAG_PARA_TEXT = 16 + 51
+HWPTAG_CTRL_HEADER = 16 + 55
+# 본문 흐름이 아닌 컨트롤(머리말·꼬리말·각주·미주): 컨트롤 ID 는 4바이트 역순 저장("head" → b"daeh")
+_SKIP_CTRL = {b"daeh", b"toof", b"  nf", b"  ne"}
 _MAX_SECTIONS = 200
 _MAX_STREAM = 64 * 1024 * 1024          # 압축 해제 후 섹션 하나 상한
 
@@ -27,6 +30,9 @@ def _para_text(data: bytes) -> str:
         if c >= 32:
             out.append(chr(c))
             i += 1
+        elif c == 9:                          # 탭(인라인 컨트롤 8 WCHAR)
+            out.append("\t")
+            i += 8
         elif c in _CHAR_CTRL:
             if c in (10,):
                 out.append("\n")
@@ -43,7 +49,7 @@ def _records(buf: bytes):
     while pos + 4 <= n:
         h = struct.unpack_from("<I", buf, pos)[0]
         pos += 4
-        tag, size = h & 0x3FF, (h >> 20) & 0xFFF
+        tag, level, size = h & 0x3FF, (h >> 10) & 0x3FF, (h >> 20) & 0xFFF
         if size == 0xFFF:
             if pos + 4 > n:
                 break
@@ -51,12 +57,21 @@ def _records(buf: bytes):
             pos += 4
         if pos + size > n:
             break
-        yield tag, buf[pos:pos + size]
+        yield tag, level, buf[pos:pos + size]
         pos += size
 
 
 def hwp_paragraphs(raw: bytes) -> list:
-    """HWP 5.0 바이트 → 문단 글자 목록. 암호·배포용 문서나 HWP 3.x 는 ValueError."""
+    """HWP 5.0 바이트 → 문단 글자 목록. 암호·배포용·손상 문서나 HWP 3.x 는 ValueError."""
+    try:
+        return _hwp_paragraphs(raw)
+    except ValueError:
+        raise
+    except Exception as e:                     # olefile(OSError)·zlib.error·struct.error 등 손상 파일
+        raise ValueError("HWP 파일이 손상되었거나 읽을 수 없는 형식입니다.") from e
+
+
+def _hwp_paragraphs(raw: bytes) -> list:
     try:
         import olefile
     except ImportError as e:                  # requirements.txt 의 olefile
@@ -68,9 +83,9 @@ def hwp_paragraphs(raw: bytes) -> list:
     ole = olefile.OleFileIO(io.BytesIO(raw))
     try:
         if not ole.exists("FileHeader"):
-            raise ValueError("HWP 파일 헤더가 없습니다.")
+            raise ValueError("한/글(HWP) 문서가 아닙니다(옛 Word 문서 등).")
         head = ole.openstream("FileHeader").read(256)
-        if head[:17] != b"HWP Document File":
+        if head[:17] != b"HWP Document File" or len(head) < 40:
             raise ValueError("HWP 5.0 문서가 아닙니다.")
         flags = struct.unpack_from("<I", head, 36)[0]
         if flags & 0x2:
@@ -82,7 +97,7 @@ def hwp_paragraphs(raw: bytes) -> list:
                       key=lambda e: int(e[1][7:]))[:_MAX_SECTIONS]
         if not secs:
             raise ValueError("HWP 본문(BodyText)을 찾지 못했습니다.")
-        paras = []
+        paras, total = [], 0
         for e in secs:
             data = ole.openstream(e).read()
             if compressed:
@@ -90,7 +105,18 @@ def hwp_paragraphs(raw: bytes) -> list:
                 data = d.decompress(data, _MAX_STREAM)
                 if d.unconsumed_tail:
                     raise ValueError("HWP 본문이 너무 큽니다.")
-            for tag, rec in _records(data):
+            total += len(data)
+            if total > _MAX_STREAM * 2:
+                raise ValueError("HWP 본문이 너무 큽니다.")
+            skip_at = None                    # 머리말·꼬리말·각주·미주 컨트롤의 레벨 — 그 아래 레코드는 건너뛴다
+            for tag, level, rec in _records(data):
+                if skip_at is not None:
+                    if level > skip_at:
+                        continue
+                    skip_at = None
+                if tag == HWPTAG_CTRL_HEADER and rec[:4] in _SKIP_CTRL:
+                    skip_at = level
+                    continue
                 if tag == HWPTAG_PARA_TEXT:
                     paras.extend(_para_text(rec).split("\n"))
         return paras
@@ -111,7 +137,7 @@ def pdf_text(raw: bytes, max_pages: int = 300) -> str:
         return ""
     try:
         r = PdfReader(io.BytesIO(raw))
-        if r.is_encrypted:
+        if r.is_encrypted and not r.decrypt(""):   # 열기 암호 없이 권한만 잠근 PDF 는 읽는다
             return ""
         parts = [(p.extract_text() or "") for p in r.pages[:max_pages]]
     except Exception:
