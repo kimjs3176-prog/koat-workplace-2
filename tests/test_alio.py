@@ -32,7 +32,7 @@ def fake_alio(monkeypatch, ra):
                                              "제3조(채용) 직원은 공개경쟁으로 채용한다."}])
     calls = []
 
-    def fake(method, path, *, json_body=None, binary=False, retries=2):
+    def fake(method, path, *, json_body=None, binary=False, retries=2, deadline=None):
         calls.append(path)
         if path.startswith("/item/itemOrganListSusi.json"):
             return _Resp(), json.dumps(orgs)
@@ -111,7 +111,7 @@ def test_hwp_para_text_controls():
     assert hwp5._para_text(payload) == "제1조(목적) 가\n나"
     big = ("가" * 3000).encode("utf-16-le")                         # 0xFFF 넘는 레코드 크기
     recs = list(hwp5._records(_rec(66, b"xx") + _rec(hwp5.HWPTAG_PARA_TEXT, big)))
-    assert [t for t, _ in recs] == [66, hwp5.HWPTAG_PARA_TEXT] and len(recs[1][1]) == 6000
+    assert [t for t, _, _ in recs] == [66, hwp5.HWPTAG_PARA_TEXT] and len(recs[1][2]) == 6000
 
 
 def test_hwp_rejects_non_hwp():

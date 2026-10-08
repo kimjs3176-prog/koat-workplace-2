@@ -205,19 +205,30 @@ class _ZipBudget:
         self.total = 0
 
     def read(self, name: str) -> bytes:
-        try:
-            size = self.z.getinfo(name).file_size
-        except KeyError:
-            size = 0
-        if size > _ZIP_ENTRY_MAX:
-            raise ValueError("압축 해제 크기 제한 초과")
-        if self.total + size > _ZIP_TOTAL_MAX:
-            raise ValueError("압축 해제 크기 제한 초과")
-        data = self.z.read(name)
+        data = safe_zip_read(self.z, name, min(_ZIP_ENTRY_MAX, _ZIP_TOTAL_MAX - self.total))
         self.total += len(data)
-        if self.total > _ZIP_TOTAL_MAX:
-            raise ValueError("압축 해제 크기 제한 초과")
         return data
+
+
+def safe_zip_read(z, name, limit: int) -> bytes:
+    """zip 항목을 조금씩 풀며 실제로 나온 바이트 수로 상한을 지킨다.
+    zip 이 스스로 적은 크기(file_size)는 속일 수 있으므로 믿지 않는다(zip bomb 방어)."""
+    info = name if isinstance(name, zipfile.ZipInfo) else z.getinfo(name)
+    if info.file_size > limit:
+        raise ValueError("압축 해제 크기 제한 초과")
+    if info.compress_size and info.file_size / max(1, info.compress_size) > 400:
+        raise ValueError("압축률이 비정상적으로 높은 파일입니다.")
+    out, n = [], 0
+    with z.open(info) as f:
+        while True:
+            chunk = f.read(1 << 16)
+            if not chunk:
+                break
+            n += len(chunk)
+            if n > limit:
+                raise ValueError("압축 해제 크기 제한 초과")
+            out.append(chunk)
+    return b"".join(out)
 
 
 def _hwpx_blocks(raw: bytes) -> list:
@@ -493,6 +504,8 @@ def _convert_upload(filename: str, raw: bytes, title: str, meta: dict) -> dict:
                 f'HWPX 또는 DOCX로 저장해 다시 올려주세요.</p></div></body></html>')
         ptext = hwp5.pdf_text(raw)               # 글자 층이 있으면 본문 검색·개정에 쓴다(화면은 원본 PDF)
         if ptext and re.search(r"제\s*\d+\s*조", ptext):
+            html = html.replace("본문 검색이 필요하면 한/글에서 HWPX 또는 DOCX로 저장해 다시 올려주세요.",
+                                "본문은 PDF에서 뽑아 조문 검색·개정에 씁니다.")
             return {"view_html": html, "text": ptext, "converted": False,
                     "warning": "PDF에서 글자를 뽑아 본문 검색에 씁니다. 줄바꿈이 어긋날 수 있으니 조문을 확인하세요."}
         return {"view_html": html, "text": "", "converted": False,

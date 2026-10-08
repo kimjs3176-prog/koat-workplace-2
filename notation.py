@@ -111,8 +111,12 @@ def check(text: str, kind: str = "doc") -> list:
             msg = "기간을 나타내는 물결표(∼)는 앞뒤를 붙여 씁니다." if raw.strip() in ("∼",) else "기간은 물결표 ‘∼’를 붙여 씁니다."
             a_ = re.search(r"\S{1,12}$", ln[:m.start()])
             b_ = re.match(r"\S{1,12}", ln[m.end():])
-            sug = (a_.group(0) if a_ else "") + "∼" + (b_.group(0) if b_ else "") if (a_ or b_) else "예) 2026. 10. 6.∼10. 26."
-            _f(out, n, "TILDE", "warn", raw.strip() or raw, msg, sug)
+            if a_ or b_:                               # 표기와 제안을 같은 범위로(“1일 ~ 12일” → “1일∼12일”)
+                span = (a_.group(0) if a_ else "") + raw + (b_.group(0) if b_ else "")
+                sug = (a_.group(0) if a_ else "") + "∼" + (b_.group(0) if b_ else "")
+            else:
+                span, sug = raw.strip() or raw, "예) 2026. 10. 6.∼10. 26."
+            _f(out, n, "TILDE", "warn", span.strip(), msg, sug)
         # 시각: 24시각제, 시·분 두 자리
         for m in _TIME_RE.finditer(ln):
             h, mi = int(m.group(1)), int(m.group(2))

@@ -317,3 +317,21 @@ test('단계별 화면: 앞 단계가 끝나야 넘어가고, 저장된 단계�
   assert.match(html, /aria-current="step"/);
   assert.match(html, /<p>4<\/p>/);
 });
+
+test('raSubst: 분수·낫표는 통째로, 공통 조사는 따옴표 밖으로', () => {
+  const c = load();
+  const r1 = JSON.stringify(c.raSubst('출석위원 2분의 1 이상의 찬성으로 의결한다.', '출석위원 3분의 1 이상의 찬성으로 의결한다.'));
+  assert.ok(r1.includes('2분의 1') && r1.includes('3분의 1'), r1);
+  const r2 = JSON.stringify(c.raSubst('「공공기관의 운영에 관한 법률」에 따른다.', '「공공기관의 운영에 관한 법률 시행령」에 따른다.'));
+  assert.ok(r2.includes('「공공기관의 운영에 관한 법률」') && r2.includes('시행령」'), r2);
+  const r3 = JSON.stringify(c.raSubst('여비는 3만원을 지급한다.', '여비는 5만원을 지급한다.'));
+  assert.ok(r3.includes('3만원') && !r3.includes('3만원을'), r3);
+});
+
+test('raBenchSame: 같은 조 제목 판정', () => {
+  const c = load();
+  assert.ok(c.raBenchSame('출장비', '출장비'));
+  assert.ok(c.raBenchSame('출장비지급', '출장비지급기준'));
+  assert.ok(!c.raBenchSame('목적', '목적외사용금지'));
+  assert.ok(!c.raBenchSame('', '목적'));
+});

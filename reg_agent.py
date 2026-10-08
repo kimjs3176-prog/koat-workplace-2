@@ -539,10 +539,10 @@ _TERM_GENERIC = {"위원회", "위원장", "심의회", "협의회", "위원", "
 
 
 def _term_uses(text: str, term: str) -> int:
-    t, s = re.sub(r"\s+", "", term), re.sub(r"\s+", "", text)
+    t = re.sub(r"\s+", "", term)
     if len(t) >= 3:
-        return s.count(t)
-    return len(re.findall(r"(?<![가-힣])" + re.escape(t), s))
+        return re.sub(r"\s+", "", text).count(t)
+    return len(re.findall(r"(?<![가-힣])" + re.escape(t), re.sub(r"\s+", " ", text)))
 
 
 def term_check(arts: list, cap: int = 8) -> list:
@@ -642,11 +642,13 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
             hos = [int(x) for x in re.findall(r"(?:^|\n)\s*(\d{1,2})\.\s", seg)]
             if hos and hos != list(range(1, len(hos) + 1)):
                 add("warn", "ho", no, f"{lbl}의 호 번호가 1부터 차례대로가 아닙니다({', '.join(map(str, hos))}).")
-            moks = re.findall(r"(?:^|\n)\s*([가-하])\.\s", seg)
-            if moks:
-                expm = "".join(_MOK_CH[:len(moks)])
-                if "".join(moks) != expm and len(moks) <= len(_MOK_CH):
-                    add("warn", "mok", no, f"{lbl}의 목 기호 순서가 맞지 않습니다({' '.join(moks)}).")
+            for hseg in re.split(r"(?:^|\n)\s*\d{1,2}\.\s", seg):          # 목은 호마다 “가”부터 다시
+                moks = re.findall(r"(?:^|\n)\s*([가-하])\.\s", hseg)
+                if moks:
+                    expm = "".join(_MOK_CH[:len(moks)])
+                    if "".join(moks) != expm and len(moks) <= len(_MOK_CH):
+                        add("warn", "mok", no, f"{lbl}의 목 기호 순서가 맞지 않습니다({' '.join(moks)}).")
+                        break
         # (4) 내부 인용 대상
         seen = set()
         for rno, raw, pos in internal_refs(body):
@@ -1743,6 +1745,9 @@ def review_draft(b: dict) -> dict:
     arts = p["articles"]
     addenda = b.get("addenda") if isinstance(b.get("addenda"), str) else p["addenda"]
     lint = lint_articles(arts, addenda or "", p["appendix"], title)
+    focus = {re.sub(r"[^0-9의]", "", str(x)) for x in (b.get("focus") or []) if str(x).strip()}
+    if focus:                                          # 개정: 고친 조문(과 조문 없는 전체 지적)만
+        lint = [i for i in lint if not i.get("no") or i["no"] in focus]
     purpose = (b.get("purpose") or "").strip()
     main = [x for x in (b.get("main") or []) if str(x).strip()]
     dels = b.get("delegations") or []
@@ -2279,15 +2284,29 @@ def ra_alio_search():
     return jsonify({"success": True, **r})
 
 
-def _alio_rank(arts: list, q: str) -> list:
-    """조문을 검색어 일치도로 정렬(조 제목 일치에 가중). 검색어가 없으면 원래 순서."""
-    toks = _tokens(q)
+_RANK_STOP = {"정하기", "위함", "위하여", "필요한", "사항", "관한", "대한", "지급", "기준", "규정", "운영", "관리", "업무", "경우", "따른"}
+
+
+def _alio_rank(arts: list, q: str, kw: str = "") -> list:
+    """조문을 검색어 일치도로 정렬. 핵심 검색어(kw)는 3배, 이 규정 안에서 드문 낱말일수록 높게(idf),
+    조 제목 일치에 가중. 점수가 맨 위의 40% 이상이면 rel(관련)로 표시한다."""
+    import math
+    live = [a for a in arts if not a["deleted"]]
+    kws = [t for t in _tokens(kw)]
+    toks = kws + [t for t in _tokens(q) if t not in kws and t not in _RANK_STOP]
+    n = len(live) or 1
+    idf = {t: math.log((n + 1) / (sum(1 for a in live if t in a["title"] or t in a["body"]) + 0.5)) for t in toks}
     out = []
-    for a in arts:
-        if a["deleted"]:
-            continue
-        sc = sum(3 * a["title"].count(t) + min(a["body"].count(t), 5) for t in toks) if toks else 0
-        out.append({"no": a["no"], "title": a["title"], "body": a["body"][:1500], "score": sc})
+    for a in live:
+        sc = 0.0
+        for t in toks:
+            hit = 3 * a["title"].count(t) + min(a["body"].count(t), 4)
+            if hit:
+                sc += hit * max(idf[t], 0.1) * (3 if t in kws else 1)
+        out.append({"no": a["no"], "title": a["title"], "body": a["body"][:1500], "score": round(sc, 2)})
+    top = max((x["score"] for x in out), default=0)
+    for x in out:
+        x["rel"] = bool(top) and x["score"] >= max(0.5, top * 0.4)
     if toks:
         out.sort(key=lambda x: (-x["score"], art_key(x["no"])))
     return out
@@ -2308,7 +2327,7 @@ def ra_alio_rule():
     except alio.AlioError as e:
         return _alio_err(e)
     p = parse_text(r["text"], clean=True)
-    ranked = _alio_rank(p["articles"], b.get("q") or "")
+    ranked = _alio_rank(p["articles"], b.get("q") or "", str(b.get("kw") or "")[:40])
     warn = "" if p["articles"] else "“제N조” 형식의 조문을 찾지 못했습니다. 원문 링크로 확인하세요."
     return jsonify({"success": True, "file": r["file"], "versions": len(r["files"]), "count": len(p["articles"]),
                     "toc": [f"{art_label(a['no'])}({a['title']})" for a in p["articles"] if not a["deleted"]][:80],
@@ -2341,12 +2360,17 @@ def compare_keyword(t: str) -> str:
     q = re.search(r"[「“\"']([^」”\"']{2,20})[」”\"']", t or "")
     if q:
         return re.sub(r"\s*(규정|규칙|지침|요령|기준|세칙)$", "", q.group(1)).strip()
+    # “직장 내 괴롭힘 규정” → 규정·지침 바로 앞 낱말(앞의 꾸밈말 1~2개 포함)
+    m = re.search(r"([가-힣]{2,10})\s*(?:관련\s*)?(?:규정|지침|규칙|요령|기준)(?![가-힣])", t or "")
+    if m and not re.match(r"(벤치마킹|다른|공공기관|알리오|어떤|무슨|관련|기관|내부)", m.group(1)):
+        return m.group(1)[:20]                          # 규정명 검색은 글자 그대로 맞추므로 바로 앞 한 낱말
     best = ""
     for w in re.findall(r"[가-힣A-Za-z0-9]{2,}", t or ""):
         w2 = _JOSA_TAIL.sub("", w) if len(w) > 2 else w
         w2 = re.sub(r"(규정|규칙|지침|요령|기준|세칙)$", "", w2) or w2
         if (len(w2) < 2 or w in _COMPARE_STOP or w2 in _COMPARE_STOP or w2 in _STOP
-                or re.search(r"기관들?$", w2) or re.match(r"(규정|정했|정하|어떻|알려|찾아|보여|궁금|있는|하는|되어|됐|했)", w2)):
+                or re.search(r"기관\S*$|^기관", w2) or re.match(r"(규정|정했|정하|어떻|알려|찾아|보여|궁금|있는|하는|되어|됐|했|벤치마킹|참고|만들|새로|공시|수정|운영법)", w2)
+                or re.fullmatch(r"제?\d+(조|년|월|일|항|호)?(의\d+)?", w2)):
             continue
         if len(w2) > len(best):
             best = w2
@@ -2356,7 +2380,8 @@ def compare_keyword(t: str) -> str:
 def heuristic_plan(req: str) -> dict:
     t = (req or "").strip()
     plan = {"mode": "amend", "intent": t, "reasoning": []}
-    if _COMPARE_RE.search(t) and not _ENACT_RE.search(t) and not re.search(r"(개정|고쳐|바꿔|바꾸)", t):
+    if (_COMPARE_RE.search(t) and not _ENACT_RE.search(t) and not re.search(r"(개정|고쳐|고치|바꿔|바꾸|정비|수정|신설|삭제|반영)", t)
+            and not re.search(r"제\s*\d+\s*조", t)):
         kw = compare_keyword(t)
         if kw:
             plan.update(mode="compare", keyword=kw)
@@ -2387,7 +2412,11 @@ def heuristic_plan(req: str) -> dict:
     if _ENACT_RE.search(t) and not re.search(r"개정", t):
         tm = re.search(r"([가-힣A-Za-z0-9·\s]{2,30}?(?:규정|규칙|지침|요령|기준|세칙))", t)
         title = re.sub(r"^(새로운?|신규|새)\s*", "", tm.group(1).strip()) if tm else ""
-        plan.update(mode="enact", title=title, purpose=t, contents="")
+        if not title:                                  # “드론 관련 내규를 새로 만들어줘” → “드론 운영지침”
+            kw = compare_keyword(t)
+            title = f"{kw} 운영지침" if kw else ""
+        core = re.sub(r"\s*(시행세칙|운영지침|운영규정|운영규칙|관리규정|관리규칙|관리지침|규정|규칙|세칙|지침|요령|기준)$", "", title).strip()
+        plan.update(mode="enact", title=title, purpose=f"{core}에 관한 사항" if core else "", contents="")
         plan["reasoning"].append("새 내규를 만드는 요청으로 판단" + (f" — 내규명 「{title}」" if title else ""))
         return plan
     plan["reasoning"].append("기존 내규 조문을 고치는 요청으로 판단")
@@ -2478,7 +2507,7 @@ def ra_plan():
         if not plan.get("reg"):
             return jsonify({"success": False, "error": "개정할 내규를 찾지 못했습니다. 내규명을 함께 적어 주세요.", "plan": plan}), 404
     if plan["mode"] == "enact":
-        plan.setdefault("purpose", req)
+        plan.setdefault("purpose", "")
         plan["title"] = plan.get("title") or ""
     if plan["mode"] == "compare":
         plan["keyword"] = str(plan.get("keyword") or compare_keyword(req))[:20]

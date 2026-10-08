@@ -754,3 +754,21 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
   .ra-wiz-why{order:3;width:100%;text-align:left;margin:0;}
 }
 .ra-runbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 14px;margin-bottom:16px;border:1px dashed var(--g);border-radius:12px;background:var(--gl);}
+/* 단계 화면 보완: 스크롤 여백·라벨 말줄임·화면낭독용 글·점검 중 잠금·좁은 화면 */
+.ra-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
+.ra-wiz-card,.ra-wiz-card [id^="raSec"]{scroll-margin-top:76px;}
+.ra-wiz-head h2:focus{outline:none;}
+.ra-wiz-t{display:block;min-width:0;}
+.ra-wiz-l{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ra-wiz-t small{display:block;}
+.ra-wiz li.done .ra-wiz-n{background:var(--ok);border-color:var(--ok);color:#fff;}
+.ra-wiz li.on .ra-wiz-n{background:var(--g);border-color:var(--g);color:#fff;}
+.ra-wiz li[aria-disabled] > button,.ra-wiz li.lock>button{cursor:not-allowed;}
+.ra-wiz-card.running .ra-sub-sec .svc-btn{pointer-events:none;opacity:.5;}
+.ra-stale{margin:0 0 12px;}
+@media (max-width:1023px){ .ra-wiz{position:static;} .ra-wiz-card,.ra-wiz-card [id^="raSec"]{scroll-margin-top:110px;} }
+@media (max-width:900px){ .ra-layout:not(.one) .ra-side{order:-1;} }
+@media (max-width:760px){
+  .ra-wiz li:not(.on)>button{padding:6px;justify-content:center;border-color:transparent;background:transparent;width:auto;}
+  .ra-wiz li.on .ra-wiz-t{display:block;}
+}
