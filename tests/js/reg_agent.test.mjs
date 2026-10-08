@@ -299,3 +299,21 @@ test('알리오: 규정 체계 비교 주제어·이유서 다른 기관 사례'
   const it = o.items.find(x => /다른 공공기관 사례/.test(x.t));
   assert.ok(it && it.s[0] === '한국농어촌공사 「드론 운영규정」 제5조(비행 승인)');
 });
+
+test('단계별 화면: 앞 단계가 끝나야 넘어가고, 저장된 단계가 막히면 앞으로 돌린다', () => {
+  const c = load();
+  const RA = c.__RA();
+  RA.enact.step = 4;                                   // 초안 없이 문서 단계로 저장돼 있으면
+  assert.equal(c.raWizStep('enact'), 2);               // 초안 단계로
+  assert.match(c.raWizGate('enact', 3), /초안/);
+  RA.enact.draft = { text: '제1조(목적) 가.' };
+  assert.equal(c.raWizGate('enact', 4), '');
+  assert.equal(c.raWizStep('enact'), 4);
+  RA.amend.step = 2; RA.amend.slug = ''; RA.amend.pasted = false; RA.amend.changes = [];
+  assert.equal(c.raWizStep('amend'), 0);               // 내규를 고르지 않았으면 첫 단계
+  RA.amend.slug = '여비규정';
+  assert.equal(c.raWizStep('amend'), 1);               // 수정안이 없으면 고치기 단계
+  const html = c.raWiz('enact', [0, 1, 2, 3, 4].map(i => () => `<p>${i}</p>`));
+  assert.match(html, /aria-current="step"/);
+  assert.match(html, /<p>4<\/p>/);
+});
