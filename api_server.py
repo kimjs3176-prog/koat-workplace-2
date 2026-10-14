@@ -900,6 +900,9 @@ def _gemini_thinking_cfg(mdl: str):
     return {"thinkingLevel": "low"}           # 3.x·'-latest' 별칭
 
 
+AI_BUDGET = float(os.environ.get("AI_BUDGET", "55"))   # AI 호출 한 번에 쓰는 최대 시간(초)
+
+
 def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
                  max_tokens: int = 1800, temperature: float = 0.2,
                  json_mode: bool = False):
@@ -907,6 +910,12 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
     # 모델명은 URL 경로·요청 본문에 그대로 들어가므로 형식을 확인한다(경로 조작 방지)
     if mdl and not re.fullmatch(r"[\w.:\-]{1,80}", mdl):
         return "", "모델 이름 형식이 올바르지 않습니다."
+    import time as _t
+    deadline = _t.time() + AI_BUDGET                 # 재시도·재호출을 모두 합친 상한(서버리스 함수 시간 제한 안에서 끝낸다)
+
+    def left(cap):
+        return max(3.0, min(cap, deadline - _t.time()))
+    cut = "AI 응답이 길이 제한에 걸려 잘렸습니다. 내용을 나눠 요청하거나 조문 수를 줄여 다시 시도하세요."
     try:
         if provider == "gemini":
             url = (f"https://generativelanguage.googleapis.com/v1beta/models"
@@ -919,9 +928,9 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
                 if think:
                     cfg["thinkingConfig"] = think
                 return _ai_post_retry(lambda: req_lib.post(
-                    url, timeout=60, headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+                    url, timeout=left(60), headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                     json={"contents": [{"parts": [{"text": f"{system}\n\n{user}"}]}],
-                          "generationConfig": cfg}))
+                          "generationConfig": cfg}), deadline=deadline)
 
             think = _gemini_thinking_cfg(mdl)
             # 사고 토큰까지 감안해 넉넉히 잡는다(본문이 잘리는 것보다 낫다)
@@ -943,40 +952,51 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
 
             txt = text_of(data)
             # 사고에 예산을 다 써서 본문이 잘렸으면 한 번 더 크게 잡아 재시도
-            if cands[0].get("finishReason") == "MAX_TOKENS":
+            truncated = cands[0].get("finishReason") == "MAX_TOKENS"
+            if truncated and deadline - _t.time() > 20:      # 시간이 남을 때만 크게 잡아 한 번 더
                 r2 = call(min(limit * 3, 12000), think or {"thinkingLevel": "low"})
                 if r2.status_code == 200:
-                    t2 = text_of(r2.json())
-                    if len(t2) > len(txt):
+                    d2 = r2.json()
+                    t2 = text_of(d2)
+                    if t2.strip():
                         txt = t2
+                        truncated = ((d2.get("candidates") or [{}])[0].get("finishReason") == "MAX_TOKENS")
+            if truncated and json_mode:
+                return "", cut
             if not txt.strip():
                 return "", "AI가 본문을 생성하지 못했습니다(사고 토큰 초과). 잠시 후 다시 시도하세요."
             return txt, ""
         if provider == "claude":
             r = _ai_post_retry(lambda: req_lib.post(
-                "https://api.anthropic.com/v1/messages", timeout=40,
+                "https://api.anthropic.com/v1/messages", timeout=left(40),
                 headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
                          "content-type": "application/json"},
                 json={"model": mdl, "max_tokens": max_tokens, "temperature": temperature,
-                      "system": system, "messages": [{"role": "user", "content": user}]}))
+                      "system": system, "messages": [{"role": "user", "content": user}]}), deadline=deadline)
             if r.status_code != 200:
                 return "", _ai_error(r)[0]
-            return "".join(p.get("text", "") for p in r.json().get("content", [])), ""
+            j = r.json()
+            if j.get("stop_reason") == "max_tokens" and json_mode:
+                return "", cut
+            return "".join(p.get("text", "") for p in j.get("content", [])), ""
         if provider in ("gpt", "openai"):
             r = _ai_post_retry(lambda: req_lib.post(
-                "https://api.openai.com/v1/chat/completions", timeout=40,
+                "https://api.openai.com/v1/chat/completions", timeout=left(40),
                 headers={"Authorization": f"Bearer {api_key}",
                          "Content-Type": "application/json"},
                 json={"model": mdl, "temperature": temperature,
                       "max_tokens": max_tokens,
                       "messages": [{"role": "system", "content": system},
-                                   {"role": "user", "content": user}]}))
+                                   {"role": "user", "content": user}]}), deadline=deadline)
             if r.status_code != 200:
                 return "", _ai_error(r)[0]
-            return r.json()["choices"][0]["message"]["content"], ""
+            c0 = r.json()["choices"][0]
+            if c0.get("finish_reason") == "length" and json_mode:
+                return "", cut
+            return c0["message"]["content"], ""
         if provider == "ollama":
             base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-            r = req_lib.post(f"{base}/api/chat", timeout=60,
+            r = req_lib.post(f"{base}/api/chat", timeout=left(60),
                              json={"model": mdl or "gemma2", "stream": False,
                                    "messages": [{"role": "system", "content": system},
                                                 {"role": "user", "content": user}]})
@@ -993,8 +1013,8 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
     return "", f"지원하지 않는 프로바이더: {provider}"
 
 
-def _ai_post_retry(do_post, tries=3):
-    """AI 프로바이더 호출 — 과부하/일시오류(429/500/502/503/504)는 백오프 재시도."""
+def _ai_post_retry(do_post, tries=3, deadline=None):
+    """AI 프로바이더 호출 — 과부하/일시오류(429/500/502/503/504)는 백오프 재시도(마감 시각이 가까우면 그만둔다)."""
     import time as _t
     resp = None
     for i in range(tries):
@@ -1002,6 +1022,8 @@ def _ai_post_retry(do_post, tries=3):
         if resp.status_code not in (429, 500, 502, 503, 504):
             return resp
         if i < tries - 1:
+            if deadline and deadline - _t.time() < 10:
+                break
             _t.sleep(0.8 * (i + 1))
     return resp
 
