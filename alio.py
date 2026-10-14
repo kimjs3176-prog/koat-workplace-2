@@ -37,6 +37,7 @@ MAX_PAGES = 30
 MAX_FILE = 25 * 1024 * 1024
 
 _lock = threading.Lock()
+TEXT_CACHE_CHARS = 20_000_000          # 본문 캐시 전체 글자 수 상한(서버 메모리 보호)
 _cache = {"orgs": None, "orgs_at": 0.0, "search": {}, "files": {}, "text": {}}
 
 
@@ -250,9 +251,18 @@ def rule_files(rule: dict, deadline=None) -> list:
     return files
 
 
+_AUX_NAME = re.compile(r"신구|대비표|개정문|개정\s*이유|제정\s*이유|별표|별지|서식|붙임|첨부|양식")
+_DOC_EXT = (".hwp", ".hwpx", ".pdf", ".docx", ".zip", ".txt")
+
+
 def pick_latest(files: list):
-    """현행본 = 가장 나중에 올린 파일(fileNo 최댓값). 파일명의 연도 표기는 제각각이라 쓰지 않는다."""
-    return max(files, key=lambda f: int(f["fileNo"])) if files else None
+    """현행본 = 가장 나중에 올린 규정 본문 파일(fileNo 최댓값). 파일명의 연도 표기는 제각각이라 쓰지 않는다.
+    신구대비표·별표·서식 같은 부속 파일이나 문서가 아닌 파일(그림·엑셀)은 본문 파일이 있으면 고르지 않는다."""
+    if not files:
+        return None
+    main = [f for f in files if not _AUX_NAME.search(f.get("fileName", ""))]
+    docs = [f for f in (main or files) if f.get("fileName", "").lower().endswith(_DOC_EXT)]
+    return max(docs or main or files, key=lambda f: int(f["fileNo"]))
 
 
 # ── ④ 파일 → 본문 ───────────────────────────────────────────────────────────
@@ -326,6 +336,6 @@ def rule_text(rule: dict) -> dict:
         t = file_text(pick["fileName"], raw)
         with _lock:
             _cache["text"][pick["fileNo"]] = t
-            if len(_cache["text"]) > 200:
+            while len(_cache["text"]) > 200 or (len(_cache["text"]) > 1 and sum(map(len, _cache["text"].values())) > TEXT_CACHE_CHARS):
                 _cache["text"].pop(next(iter(_cache["text"])))
     return {"text": t, "file": pick, "files": files}

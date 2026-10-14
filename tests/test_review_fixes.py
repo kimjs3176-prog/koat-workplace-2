@@ -82,3 +82,12 @@ def test_tilde_suggest_keeps_context():
     f = next(f for f in nt.check("2026. 3. 5. ~ 2026. 3. 9.", "doc") if f["rule"] == "TILDE")
     assert "∼" in f["suggest"] and "~" not in f["suggest"]
     assert f["suggest"].replace("∼", "") == f["match"].replace("~", "").replace(" ", "")
+
+
+def test_pick_latest_skips_aux_files():
+    import alio
+    fs = [{"fileNo": "10", "fileName": "인사규정.hwp"}, {"fileNo": "12", "fileName": "인사규정 신구대비표.hwp"},
+          {"fileNo": "13", "fileName": "별지 서식.hwp"}, {"fileNo": "14", "fileName": "조직도.jpg"}]
+    assert alio.pick_latest(fs)["fileNo"] == "10"
+    assert alio.pick_latest(fs[1:3])["fileNo"] == "13"      # 본문 파일이 없으면 그중 최신
+    assert alio.pick_latest([]) is None

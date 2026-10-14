@@ -1035,8 +1035,9 @@ function raAmendSentences(oldA, ch){
   if(added.some(u=>O.some(o=>raUBody(o)===raUBody(u)))) return whole();   // 중간에 끼워 넣어 번호가 밀림(현행 내용이 새 번호로 옮겨 감)   // 단일 조문 → 항으로 나눔
   const subs=[];                              // [{lbl, a, b}] 같은 a→b는 “각각”으로 묶는다
   O.forEach(u=>{ const v=nk.get(raUKey(u)); if(!v||v.text===u.text) return;
-    const lbl=raULbl(ch.no,u,O); const r=raSubst(raUBody(u), raUBody(v));
-    if(r) subs.push({lbl, ...r}); else add(`${lbl}${raEul(lbl)} 다음과 같이 한다.`, v.text.split('\n')); });
+    const lbl=raULbl(ch.no,u,O), ob=raUBody(u); const r=raSubst(ob, raUBody(v));
+    if(r){ const d=ob.search(/(^|\s)다만[,，]/), at=ob.indexOf(r.a);   // 단서가 있는 단위는 고친 곳이 본문인지 단서인지 밝힌다
+      subs.push({lbl: d<0||!r.a.trim()?lbl:lbl+(at>=d?' 단서':' 본문'), ...r}); } else add(`${lbl}${raEul(lbl)} 다음과 같이 한다.`, v.text.split('\n')); });
   const groups=[];
   subs.forEach(x=>{ const g=groups.find(g=>g.a===x.a&&g.b===x.b); if(g) g.lbls.push(x.lbl); else groups.push({a:x.a,b:x.b,lbls:[x.lbl]}); });
   const join=ls=>{ const r=ls.map((x,i)=>i&&x.startsWith(L+'제')?x.slice(L.length):x); return r.length<2?r[0]:r.slice(0,-1).join('·')+' 및 '+r[r.length-1]; };
