@@ -36,16 +36,33 @@ _CTX: dict = {}
 # ── 요청 본문 정리: 잘못된 형식(배열·숫자 본문, 필드 타입 오류)은 기본값으로 바꿔 500 대신 400/정상 처리 ──
 _STR_KEYS = {"text", "title", "reg", "slug", "query", "exclude", "law", "old", "new", "mode", "purpose", "intent",
              "effective", "contents", "filename", "request", "category", "dept", "provider", "api_key", "model"}
-_STRLIST_KEYS = {"nos", "arts", "slugs", "names", "main"}
-_DICTLIST_KEYS = {"delegations", "targets", "refs", "blocks"}
+_STRLIST_KEYS = {"nos", "arts", "slugs", "names", "main", "focus"}
+_DICTLIST_KEYS = {"delegations", "targets", "refs", "blocks", "alio_refs"}
 _DICT_KEYS = {"moves", "ans", "law_info", "texts", "kinds"}
 _MAX_LIST = 2000
+
+
+_SURR = re.compile(r"[\ud800-\udfff]")
+
+
+def _clean(v, depth=0):
+    """짝 잃은 UTF-16 대리 문자(잘린 이모지 등)는 지운다 — 그대로 두면 UTF-8 로 쓸 때 500."""
+    if isinstance(v, str):
+        return _SURR.sub("", v)
+    if depth > 8:
+        return v
+    if isinstance(v, list):
+        return [_clean(x, depth + 1) for x in v]
+    if isinstance(v, dict):
+        return {(_clean(k) if isinstance(k, str) else k): _clean(x, depth + 1) for k, x in v.items()}
+    return v
 
 
 def _body() -> dict:
     b = request.get_json(silent=True)
     if not isinstance(b, dict):
         return {}
+    b = _clean(b)
     out = dict(b)
     for k, v in b.items():
         if k in _STR_KEYS and not isinstance(v, str):
@@ -68,7 +85,10 @@ def _api_error(e):
     """처리 중 예외는 HTML 대신 JSON 으로 돌려준다(HTTP 오류는 그 코드를 유지)."""
     from werkzeug.exceptions import HTTPException
     if isinstance(e, HTTPException):
-        return jsonify({"success": False, "error": e.description or e.name}), e.code
+        msg = {413: "보낸 내용이 너무 큽니다. 조문이나 표를 나눠서 다시 시도하세요.",
+               400: "요청 형식이 올바르지 않습니다.", 404: "요청한 기능을 찾지 못했습니다.",
+               405: "허용되지 않는 요청 방식입니다.", 429: "요청이 너무 잦습니다. 잠시 후 다시 시도하세요."}.get(e.code)
+        return jsonify({"success": False, "error": msg or e.description or e.name}), e.code
     import traceback
     traceback.print_exc()
     return jsonify({"success": False, "error": "요청을 처리하지 못했습니다. 입력 형식을 확인하세요."}), 500
@@ -165,8 +185,8 @@ _ANNOT_SQ = re.compile(
 _CHAP_LINE = re.compile(r"^제\s*(\d+)\s*(장|절|관|편)\s*(.{0,40})$")
 _ART_LINE = re.compile(
     r"^제\s*(\d+)\s*조(?:\s*의\s*(\d+))?\s*(?:[(（]\s*([^)）\n]{0,60}?)\s*[)）]|(?=\s*(?:[<＜〔\[]\s*)?(?:삭제|종전))|\s*$)")
-_ADDENDA_LINE = re.compile(r"^부\s*칙\b|^부\s*칙\s*[<＜(（]")
-_APPX_LINE = re.compile(r"^[\[［]\s*(별표|별지)")
+_ADDENDA_LINE = re.compile(r"^[<＜【〔\[［]?\s*부\s*칙(?![가-힣])")          # 부칙 · 부 칙2023. 3. 15. · <부칙> · 【부칙】
+_APPX_LINE = re.compile(r"^[\[［〔【<＜]\s*(별표|별지)")
 _HANG_CH = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
 _MOK_CH = "가나다라마바사아자차카타파하"
 
@@ -410,7 +430,7 @@ _QUOTED_NAME = re.compile(r"「\s*([^「」]{2,60}?)\s*」")
 _EXT_BEFORE = re.compile(
     r"(?:「[^」]{1,60}」|(?:같은|동|이|해당)\s*법(?:\s*시행령|\s*시행규칙)?|"
     r"\(\s*이하[^)]{0,30}\)|"
-    r"(?:(?<![방불편문용화])법|(?<![명수발지])령|시행령|시행규칙|(?<![운경반수])영|규칙|규정|정관|지침|세칙|요령|기준|매뉴얼|훈령|고시|예규|조례|협약)\s*)\s*$")
+    r"(?:(?<![방불편문용])법|(?<![명수발지])령|시행령|시행규칙|(?<![운경반수])영|규칙|규정|정관|지침|세칙|요령|기준|매뉴얼|훈령|고시|예규|조례|협약)\s*)\s*$")
 # ↑ “방법·운영·명령” 같은 일반 낱말 뒤의 “제N조”는 외부 인용으로 보지 않는다
 _SELF_BEFORE = re.compile(
     r"(?:이|본)\s*(?:규정|규칙|지침|정관|요령|기준|세칙|매뉴얼|강령)\s*$")
@@ -432,7 +452,7 @@ def internal_refs(text: str):
     prev_ext_end = -1
     for m in _REF.finditer(text or ""):
         ext = _ref_is_external(text, m.start())
-        if not ext and prev_ext_end >= 0 and re.fullmatch(r"(?:\s*[(（][^)）]{0,24}[)）])?[\s,및또는ㆍ·와과]*", text[prev_ext_end:m.start()]):
+        if not ext and prev_ext_end >= 0 and re.fullmatch(r"(?:\s*[(（][^)）]{0,24}[)）])?(?:의\s*[가-힣]{1,12})?[\s,및또는ㆍ·와과]*", text[prev_ext_end:m.start()]):
             ext = True
         if ext:
             prev_ext_end = m.end()
@@ -667,6 +687,9 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                 continue
             if _nk(nm) in regnames or _nk(nm) == _nk(title) or nm == "정관" or re.sub(r"\s+", "", nm) in _EXTERNAL_REGS:
                 continue
+            ownp = [t for t in [ORG["org_short"], ORG["org_name"]] + [o for o, _ in _STALE_TERMS + _STALE_WORDS] if t]
+            if re.sub(r"^(?:" + "|".join(map(re.escape, ownp)) + r")\s*", "", nm) == "정관":
+                continue                  # 「농진원 정관」 등 우리 기관 정관(인용 관계와 같은 기준)
             near = [regnames[k] for k in difflib.get_close_matches(_nk(nm), list(regnames), n=2, cutoff=0.8)]
             own = any(t and t in nm for t in [ORG["org_short"], ORG["org_name"]] + [o for o, _ in _STALE_TERMS + _STALE_WORDS])
             if not near and not own:
@@ -1185,6 +1208,39 @@ def ra_impact():
                                 "mention_regs": len(name_only)}})
 
 
+_LAW_ALIAS = [
+    ("청탁금지법", "김영란법", "부정청탁 및 금품등 수수의 금지에 관한 법률"),
+    ("공운법", "공공기관운영법", "공공기관의 운영에 관한 법률"),
+    ("국가계약법", "국가를 당사자로 하는 계약에 관한 법률"),
+    ("이해충돌방지법", "공직자의 이해충돌 방지법"),
+    ("정보공개법", "공공기관의 정보공개에 관한 법률"),
+    ("개인정보법", "개인정보 보호법"),
+    ("공익신고자법", "공익신고자 보호법"),
+    ("근기법", "근로기준법"),
+]
+
+
+def _law_aliases(name: str) -> list:
+    """법령 약칭·정식 명칭을 함께 찾는다(띄어쓰기 무시)."""
+    k = _nk(name)
+    for grp in _LAW_ALIAS:
+        if any(_nk(x) == k for x in grp):
+            return list(grp)
+    return [name]
+
+
+def _removed_terms(old_t: str, new_t: str) -> list:
+    """개정 전 문구에만 있는 용어(조사 뗀 낱말). 개정 후 글에 그대로 남아 있으면 뺀다."""
+    nk = re.sub(r"\s+", "", new_t)
+    out = []
+    for w in re.findall(r"[가-힣A-Za-z0-9]{2,}", old_t):
+        w2 = _JOSA_TAIL.sub("", w)
+        if len(w2) < 2 or w2 in _STOP or w2 in out or w2 in nk or re.fullmatch(r"제?\d+[조항호]?", w2):
+            continue
+        out.append(w2)
+    return out[:12]
+
+
 @bp.route("/api/regagent/upper", methods=["POST"])
 def ra_upper():
     """상위법 개정 → 영향받는 내규 조문. body: {law, arts:[...], old, new}"""
@@ -1195,23 +1251,22 @@ def ra_upper():
     arts = [re.sub(r"[^0-9의]", "", str(x)) for x in (b.get("arts") or [])]
     arts = [x for x in arts if x]
     tset = {art_key(x) for x in arts}
-    old_t, new_t = (b.get("old") or ""), (b.get("new") or "")
-    removed = []
-    if old_t or new_t:
-        ow = set(_tokens(old_t)) if old_t else set()
-        nw = set(_tokens(new_t)) if new_t else set()
-        removed = [w for w in (ow - nw) if len(w) >= 2][:12]
+    old_t, new_t = (b.get("old") or "")[:20000], (b.get("new") or "")[:20000]
+    removed = _removed_terms(old_t, new_t) if old_t else []
     base = re.sub(r"\s*(시행령|시행규칙)$", "", law)
-    lp = re.escape(base).replace(r"\ ", r"\s*")
-    pat = re.compile(r"「\s*(" + lp + r"(?:\s*시행령|\s*시행규칙)?)\s*」|(?<![가-힣])(" + lp + r")(?![가-힣])")
+    names = _law_aliases(base)
+    lp = "|".join(r"\s*".join(map(re.escape, re.sub(r"\s+", "", n))) for n in names)   # 띄어쓰기는 어디든 무시
+    pat = re.compile(r"「\s*((?:" + lp + r")(?:\s*시행령|\s*시행규칙)?)\s*」|(?<![가-힣])(" + lp + r")(?![가-힣])")
+    law_keys = {_nk(n) for n in names} | {_nk(n + law[len(base):]) for n in names}
     cands = []
     for o in all_regs():
+        cites_law = any(pat.search(a["body"]) for a in o["articles"] if not a["deleted"])
         for a in o["articles"]:
             if a["deleted"]:
                 continue
             body = a["body"]
             ms = list(pat.finditer(body))
-            term_hits = [w for w in removed if w in body]
+            term_hits = [w for w in removed if w in body] if cites_law else []   # 이 법을 인용하는 내규에서만 용어를 본다
             if not ms and not term_hits:
                 continue
             spec, cites, snip = [], [], ""
@@ -1223,7 +1278,7 @@ def ra_upper():
                 if mr:
                     no = mr.group(1) + (("의" + mr.group(2)) if mr.group(2) else "")
                     lbl = f"{nm} {art_label(no)}" + (f"제{mr.group(3)}항" if mr.group(3) else "")
-                    exact_law = (_nk(nm) == _nk(law)) or (not re.search(r"시행(령|규칙)$", law) and not re.search(r"시행(령|규칙)", nm))
+                    exact_law = (_nk(nm) in law_keys) or (not re.search(r"시행(령|규칙)$", law) and not re.search(r"시행(령|규칙)", nm))
                     if tset and art_key(no) in tset and exact_law:
                         spec.append(lbl)
                 if lbl not in cites:
@@ -1253,7 +1308,7 @@ def ra_upper():
     return jsonify({"success": True, "law": law, "arts": arts, "removed_terms": removed,
                     "count": len(cands), "reg_count": len(regs),
                     "high": sum(1 for c in cands if c["specific"] or c["terms"]),
-                    "candidates": cands[:120]})
+                    "candidates": cands[:120], "truncated": len(cands) > 120})
 
 
 @bp.route("/api/regagent/lint", methods=["POST"])
@@ -1319,7 +1374,7 @@ def ra_draft():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"success": False, "error": f"초안 작성 오류: {e}"}), 500
+        return jsonify({"success": False, "error": f"초안을 만들지 못했습니다({type(e).__name__}). 입력을 확인하고 다시 시도하세요."}), 500
     if d is None:
         need = bool(re.search(r"키", err or ""))
         return jsonify({"success": False, "error": err, "need_key": need}), 400 if need else 502
@@ -1327,7 +1382,7 @@ def ra_draft():
 
 
 # ── 한글(.hwpx) 문서 세트 ─────────────────────────────────────────────────
-_XML_BAD = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
+_XML_BAD = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
 
 
 def _xesc(s):
@@ -1417,7 +1472,7 @@ def _table(rows, col_w, bf):
 def _clamp_int(v, lo, hi, default):
     try:
         return max(lo, min(hi, int(v)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -1669,6 +1724,23 @@ def _ro(w: str) -> str:
     return "로" if (not _has_batchim(w) or (("가" <= w[-1] <= "힣") and (ord(w[-1]) - 0xAC00) % 28 == 8)) else "으로"
 
 
+def _join_locs(locs: list) -> str:
+    """["제13조 제목", "제13조제1항", "제15조"] → "제13조의 제목, 같은 조 제1항 및 제15조" (개정문 표기)."""
+    out, prev = [], None
+    for lb in locs:
+        m = re.match(r"(제\d+조(?:의\d+)?)\s*(.*)$", lb)
+        art, rest = (m.group(1), m.group(2)) if m else (lb, "")
+        if rest == "제목":
+            txt = f"{art}의 제목"
+        elif art == prev:
+            txt = "같은 조" + (f" {rest}" if rest else "")
+        else:
+            txt = lb
+        out.append(txt)
+        prev = art
+    return out[0] if len(out) < 2 else ", ".join(out[:-1]) + " 및 " + out[-1]
+
+
 def _bulk_sentence(pairs: list, old: str, new: str) -> str:
     """[(위치, (원래 표기, 바뀐 표기))] → 개정문 한 문장.
     조사만 바뀌는 곳(“부원장은”→“총괄이사는”)은 그 표기째 쓴다. 같은 바꿈은 “각각”으로 묶고 “…하고,”로 잇는다."""
@@ -1681,7 +1753,7 @@ def _bulk_sentence(pairs: list, old: str, new: str) -> str:
     parts = []
     for (o_, n_), locs in groups.items():
         each = "각각 " if len(locs) > 1 else ""
-        parts.append(f"{', '.join(locs)} 중 “{o_}”{_josa(o_, ('을', '를'))} {each}“{n_}”{_ro(n_)} ")
+        parts.append(f"{_join_locs(locs)} 중 “{o_}”{_josa(o_, ('을', '를'))} {each}“{n_}”{_ro(n_)} ")
     return "하고, ".join(parts) + "한다."
 
 
@@ -1848,7 +1920,7 @@ def ra_review():
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({"success": False, "error": f"검토 오류: {e}"}), 500
+        return jsonify({"success": False, "error": f"검토하지 못했습니다({type(e).__name__}). 입력을 확인하고 다시 시도하세요."}), 500
     notice = ""
     if b.get("ai"):
         provider, key, model = _ai_conf(b)
@@ -2388,6 +2460,10 @@ def heuristic_plan(req: str) -> dict:
             plan["reasoning"].append(f"다른 공공기관 사례를 묻는 요청으로 판단 — 알리오에서 “{kw}” 규정 조회")
             return plan
     bulk_kw = re.search(r"(모든|전체|일괄|모두|전\s*내규|명칭|부서명|직위|기관명|이름이\s*바뀌)", t)
+    if not bulk_kw and not re.search(r"(규정|규칙|지침|세칙|요령|정관|기준|매뉴얼|제\s*\d+\s*조)", t):
+        mb = _BULK_RE.search(t)                # “경영지원팀을 경영관리팀으로 바꿔줘” — 특정 내규 없이 조직·직위명만 바꾸면 일괄 정비
+        if mb and re.search(r"(팀|부|실|처|본부|단|센터|과|원장|사장|이사|위원회|위원장|관|국)$", mb.group(1).strip()):
+            bulk_kw = mb
     m = _ARROW_RE.search(t) or (_BULK_RE.search(t) if bulk_kw else None)
     if m and (bulk_kw or "→" in t or "->" in t):
         _clean = lambda w: re.sub(r"\s*(?:명칭|이름|용어|표현|표기|단어|문구)$", "", w.strip()).strip()

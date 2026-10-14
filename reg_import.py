@@ -34,12 +34,23 @@ _KST = timezone(timedelta(hours=9))
 
 
 def _decode(raw: bytes) -> str:
-    for enc in ("utf-8-sig", "cp949", "euc-kr"):
+    """텍스트 파일 디코딩. 알 수 없는 인코딩·이진 파일은 깨진 글자로 받지 않고 거부한다(fail closed)."""
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
         try:
-            return raw.decode(enc)
+            return raw.decode("utf-16")
         except UnicodeDecodeError:
-            continue
-    return raw.decode("utf-8", errors="replace")
+            pass
+    elif b"\x00" not in raw[:4096]:
+        for enc in ("utf-8-sig", "cp949", "euc-kr"):
+            try:
+                t = raw.decode(enc)
+            except UnicodeDecodeError:
+                continue
+            bad = sum(1 for ch in t[:20000] if ord(ch) < 32 and ch not in "\t\n\r\f")
+            if bad <= max(2, len(t[:20000]) // 500):
+                return t
+            break
+    raise ValueError("텍스트 파일을 읽을 수 없습니다. 한글 문서라면 UTF-8 또는 CP949(ANSI)로 저장해 올리거나 HWPX·DOCX로 올려 주세요.")
 
 
 # 규정명 끝말 → 내규 체계상의 구분.
@@ -113,12 +124,21 @@ def _xml_blocks(root: ET.Element, para_tag: str, table_tag: str,
         for line in txt.split("\n"):
             blocks.append({"type": "p", "text": line.strip()})
 
+    def tag_text(el: ET.Element) -> str:
+        """글자 태그 안의 글. HWPX 의 <hp:t>는 <hp:tab/>·<hp:lineBreak/> 등을 품고 그 뒤 글을 tail 에 둔다."""
+        out = [el.text or ""]
+        for sub in el:
+            n = _local(sub.tag)
+            out.append("\n" if n in break_tags or n == "lineBreak" else " " if n in ("tab", "nbSpace", "fwSpace") else "")
+            out.append(sub.tail or "")
+        return "".join(out)
+
     def cell_text(tc: ET.Element) -> str:
         parts = []
         for el in tc.iter():
             t = _local(el.tag)
             if t in text_tags:
-                parts.append(el.text or "")
+                parts.append(tag_text(el))
             elif t == para_tag and parts:
                 parts.append(" ")
         return re.sub(r"\s+", " ", "".join(parts)).strip()
@@ -180,7 +200,7 @@ def _xml_blocks(root: ET.Element, para_tag: str, table_tag: str,
                 flush()
                 continue
             if tag in text_tags:
-                buf.append(child.text or "")
+                buf.append(tag_text(child))
                 continue
             if tag in break_tags:
                 buf.append("\n")
@@ -355,7 +375,7 @@ def _esc(s: str) -> str:
 
 _ART_HEAD_RE = re.compile(r"^제\s*\d+\s*조(?:\s*의\s*\d+)?\s*(?:\(|$|\s)")
 _CHAP_HEAD_RE = re.compile(r"^제\s*\d+\s*(?:편|장|절|관)\b")
-_APX_HEAD_RE = re.compile(r"^\[?\s*(?:별표|별지|붙임|서식)")
+_APX_HEAD_RE = re.compile(r"^[\[［〔【<＜]?\s*(?:별표|별지|붙임|서식)")
 
 
 def _table_html(rows: list) -> str:
@@ -525,6 +545,7 @@ def _convert_upload(filename: str, raw: bytes, title: str, meta: dict) -> dict:
                 "text": _blocks_to_text(blocks), "converted": True,
                 "warning": "HWP(구버전)에서 본문을 뽑았습니다. 표·각주 배치가 원본과 다를 수 있습니다."}
     if ext == ".hwp":
+        failed = True
         html = _blocks_to_view_html(
             title, meta,
             [{"type": "p", "text": "이 규정은 구버전 HWP(바이너리) 형식으로 업로드되어 "
@@ -532,14 +553,16 @@ def _convert_upload(filename: str, raw: bytes, title: str, meta: dict) -> dict:
              {"type": "p", "text": "한/글에서 '다른 이름으로 저장 → HWPX'로 저장해 다시 올리면 "
                                    "본문까지 조회·검색됩니다. 원본 파일은 아래 링크로 내려받을 수 있습니다."}],
             orig_name=filename)
-        return {"view_html": html, "text": "", "converted": False,
+        return {"view_html": html, "text": "", "converted": False, "failed": failed, "error": hwp_err,
                 "warning": f"HWP 본문을 변환하지 못했습니다({hwp_err}). HWPX로 저장해 올리면 본문까지 검색됩니다."}
 
     text = _blocks_to_text(blocks)
     if not text:
         raise ValueError("본문 텍스트를 추출하지 못했습니다. 파일이 손상되었는지 확인해주세요.")
+    warn = "" if re.search(r"제\s*\d+\s*조", text) else (
+        "본문에서 “제N조” 형식의 조문을 찾지 못했습니다. 자동 번호(1조, 2조…)로 쓴 문서라면 조문 번호를 글자로 바꿔 다시 올려야 조문 검색·개정에 쓸 수 있습니다.")
     return {"view_html": _blocks_to_view_html(title, meta, blocks, orig_name=filename),
-            "text": text, "converted": True, "warning": ""}
+            "text": text, "converted": True, "warning": warn}
 
 
 

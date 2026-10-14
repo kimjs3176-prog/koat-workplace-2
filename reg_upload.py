@@ -15,6 +15,7 @@ import os
 import re
 import time
 import zipfile  # noqa: F401
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from urllib.parse import quote
 
@@ -93,7 +94,7 @@ def _backup_reg_dir(slug: str) -> str:
         return ""
     import shutil
     os.makedirs(REG_BACKUP_DIR, exist_ok=True)
-    name = f"{slug}__{datetime.now(_KST).strftime('%Y%m%d-%H%M%S')}"
+    name = f"{slug}__{datetime.now(_KST).strftime('%Y%m%d-%H%M%S-%f')}"   # 같은 초에 연달아 올려도 겹치지 않게
     dst = os.path.join(REG_BACKUP_DIR, name)
     shutil.rmtree(dst, ignore_errors=True)
     shutil.copytree(src, dst)
@@ -485,13 +486,13 @@ def reg_upload():
 
     # 규정명: 입력값 우선, 없으면 파일명에서 추출 ("감사규정(2023년도 7월 일부개정).hwpx")
     title = (request.form.get("title") or "").strip()
-    stem = os.path.splitext(filename)[0]
-    m_par = re.match(r"^(.*?)\s*\(([^)]*)\)\s*$", stem)
+    stem = os.path.splitext(filename)[0].replace("（", "(").replace("）", ")")
+    m_par = re.match(r"^(.*?)\s*((?:\([^()]*\)\s*)+)$", stem)    # 끝의 괄호 묶음: “인사규정(2024.1.1. 개정)(최종)”
     if not title:
         title = (m_par.group(1) if m_par else stem).strip()
     revision = (request.form.get("revision") or "").strip()
     if not revision and m_par:
-        revision = m_par.group(2).strip()
+        revision = re.match(r"\(([^()]*)\)", m_par.group(2)).group(1).strip()
     if not title:
         return jsonify({"error": "규정명을 입력해주세요."}), 400
 
@@ -499,9 +500,10 @@ def reg_upload():
     # 사람이 고른 값이라도 이름과 어긋나는 '정관'은 받지 않는다(정관은 기관당 1건).
     category = (request.form.get("category") or "").strip()
     guessed = _guess_reg_category(title)
-    prev_cat = ""
+    prev_cat, prev = "", None
     for _m in (_load_reg_manifest() or []):
         if _norm_key(_m.get("title") or "") == _norm_key(title):
+            prev = _m                                 # 띄어쓰기만 다른 같은 규정 → 같은 폴더를 잇는다
             prev_cat = (_m.get("category") or "").strip()
             break
     if category in ("", "자동", "자동 분류"):
@@ -526,10 +528,17 @@ def reg_upload():
         conv = _convert_upload(filename, raw, title, meta)
     except zipfile.BadZipFile:
         return jsonify({"error": "파일을 열 수 없습니다. HWPX/DOCX 파일이 손상되었을 수 있습니다."}), 400
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except (KeyError, ET.ParseError, UnicodeDecodeError):
+        return jsonify({"error": "파일 형식이 확장자와 다르거나 손상되었습니다. 한/글·워드에서 다시 저장해 올려 주세요."}), 400
     except Exception as e:
         return jsonify({"error": f"변환 실패: {e}"}), 400
+    if conv.get("failed") and prev and prev.get("searchable", True):
+        return jsonify({"error": f"「{prev.get('title')}」의 개정판인데 본문을 읽지 못했습니다({conv.get('error') or '변환 실패'}). "
+                                 "지금 본문을 지우지 않도록 등록을 멈췄습니다. HWPX로 저장해 다시 올려 주세요."}), 400
 
-    slug = _reg_slug(title)
+    slug = (prev or {}).get("slug") or _reg_slug(title)
     if not slug:
         return jsonify({"error": "규정명에서 저장 폴더명을 만들 수 없습니다."}), 400
     # 서로 다른 규정명이 같은 폴더(slug)로 모이면 기존 규정 파일을 덮어쓰게 되므로 막는다
