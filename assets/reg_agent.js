@@ -73,6 +73,7 @@ function _raBlank(){
     proc:{ans:{},chk:{},plan:{}},
     ui:{side:false}};
 }
+function raArr(x){ return Array.isArray(x)?x:[]; }
 // 저장본·백업을 빈 상태 틀에 맞춘다 — 구역은 깊게 합치고, 틀과 자료형이 다른 값(손상·옛 형식)은 기본값으로
 function _raNormalize(o){
   const B=_raBlank(); if(!o||typeof o!=='object'||Array.isArray(o)) return B;
@@ -82,6 +83,8 @@ function _raNormalize(o){
   Object.keys(B).forEach(k=>{ const d=B[k], v=o[k];
     if(isObj(d)){ const sec=isObj(v)?Object.assign({},v):{}; Object.keys(d).forEach(f=>{ sec[f]=fit(d[f],sec[f]); }); out[k]=sec; }
     else out[k]=fit(d,v); });
+  const P=out.agent.plan;                                       // 옛 저장본의 잘못된 계획(목록 자리에 문자열 등)은 버린다
+  if(P&&(typeof P!=='object'||['arts','articles','missing','reasoning'].some(k=>P[k]!=null&&!Array.isArray(P[k])))) out.agent.plan=null;
   return out;
 }
 function _raLoad(){
@@ -1359,8 +1362,8 @@ function raAgentOut(){
   const G=RA.agent; if(!G.steps.length) return '';
   const P=G.plan;
   const head=P?`<div class="ra-ag-plan"><span class="ra-pill ok">${raIc(P.mode==='amend'?'amend':P.mode==='enact'?'enact':P.mode==='bulk'?'bulk':P.mode==='compare'?'search':'upper')}${_e(RA_MODE_L[P.mode]||P.mode)}</span>`+
-    (P.reg?`<span class="ra-pill">「${_e(P.reg.title)}」${(P.articles||[]).length?' '+P.articles.map(a=>raLbl(a.no)).join('·'):''}</span>`:'')+
-    (P.mode==='bulk'?`<span class="ra-pill">“${_e(P.old)}” → “${_e(P.new)}”</span>`:'')+(P.mode==='upper'?`<span class="ra-pill">「${_e(P.law)}」 ${_e((P.arts||[]).join(', '))}</span>`:'')+
+    (P.reg?`<span class="ra-pill">「${_e(P.reg.title)}」${raArr(P.articles).length?' '+P.articles.map(a=>raLbl(a.no)).join('·'):''}</span>`:'')+
+    (P.mode==='bulk'?`<span class="ra-pill">“${_e(P.old)}” → “${_e(P.new)}”</span>`:'')+(P.mode==='upper'?`<span class="ra-pill">「${_e(P.law)}」 ${_e(raArr(P.arts).join(', '))}</span>`:'')+
     (P.mode==='enact'&&P.title?`<span class="ra-pill">「${_e(P.title)}」</span>`:'')+(P.mode==='compare'?`<span class="ra-pill">알리오 “${_e(P.keyword||'')}”</span>`:'')+`<span class="ra-pill subtle">${P.ai?'AI 계획':'규칙 기반 계획'}</span></div>`:'';
   const steps=`<ol class="ra-ag-steps">`+G.steps.map((s,i)=>`<li class="st-${RA_AG_ST[s.st][1]}"><span class="ra-ag-dot">${s.st==='run'?'<span class="spinner"></span>':s.st==='ok'?'✓':s.st==='err'?'!':s.st==='warn'?'!':'–'}</span>`+
     `<div class="ra-ag-b"><div class="ra-ag-t"><b>${i+1}. ${_e(s.t)}</b><span class="ra-ag-s">${RA_AG_ST[s.st][0]}</span></div>${s.d?`<div class="ra-ag-d">${s.d}</div>`:''}</div></li>`).join('')+`</ol>`;
@@ -1395,7 +1398,7 @@ async function raAgentRun(){
     const d=await raPost('/api/regagent/plan',{request:G.req,...raAi()});
     if(!d.success) stop(s,d.error||'계획을 세우지 못했습니다.');
     const P=G.plan=d.plan;
-    fin(s,(P.reasoning||[]).map(_e).join('<br>'));
+    fin(s,raArr(P.reasoning).map(_e).join('<br>'));
     if(P.mode==='amend') await raAgAmend(P,step,fin,stop);
     else if(P.mode==='enact') await raAgEnact(P,step,fin,stop);
     else if(P.mode==='bulk') await raAgBulk(P,step,fin,stop);
@@ -1431,9 +1434,9 @@ async function raAgAmend(P, step, fin, stop){
   if(!d.success) stop(s,d.error||'불러오기 실패');
   _raArts=d;
   Object.assign(A,{src:'reg',pasted:false,slug:d.slug,title:d.title,sel:{},changes:[],impact:null,lint:null,review:null,purpose:'',main:[],addenda:'',notes:[],intent:P.intent||RA.agent.req,refText:'',model:''});
-  const tg=(P.articles||[]).map(a=>raOld(a.no)).filter(Boolean);
+  const tg=raArr(P.articles).map(a=>raOld(a.no)).filter(Boolean);
   tg.forEach(a=>A.sel[a.no]=true);
-  fin(s,`${d.articles.length}개 조 중 ${tg.length?tg.map(a=>`${raLbl(a.no)}(${_e(a.title)})`).join(', '):'대상 조문 없음 — AI가 목차를 보고 고릅니다'}`+((P.missing||[]).length?`<br>요청한 ${P.missing.map(raLbl).join(', ')}는 이 ${_e(RA_ORG.reg_word)}에 없어 내용이 가까운 조문을 골랐습니다.`:''), (P.missing||[]).length?'warn':'ok');
+  fin(s,`${d.articles.length}개 조 중 ${tg.length?tg.map(a=>`${raLbl(a.no)}(${_e(a.title)})`).join(', '):'대상 조문 없음 — AI가 목차를 보고 고릅니다'}`+(raArr(P.missing).length?`<br>요청한 ${P.missing.map(raLbl).join(', ')}는 이 ${_e(RA_ORG.reg_word)}에 없어 내용이 가까운 조문을 골랐습니다.`:''), raArr(P.missing).length?'warn':'ok');
   A.alioRefs=await raAgAlioStep('amend', raAlioGuess('amend'), [A.intent,...tg.map(a=>a.title)].join(' '), step, fin);
   s=step('수정안 작성');
   let ok=false;
@@ -1504,17 +1507,17 @@ async function raAgBulk(P, step, fin, stop){
   RA.agent.done={title:`“${P.old}” → “${P.new}” 일괄 정비안이 준비됐습니다`,sub:`${d.reg_count}개 ${RA_ORG.reg_word}, ${d.total}곳`,acts:[['일괄 정비 결과 열기',"raTab('bulk')",1]]};
 }
 async function raAgUpper(P, step, fin, stop){
-  const U=RA.upper; Object.assign(U,{law:P.law||'',arts:(P.arts||[]).join(', '),old:'',neu:'',res:null});
+  const U=RA.upper; Object.assign(U,{law:P.law||'',arts:raArr(P.arts).join(', '),old:'',neu:'',res:null});
   let s=step(`「${P.law}」${raEul(P.law)} 인용하는 ${RA_ORG.reg_word} 찾기`);
-  const d=await raPost('/api/regagent/upper',{law:U.law,arts:(P.arts||[]).map(raNormNo).filter(Boolean)});
+  const d=await raPost('/api/regagent/upper',{law:U.law,arts:raArr(P.arts).map(raNormNo).filter(Boolean)});
   if(!d.success) stop(s,d.error||'분석 실패');
   U.res=d;
   if(!d.count){ fin(s,'인용하는 조문이 없습니다.','skip'); RA.agent.done={title:'영향받는 내규가 없습니다',sub:'',acts:[]}; return; }
   fin(s,`${d.reg_count}개 ${_e(RA_ORG.reg_word)} · ${d.count}개 조문 · 우선 검토 ${d.high}건`);
   const top=d.candidates.slice(0,3);
   s=step('개정 후보 선정');
-  if(!d.high&&(P.arts||[]).length){                       // 개정된 조문을 직접 인용한 곳이 없으면 1순위를 정하지 않는다
-    fin(s,`개정 조문(${_e((P.arts||[]).join(', '))})을 직접 인용한 곳은 없고, 법령명만 인용한 조문입니다.<br>`+top.map(c=>`「${_e(c.reg)}」 ${raLbl(c.no)}(${_e(c.title)})`).join('<br>'),'warn');
+  if(!d.high&&raArr(P.arts).length){                       // 개정된 조문을 직접 인용한 곳이 없으면 1순위를 정하지 않는다
+    fin(s,`개정 조문(${_e(raArr(P.arts).join(', '))})을 직접 인용한 곳은 없고, 법령명만 인용한 조문입니다.<br>`+top.map(c=>`「${_e(c.reg)}」 ${raLbl(c.no)}(${_e(c.title)})`).join('<br>'),'warn');
     RA.agent.done={title:`법령명을 인용한 ${d.count}개 조문을 찾았습니다`,sub:'개정된 조문을 직접 인용한 곳은 없습니다. 후보를 보고 반영할 곳을 고르세요.',acts:[['후보 전체 보기',"raTab('upper')",1]]};
     return;
   }

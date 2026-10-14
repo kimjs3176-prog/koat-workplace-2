@@ -875,15 +875,42 @@ def _rules() -> str:
             + "\n[공문서 표기법 — 행정업무운영편람]\n" + "\n".join("- " + x for x in _GONGMUN_RULES))
 
 
-def _json_from(text: str):
+def _json_from(text: str) -> dict:
+    """AI 응답 → JSON 객체. 코드 울타리·앞뒤 설명을 걷어 내고 첫 객체만 읽는다. 객체가 아니면 ValueError."""
     clean = re.sub(r"```(?:json)?|```", "", text or "").strip()
     try:
-        return json.loads(clean)
+        d = json.loads(clean)
     except Exception:
-        m = re.search(r"\{.*\}", clean, re.S)
-        if m:
-            return json.loads(m.group(0))
-        raise
+        k = clean.find("{")
+        if k < 0:
+            raise ValueError("JSON 객체가 없습니다")
+        d, _ = json.JSONDecoder().raw_decode(clean[k:])     # 객체 뒤 덧붙인 설명은 버린다
+    if not isinstance(d, dict):
+        raise ValueError("JSON 객체가 아닙니다")
+    return d
+
+
+def _art_no(v) -> str:
+    """AI 가 준 조 번호 → '15' · '15의2'. “제5조 제1항”·“15-2” 같은 표기도 받는다. 못 읽으면 ''."""
+    m = re.match(r"\s*제?\s*(\d+)\s*조?\s*(?:(?:의|-|_)\s*(\d+))?", str(v or ""))
+    return (m.group(1) + (f"의{m.group(2)}" if m.group(2) else "")) if m else ""
+
+
+def _strs(v, limit=40) -> list:
+    """문자열 목록으로(문자열 하나면 한 줄짜리 목록)."""
+    if isinstance(v, str):
+        v = [v] if v.strip() else []
+    if not isinstance(v, list):
+        return []
+    return [str(x).strip() for x in v if isinstance(x, (str, int, float)) and str(x).strip()][:limit]
+
+
+def _norm_reason(r) -> dict:
+    if isinstance(r, str):
+        return {"purpose": r.strip(), "main": []}
+    r = r if isinstance(r, dict) else {}
+    return {"purpose": str(r.get("purpose") or "").strip() if isinstance(r.get("purpose"), (str, int)) else "",
+            "main": _strs(r.get("main"))}
 
 
 def _ai_conf(body: dict):
@@ -1004,25 +1031,35 @@ def ai_enact(b: dict):
             f"[참고할 유사 내규 조문(“다른 기관”은 알리오 공시 사규 — 구조·표현만 참고하고 기관명·직위는 우리 기관에 맞게)]\n{_ref_block(b.get('refs')) or '(없음)'}")
     text, err = _CTX["ai_generate"](provider, key, mdl, system, user,
                                     max_tokens=6000, temperature=0.2, json_mode=True)
+
+    def fallback(why):                    # AI 가 실패해도 빈손으로 돌려보내지 않고 표준 골격을 준다
+        return template_enact(b), f"{why} 표준 조문 골격으로 작성했습니다. 다시 시도하면 AI 초안을 받을 수 있습니다."
     if err:
-        return None, f"AI 오류: {err}"
+        return fallback(f"AI 오류({err})로")
     try:
         d = _json_from(text)
     except Exception:
-        return None, "AI 응답을 해석하지 못했습니다. 다시 시도해 주세요."
-    arts = []
-    for a in d.get("articles") or []:
-        no = re.sub(r"[^0-9의]", "", str(a.get("no", ""))) or str(len(arts) + 1)
+        return fallback("AI 응답을 해석하지 못해")
+    arts, seen, dup = [], set(), []
+    for a in d.get("articles") if isinstance(d.get("articles"), list) else []:
+        if not isinstance(a, dict):
+            continue
+        no = _art_no(a.get("no")) or str(len(arts) + 1)
+        if no in seen:
+            dup.append(art_label(no))
+        seen.add(no)
         arts.append({"chapter": str(a.get("chapter") or "").strip(), "no": no,
                      "title": str(a.get("title") or "").strip(),
                      "body": str(a.get("body") or "").strip()})
     if not arts:
-        return None, "AI가 조문을 만들지 못했습니다. 입력을 보완해 다시 시도해 주세요."
+        return fallback("AI가 조문을 만들지 못해")
     d["articles"] = arts
     d["addenda"] = _clean_addenda(d.get("addenda"))
-    d["title"] = d.get("title") or title
+    d["title"] = d.get("title") if isinstance(d.get("title"), str) and d.get("title").strip() else title
+    d["reason"] = _norm_reason(d.get("reason"))
+    d["notes"] = _strs(d.get("notes"))
     d["model"] = f"{provider}:{mdl}"
-    return d, ""
+    return d, (f"AI 초안에 같은 조 번호가 겹칩니다({', '.join(dict.fromkeys(dup))}). 조 번호를 확인하세요." if dup else "")
 
 
 def ai_amend(b: dict):
@@ -1064,26 +1101,42 @@ def ai_amend(b: dict):
         d = _json_from(text)
     except Exception:
         return None, "AI 응답을 해석하지 못했습니다. 다시 시도해 주세요."
-    ch = []
-    for c in d.get("changes") or []:
+    ch, idx, dropped, dup = [], {}, 0, []
+    for c in d.get("changes") if isinstance(d.get("changes"), list) else []:
+        if not isinstance(c, dict):
+            dropped += 1
+            continue
         t = str(c.get("type") or "modify").lower()
         if t not in ("modify", "insert", "delete"):
             t = "modify"
-        no = re.sub(r"[^0-9의]", "", str(c.get("no", "")))
+        no = _art_no(c.get("no"))
         if not no:
+            dropped += 1                    # 조 번호 없는 제안(부칙 등)은 뺀다 — 아래 notice 로 알린다
             continue
+        if no in idx:                       # 같은 조를 두 번 고치면 뒤의 제안으로 하나만 남긴다
+            dup.append(art_label(no))
+            ch.pop(idx[no])
+            idx = {x["no"]: i for i, x in enumerate(ch)}
         old = None
         if reg and reg.get("articles"):
             old = next((a for a in reg["articles"] if a["no"] == no), None)
         ch.append({"type": t, "no": no, "title": str(c.get("title") or (old or {}).get("title", "")).strip(),
                    "body": str(c.get("body") or "").strip(), "why": str(c.get("why") or "").strip(),
                    "old_title": (old or {}).get("title", ""), "old_body": (old or {}).get("body", "")})
+        idx[no] = len(ch) - 1
     if not ch:
         return None, "AI가 수정안을 만들지 못했습니다. 개정 의도를 구체적으로 적어 다시 시도해 주세요."
     d["changes"] = ch
     d["addenda"] = _clean_addenda(d.get("addenda"))
+    d["reason"] = _norm_reason(d.get("reason"))
+    d["notes"] = _strs(d.get("notes"))
     d["model"] = f"{provider}:{mdl}"
-    return d, ""
+    notice = []
+    if dropped:
+        notice.append(f"조 번호를 알 수 없는 제안 {dropped}건은 뺐습니다")
+    if dup:
+        notice.append(f"같은 조를 두 번 고친 제안({', '.join(dict.fromkeys(dup))})은 마지막 것만 남겼습니다")
+    return d, ("AI 수정안 확인: " + ", ".join(notice) + ".") if notice else ""
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -2569,7 +2622,14 @@ def ra_plan():
                 d = _json_from(text)
                 if d.get("mode") in ("enact", "amend", "bulk", "upper", "compare"):
                     keep = plan.get("reasoning", [])
-                    plan = {k: v for k, v in d.items() if k in ("mode", "intent", "reg_hint", "title", "purpose", "contents", "old", "new", "law", "arts", "keyword")}
+                    plan = {"mode": d["mode"]}
+                    for k in ("intent", "reg_hint", "title", "purpose", "contents", "old", "new", "law", "keyword"):
+                        v = d.get(k)
+                        if isinstance(v, list):          # 목록으로 와도 문장으로 잇는다
+                            v = "\n".join(_strs(v)) if k == "contents" else " ".join(_strs(v))
+                        if isinstance(v, (str, int, float)) and not isinstance(v, bool) and str(v).strip():
+                            plan[k] = str(v).strip()[:2000]
+                    plan["arts"] = [a for a in (_art_no(x) for x in _strs(d.get("arts"))) if a]
                     plan["reasoning"] = [f"AI 판단: {d.get('why') or plan['mode']}"] + [x for x in keep if x.startswith("“")]
                     plan["ai"] = True
                     plan["model"] = f"{provider}:{mdl}"
