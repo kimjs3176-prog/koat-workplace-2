@@ -326,9 +326,10 @@ def parse_text(text: str, clean: bool = True) -> dict:
     out = []
     for a in arts:
         body = "\n".join(a["lines"]).strip()
+        raw = body
         if clean:
             body = "\n".join(x for x in (strip_annot(l) for l in body.split("\n")) if x)
-        deleted = (not body and not a["title"]) or bool(re.match(r"^[<＜〔\[]?\s*(?:삭제|종전)\s*(?:[<＜〔\[(（][^\n]{0,40}[>＞〕\])）]|\d{4}\s*\.\s*\d{1,2}\s*\.\s*\d{1,2}\s*\.?)?\s*$", body))
+        deleted = (not body and (not a["title"] or bool(re.match(r"^[<＜〔\[(（]?\s*삭\s*제", raw)))) or bool(re.match(r"^[<＜〔\[]?\s*(?:삭제|종전)\s*(?:[<＜〔\[(（][^\n]{0,40}[>＞〕\])）]|\d{4}\s*\.\s*\d{1,2}\s*\.\s*\d{1,2}\s*\.?)?\s*$", body))
         out.append({"no": a["no"], "title": a["title"], "body": body,
                     "chapter": a["chapter"], "deleted": deleted})
     return {"articles": out, "chapters": chapters, "addenda": "\n".join(add),
@@ -599,7 +600,9 @@ def term_check(arts: list, cap: int = 8) -> list:
             what = "정의한 용어" if kind == "def" else "약칭으로 정한"
             out.append(("info", no, f"{art_label(no)}에서 {what} “{term}”{_josa(term, ('이', '가'))} 다른 곳에서 쓰이지 않습니다. 빼거나 본문에서 그 용어로 쓰세요."))
         if kind == "abbr" and len(re.sub(r"\s+", "", term)) >= 3 and term not in _TERM_GENERIC:
-            pre = [x for x in live[:i] if _term_uses(x.get("body", ""), term)]
+            tb = r"\s*".join(map(re.escape, re.sub(r"\s+", "", term)))
+            pre = [x for x in live[:i]                 # 더 긴 낱말의 일부(“실증단지위탁자”의 “위탁자”)는 쓰임이 아니다
+                   if re.search(r"(?<![가-힣])" + tb, x.get("body", ""))]
             if pre:
                 out.append(("info", pre[0]["no"],
                             f"약칭 “{term}”{_josa(term, ('을', '를'))} 정의한 {art_label(no)}보다 앞선 {art_label(pre[0]['no'])}에서 먼저 씁니다. "
@@ -659,10 +662,10 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
             if len(hangs) == 1:
                 add("info", "hang1", no, f"{lbl}에 항이 ①만 있습니다. 항이 하나면 번호를 붙이지 않습니다.")
         for seg in re.split(r"(?:^|\n)\s*[" + _HANG_CH + "]", body):
-            hos = [int(x) for x in re.findall(r"(?:^|\n)\s*(\d{1,2})\.\s", seg)]
+            hos = [int(x) for x in re.findall(r"(?:^|\n)\s*(\d{1,2})\.(?!\d)", seg)]   # “1.「병역법」”처럼 붙여 쓴 호도 센다
             if hos and hos != list(range(1, len(hos) + 1)):
                 add("warn", "ho", no, f"{lbl}의 호 번호가 1부터 차례대로가 아닙니다({', '.join(map(str, hos))}).")
-            for hseg in re.split(r"(?:^|\n)\s*\d{1,2}\.\s", seg):          # 목은 호마다 “가”부터 다시
+            for hseg in re.split(r"(?:^|\n)\s*\d{1,2}\.(?!\d)", seg):          # 목은 호마다 “가”부터 다시
                 moks = re.findall(r"(?:^|\n)\s*([가-하])\.\s", hseg)
                 if moks:
                     expm = "".join(_MOK_CH[:len(moks)])
@@ -727,8 +730,10 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
         joined = "\n".join(a.get("body", "") for a in arts)
         for m in re.finditer(r"([가-힣A-Za-z]{2,30})\s*\(\s*이하\s*[“\"']([^”\"']{1,20})[”\"']\s*(?:이)?라\s*한다\s*\)", joined):
             full_nm, abbr = m.group(1), m.group(2)
-            later = joined[m.end():]
-            if full_nm != abbr and full_nm in later:
+            if len(full_nm) < 4 or full_nm in abbr or abbr in full_nm and len(abbr) >= len(full_nm):
+                continue                  # 앞 낱말 하나만 잡힌 경우(“위원(이하 ‘외부위원’)”)·조각은 판단하지 않는다
+            later = re.sub(r"「[^」]*」", " ", joined[m.end():]).replace(abbr, " ")
+            if full_nm != abbr and re.search(r"(?<![가-힣])" + re.escape(full_nm), later):
                 add("info", "abbr", "", f"“{full_nm}”{_josa(full_nm, ('을', '를'))} “{abbr}”{_ro(abbr)} 줄여 정의한 뒤에도 정식 명칭을 다시 씁니다. 약칭으로 통일을 검토하세요.")
         # (8-2) 용어 정의 — 중복 정의·쓰지 않는 용어·정의 전 사용
         for lv, tno, msg in term_check(arts):
@@ -740,13 +745,23 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
             add("warn", "addenda", "", "부칙에 시행일 규정이 보이지 않습니다.")
         # (10) 별표·별지 인용 ↔ 존재
         body_all = joined
-        cited = set(re.findall(r"별표\s*(\d+)", body_all))
-        exist = set(re.findall(r"[\[［]\s*별표\s*(\d+)", appendix or ""))
+        def own_cites(kind_re):
+            """본문의 별표·별지 인용 가운데 다른 법령·내규의 것(「…」·법·시행령 뒤)은 뺀다."""
+            out = set()
+            for mm in re.finditer(kind_re, body_all):
+                pre = body_all[max(0, mm.start() - 18):mm.start()]
+                if re.search(r"」|법\s*$|법\s+|시행령|시행규칙|훈령|고시|예규", pre):
+                    continue
+                out.add(mm.group(1))
+            return out
+        _OPEN = r"[\[［〔❲【<〈＜]\s*"
+        cited = own_cites(r"별표\s*(\d+)")
+        exist = set(re.findall(_OPEN + r"별표\s*(\d+)", appendix or ""))
         for c in sorted(cited - exist, key=int):
             if appendix or exist:
                 add("warn", "appx", "", f"본문에서 [별표 {c}]를 인용하지만 별표가 없습니다.")
-        cited_f = set(re.findall(r"별지\s*제?\s*(\d+)\s*호", body_all))
-        exist_f = set(re.findall(r"[\[［]\s*별지\s*제?\s*(\d+)\s*호", appendix or ""))
+        cited_f = own_cites(r"별지\s*제?\s*(\d+)\s*호")
+        exist_f = set(re.findall(_OPEN + r"별지\s*제?\s*(\d+)\s*호", appendix or ""))
         for c in sorted(cited_f - exist_f, key=int):
             if appendix or exist_f:
                 add("warn", "appx", "", f"본문에서 [별지 제{c}호 서식]을 인용하지만 서식이 없습니다.")
@@ -2252,7 +2267,7 @@ def ra_health_laws():
         # 서버리스 시간 제한 안에서 끝내도록 전체 대기 시간을 제한한다(늦은 건은 실패로 돌려 다시 시도하게 함)
         ex = cf.ThreadPoolExecutor(max_workers=6)
         futs = {ex.submit(one, nm): nm for nm in todo}
-        done, pending = cf.wait(futs, timeout=float(os.environ.get("LAW_LOOKUP_BUDGET", "25")))
+        done, pending = cf.wait(futs, timeout=float(os.environ.get("LAW_LOOKUP_BUDGET", "15")))
         for f in done:
             nm, v = f.result()
             out[nm] = v

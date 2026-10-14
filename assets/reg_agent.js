@@ -93,7 +93,14 @@ function _raLoad(){
 }
 let RA=_raLoad(); RA.agent=Object.assign({req:'',steps:[],plan:null,done:null},RA.agent||{},{running:false}); (RA.agent.steps||[]).forEach(s=>{ if(s.st==='run') s.st='err'; }); RA.health=Object.assign({law:{},f:{q:'',g:''}},RA.health||{});
 let _raArtsErr='', _raArts=null, _raCatalog=null, _raSaveT=null, _raBusy={};
-function _raSave(){ clearTimeout(_raSaveT); _raSaveT=setTimeout(()=>{ try{ localStorage.setItem(RA_KEY, JSON.stringify(RA)); }catch(e){ if(typeof _toast==='function') _toast('작업 내용을 저장하지 못했습니다(브라우저 저장 공간 부족).'); } },300); }
+function _raSave(){ clearTimeout(_raSaveT); _raSaveT=setTimeout(()=>{ try{ localStorage.setItem(RA_KEY, raStateJson()); }catch(e){ if(typeof _toast==='function') _toast('작업 내용을 저장하지 못했습니다(브라우저 저장 공간 부족).'); } },300); }
+// 저장본: 일괄 정비 결과가 크면(수백 KB) 빼고 저장한다 — 입력·선택은 남기고, 새로고침 뒤에는 다시 찾게 한다
+let _raBulkJ={res:null,n:0};
+function raStateJson(){
+  const R=RA.bulk&&RA.bulk.res; if(R!==_raBulkJ.res) _raBulkJ={res:R, n:R?JSON.stringify(R).length:0};
+  if(_raBulkJ.n<=200000) return JSON.stringify(RA);
+  return JSON.stringify(RA,(k,v)=>k==='res'&&v===R?null:v);
+}
 function raSet(path, val){ const ks=path.split('.'); let o=RA; for(let i=0;i<ks.length-1;i++) o=o[ks[i]]; o[ks[ks.length-1]]=val; _raSave();
   if(/^enact\.draft\.(text|addenda|purpose|main)$/.test(path)) raDirty('enact');
   if(/^enact\.(title|purpose|contents)$/.test(path)){ raDirty('enact'); raWizSync('enact'); }
@@ -129,10 +136,14 @@ function raKind(title){ const t=String(title||'').trim(); for(const s of ['시�
 function raToday(add){ const d=new Date(); d.setDate(d.getDate()+(add||0)); return `${d.getFullYear()}. ${d.getMonth()+1}. ${d.getDate()}.`; }
 function raAi(){ const s=getAiSettings(); const p=s.provider||''; return p?{provider:p, api_key:s['key_'+p]||'', model:s['model_'+p]||''}:{}; }
 function raHasAi(){ const s=getAiSettings(); const p=s.provider||''; return !!(p&&(s['key_'+p]||p==='ollama')); }
+const RA_FETCH_MS=120000;          // AI 초안(최대 약 1분)보다 넉넉하게
 async function raPost(url, body){
   const s=getAiSettings(); const h={'Content-Type':'application/json'};
   if(s.key_gemini) h['X-Gemini-Key']=s.key_gemini;     // 유사 규정 의미 검색(헤더로만 전달)
-  let r; try{ r=await fetch(url,{method:'POST',headers:h,body:JSON.stringify(body||{})}); }catch(e){ return {success:false,error:'서버에 연결하지 못했습니다. 네트워크를 확인하세요.'}; }
+  const ac=typeof AbortController!=='undefined'?new AbortController():null, to=ac?setTimeout(()=>ac.abort(),RA_FETCH_MS):0;   // 서버가 끝내 답하지 않으면 끊는다
+  let r; try{ r=await fetch(url,{method:'POST',headers:h,body:JSON.stringify(body||{}),signal:ac?ac.signal:undefined}); }
+  catch(e){ return {success:false,error:e&&e.name==='AbortError'?'서버 응답이 너무 늦어 멈췄습니다. 잠시 뒤 다시 시도하세요.':'서버에 연결하지 못했습니다. 네트워크를 확인하세요.'}; }
+  finally{ clearTimeout(to); }
   let d={}; try{ d=await r.json(); }catch(e){ d={success:false,error:`서버 응답 오류(${r.status})`}; }
   if(!r.ok && d.success!==false) d.success=false;
   return d;
@@ -151,11 +162,11 @@ async function raOnce(key, fn){
 // 작업 세대: 대상 내규를 바꾸거나 새로 시작하면 올라가고, 그 전에 보낸 요청의 응답은 버린다
 const _raGen={enact:0, amend:0};
 function raGenBump(mode){ _raGen[mode]=(_raGen[mode]||0)+1; }
-function raSpin(t){ return `<div class="assist-loading"><div class="spinner"></div><span>${_e(t)}</span></div>`; }
-function raErr(msg, needKey){ return `<div class="ra-err">${raIc('alert')}<span>${_e(msg)}</span>${needKey?` <button class="svc-btn sm" onclick="openAiModal()">${raIc('spark')}AI 설정</button>`:''}</div>`; }
+function raSpin(t){ return `<div class="assist-loading" role="status"><div class="spinner"></div><span>${_e(t)}</span></div>`; }
+function raErr(msg, needKey){ return `<div class="ra-err" role="alert">${raIc('alert')}<span>${_e(msg)}</span>${needKey?` <button class="svc-btn sm" onclick="openAiModal()">${raIc('spark')}AI 설정</button>`:''}</div>`; }
 // ── 인포그래픽 부품 — 숫자·비율은 그림으로, 설명은 ⓘ 툴팁으로 ─────────────────
 // 색조(tone): ok 양호 · warn 주의 · serious 경고 · bad 위험 · acc 강조(파랑) · n 중립 — 색만으로 뜻을 전하지 않도록 항상 글자와 함께 쓴다
-function raTip(t){ return `<span class="ra-tip" tabindex="0" role="note" aria-label="${_e(t)}" data-tip="${_e(t)}">${raIc('info')}</span>`; }
+function raTip(t){ return `<span class="ra-tip" tabindex="0" role="note" aria-label="${_e(t)}" data-tip="${_e(t)}" onkeydown="if(event.key==='Escape'){event.stopPropagation();this.blur();}">${raIc('info')}</span>`; }
 function raFlow(f){ return `<ol class="ra-flow">`+f.map(([ic,l])=>`<li>${raIc(ic)}<span>${_e(l)}</span></li>`).join('')+`</ol>`; }
 function raStats(items){
   return `<div class="ra-stats">`+items.map(x=>`<div class="ra-stat t-${x.tone||'n'}"${x.tip?` title="${_e(x.tip)}"`:''}><span class="ra-stat-ic">${raIc(x.ic||'info')}</span><div><b>${x.v}</b><span>${_e(x.l)}</span></div></div>`).join('')+`</div>`;
@@ -291,19 +302,21 @@ function openRegAgent(tab){
   _assistMode='regagent';
   if(tab) RA.tab=tab;
   const p=document.getElementById('assistantPanel');
-  const tabs=RA_TABS.map(([k,l,h])=>`<button class="ra-tab${RA.tab===k?' on':''}" role="tab" aria-selected="${RA.tab===k}" title="${_e(h)}" onclick="raTab('${k}')">${raIc(k)}<span class="ra-tab-t"><b>${l}</b><small>${_e(h)}</small></span></button>`).join('');
+  const tabs=RA_TABS.map(([k,l,h])=>`<button class="ra-tab${RA.tab===k?' on':''}" ${RA.tab===k?'aria-current="page"':''} title="${_e(h)}" onclick="raTab('${k}')">${raIc(k)}<span class="ra-tab-t"><b>${l}</b><small>${_e(h)}</small></span></button>`).join('');
   const nav=document.getElementById('raNav');
   if(nav) nav.innerHTML=tabs;
   let [pt,pf]=RA_PAGE[RA.tab]||['',[]]; if(RA.tab==='enact'||RA.tab==='amend') pf=[];
   const ph=(RA_TABS.find(x=>x[0]===RA.tab)||[])[2]||'';
   const ai=raHasAi()?`<span class="ra-pill ok">${raIc('spark')}AI 연결됨</span>`:`<button class="ra-pill" onclick="openAiModal()" title="AI 키를 넣으면 초안·수정안·검토의견을 AI가 씁니다">${raIc('spark')}AI 미설정</button>`;
-  p.innerHTML=(nav?'':`<div class="ra-tabs" role="tablist">${tabs}</div>`)+
+  p.innerHTML=(nav?'':`<nav class="ra-tabs" aria-label="에이전트 기능">${tabs}</nav>`)+
     `<header class="ra-page"><div class="ra-page-ic">${raIc(RA.tab)}</div><div class="ra-page-t"><h1 title="${_e(ph)}">${_e(pt)}</h1>${raFlow(pf)}</div><div class="ra-page-a">${ai}<span class="ra-pill subtle" title="절차·심의기준의 근거">「${_e(raRules())}」</span></div></header>`+
     `<div id="raBody" class="ra-body"></div>`;
   raOrgCard();
   raRender();
 }
-function raTab(k){ RA.tab=k; _raSave(); openRegAgent(); window.scrollTo({top:0}); const on=document.querySelector('.ra-nav .ra-tab.on'); if(on&&on.scrollIntoView) on.scrollIntoView({block:'nearest',inline:'center'}); }
+function raTab(k){ const kb=!!(document.activeElement&&document.activeElement.classList&&document.activeElement.classList.contains('ra-tab'));
+  RA.tab=k; _raSave(); openRegAgent(); window.scrollTo({top:0}); const on=document.querySelector('.ra-nav .ra-tab.on'); if(on&&on.scrollIntoView) on.scrollIntoView({block:'nearest',inline:'center'});
+  if(kb&&on) on.focus({preventScroll:true}); }            // 키보드로 탭을 바꿨으면 초점을 새 탭에 둔다(목록을 다시 그려 초점이 사라지지 않게)
 // 좌측 기관 카드: 기관명·등록 내규 수·서버/AI 상태
 function raOrgCard(){
   const c=document.getElementById('orgCard'); if(!c||!RA_ORG) return;
@@ -314,7 +327,7 @@ function raOrgCard(){
 }
 // 작업 내용은 이 브라우저(localStorage)에만 있으므로 파일로 백업·복원할 수 있게 한다
 function raBackup(){
-  clearTimeout(_raSaveT); try{ localStorage.setItem(RA_KEY, JSON.stringify(RA)); }catch(e){}
+  clearTimeout(_raSaveT); try{ localStorage.setItem(RA_KEY, raStateJson()); }catch(e){}
   const data={app:'koat-regagent', version:1, saved:new Date().toISOString(), org:(RA_ORG||{}).org_name||'', state:RA};
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));
   a.download=`규정에이전트_작업백업_${raYmd(new Date())}.json`; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },500);
@@ -523,7 +536,11 @@ async function raLawLoad(){
   try{
     const d=await raGet('/api/law/articles?name='+encodeURIComponent(nm.trim()));
     if(d.error||!d.articles||!d.articles.length){ E.lawArts=null; _toast(d.error||d.message||'조문을 불러오지 못했습니다.'); }
-    else{ E.lawName=d.law_name||nm.trim(); E.lawArts=d.articles.map(a=>({label:a['조문표시번호']||('제'+a['조문번호']+'조'), title:a['조문제목']||'', text:String(a['조문내용']||'').trim()})); }
+    else{ E.lawName=d.law_name||nm.trim();
+      // 장·절 머리(type:header)는 조문이 아니고, “삭제” 조문은 위임 근거가 될 수 없으므로 고를 수 없게 뺀다
+      E.lawArts=d.articles.filter(a=>a.type!=='header'&&(a['조문번호']||a['조문표시번호'])).map(a=>({label:a['조문표시번호']||('제'+a['조문번호']+'조'), title:a['조문제목']||'', text:String(a['조문내용']||'').trim()}))
+        .filter(a=>!/^(?:제\s*\d+\s*조(?:의\s*\d+)?\s*)?삭제\s*(?:[<＜(（][^>＞)）]*[>＞)）])?\s*$/.test(a.text));
+      if(nm.trim().replace(/\s+/g,'')!==E.lawName.replace(/\s+/g,'')) _toast(`「${nm.trim()}」${raEul(nm.trim())} 찾지 못해 이름이 가장 가까운 「${E.lawName}」${raEul(E.lawName)} 불러왔습니다.`,5000); }
   }catch(e){ E.lawArts=null; _toast('법제처 연결에 실패했습니다.'); }
   _raBusy.law=false; E.lawQ=''; raRerender('enact');
 }
@@ -646,7 +663,7 @@ function raAmendView(){
     ?`<label class="ra-f"><span>${_e(RA_ORG.reg_word)}명</span><input class="ra-in" id="raPasteTitle" value="${_e(A.title)}" placeholder="예) ○○ 운영규칙" oninput="raSet('amend.title',this.value)"></label>`+
       `<label class="ra-f"><span>현행 원문 ${raTip(`“제1조(목적) …” 형식 그대로 붙여 넣으세요. 등록되지 않은 ${RA_ORG.reg_word}나 다른 기관 규정도 됩니다.`)}</span><textarea class="ra-ta mono" id="raPasteText" rows="8" oninput="raSet('amend.pasteText',this.value)">${_e(A.pasteText)}</textarea></label>`+
       `<div class="ra-row"><button class="svc-btn" onclick="raPasteLoad()">조문 읽기</button></div><div id="raArts">${A.pasted?raArtsView():''}</div>`
-    :`<div class="ra-row"><input id="raRegIn" class="ra-in" list="raRegList" style="max-width:340px" placeholder="${_e(RA_ORG.reg_word)}명 (예: 여비규정)" value="${_e(A.title)}" onkeydown="if(event.key==='Enter')raPickReg()"><datalist id="raRegList"></datalist>`+
+    :`<div class="ra-row"><input id="raRegIn" class="ra-in" list="raRegList" aria-label="개정할 ${_e(RA_ORG.reg_word)}명" style="max-width:340px" placeholder="${_e(RA_ORG.reg_word)}명 (예: 여비규정)" value="${_e(A.title)}" onkeydown="if(event.key==='Enter')raPickReg()"><datalist id="raRegList"></datalist>`+
       `<button class="svc-btn" onclick="raPickReg()">불러오기</button>${A.slug?`<a class="ra-link" href="${raRegUrl(A.slug)}" target="_blank" rel="noopener">원문↗</a>`:''}</div><div id="raArts">${raArtsView()}</div>`);
   const s2=`<div class="ra-grid2"><label class="ra-f"><span>개정 의도</span>${raTa('amend.intent',A.intent,'예) 숙박비 상한을 실비 기준으로 바꾸고, 출장 신청을 전자결재로 하도록 정비',5)}</label>`+
     `<div><label class="ra-f"><span>시행일</span>${raIn('amend.effective',A.effective,'비우면 “발령한 날”')}</label>`+
@@ -670,6 +687,12 @@ function raAmendView(){
 function raLintOnlySet(){ const el=document.getElementById('raLintOnly'); if(el&&!el.checked) return null; return new Set(RA.amend.changes.map(c=>c.no)); }
 function raLintRedraw(){ const b=document.getElementById('raLint'); if(b) b.innerHTML=raLintView(RA.amend.lint, raLintOnlySet()); }
 function raAmendWorkMsg(){ const A=RA.amend, n=raEffChanges().length; return n||String(A.intent||'').trim()?`지금 개정 작업(${n?`수정안 ${n}건`:'개정 의도'})을 지우고 다른 ${RA_ORG.reg_word}로 새로 시작할까요?`:''; }
+function raAgWorkMsg(mode){
+  if(mode==='amend'){ const A=RA.amend, n=raEffChanges().length; return n||String(A.intent||'').trim()?`개정 탭의 진행 중인 작업(${n?`수정안 ${n}건`:'개정 의도'})을 지우고 에이전트 결과로 바꿀까요?`:''; }
+  if(mode==='enact'){ const E=RA.enact; return E.draft||String(E.contents||'').trim()?`제정 탭의 진행 중인 작업(${E.draft?'조문 초안':'기본 정보'})을 지우고 에이전트 결과로 바꿀까요?`:''; }
+  if(mode==='bulk'){ const U=RA.bulk; return U.res&&String(U.reason||'').trim()?'일괄 정비 탭의 결과와 정비 사유를 지우고 새로 찾을까요?':''; }
+  return '';
+}
 function raAmendSrc(v){ const A=RA.amend; if(A.src===v) return; const m=raAmendWorkMsg(); if(m&&!confirm(m)){ raRerender('amend'); return; } raGenBump('amend'); A.src=v; if(v==='reg'){ A.pasted=false; } else { A.slug=''; } _raArts=null; Object.assign(A,{title:'',sel:{},changes:[],impact:null,lint:null,review:null,nota:null,moves:'',ab:null}); _raSave(); raRerender('amend'); }
 async function raPasteLoad(restore){
   const A=RA.amend; const t=restore?A.pasteText:((document.getElementById('raPasteText')||{}).value||A.pasteText);
@@ -1354,7 +1377,7 @@ function raAgentView(){
     `<div class="ra-ag-box"><textarea id="raAgIn" class="ra-ag-in" rows="2" placeholder="예) 여비규정 제15조의 일비를 3만원으로 올려줘" oninput="raSet('agent.req',this.value)" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();raAgentRun();}">${_e(G.req)}</textarea>`+
     `<button class="svc-btn yes ra-ag-go" onclick="raAgentRun()" ${G.running?'disabled':''}>${raIc('spark')}${G.running?'진행 중…':'에이전트 실행'}</button></div>`+
     `<div class="ra-ag-exs">${ex}</div></section>`+
-    `<div id="raAgOut">${raAgentOut()}</div></div>`;
+    `<div id="raAgOut" aria-live="polite">${raAgentOut()}</div></div>`;
 }
 function raAgentEx(t){ RA.agent.req=t; _raSave(); const el=document.getElementById('raAgIn'); if(el){ el.value=t; el.focus(); } }
 const RA_AG_ST={run:['진행 중','run'],ok:['완료','ok'],warn:['확인 필요','warn'],err:['중단','err'],skip:['건너뜀','skip']};
@@ -1399,6 +1422,8 @@ async function raAgentRun(){
     if(!d.success) stop(s,d.error||'계획을 세우지 못했습니다.');
     const P=G.plan=d.plan;
     fin(s,raArr(P.reasoning).map(_e).join('<br>'));
+    const wm=raAgWorkMsg(P.mode);                                // 진행 중인 작업을 덮어쓰기 전에 묻는다
+    if(wm&&!confirm(wm)) stop(step('작업 시작'),'진행 중인 작업을 지키려고 멈췄습니다. 해당 탭에서 작업을 마치거나 백업한 뒤 다시 실행하세요.');
     if(P.mode==='amend') await raAgAmend(P,step,fin,stop);
     else if(P.mode==='enact') await raAgEnact(P,step,fin,stop);
     else if(P.mode==='bulk') await raAgBulk(P,step,fin,stop);
@@ -1582,13 +1607,10 @@ function raHealthView(){
     `<div class="ra-prio-r">${r.reasons.map(x=>`<span class="ra-chip">${_e(x)}</span>`).join('')}</div>`+
     (r.stale_laws.length?`<div class="ra-snip">상위법: ${r.stale_laws.slice(0,3).map(l=>`「${_e(l.law)}」 ${l.ef.slice(0,4)}.${l.ef.slice(4,6)}.${l.ef.slice(6)} 시행`).join(', ')}</div>`:'')+
     `</div><div class="ra-prio-a"><button class="svc-btn sm" onclick="raCheckToAmend('${_a(r.slug)}','${_a(r.title)}')">개정 작업</button><a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener">원문↗</a></div></li>`).join('')+`</ol>`:'<div class="ra-ok">정비가 필요한 내규가 없습니다.</div>';
-  const q=(f.q||'').replace(/\s+/g,'');
-  const rows=d.rows.filter(r=>(!f.g||r.grade===f.g)&&(!q||r.title.replace(/\s+/g,'').includes(q)));
-  const table=`<div class="ra-row"><input class="ra-in sm" style="max-width:220px" placeholder="${_e(RA_ORG.reg_word)}명 검색" value="${_e(f.q||'')}" oninput="raHealthF('q',this.value)">`+
-    (f.g?`<button class="ra-chip btn" onclick="raHealthF('g','')">${f.g}등급만 보는 중 ✕</button>`:'')+`<span class="ra-hint">${rows.length}건</span></div>`+
-    `<div class="ra-tbl-w"><table class="ra-tbl"><thead><tr><th>${_e(RA_ORG.reg_word)}</th><th>등급</th><th>점수</th><th>최종 개정</th><th>진단</th></tr></thead><tbody>`+
-    rows.map(r=>`<tr><td><a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener">${_e(r.title)}</a><div class="ra-sub">${_e(r.category)} · ${r.n_articles}개 조 · 인용 법령 ${r.laws.length}</div></td>`+
-      `<td><span class="ra-gr g-${RA_GRADE[r.grade][1]}">${r.grade}</span></td><td class="num"><span class="ra-sc">${raMini(r.score,RA_GRADE[r.grade][1])}${r.score}</span></td><td>${_e(r.revision)}</td><td>${r.reasons.map(x=>_e(x)).join(', ')||'<span class="ra-mu">이상 없음</span>'}</td></tr>`).join('')+`</tbody></table></div>`;
+  const rows=raHealthRows(d,f);
+  const table=`<div class="ra-row"><input class="ra-in sm" style="max-width:220px" aria-label="${_e(RA_ORG.reg_word)}명으로 진단표 거르기" placeholder="${_e(RA_ORG.reg_word)}명 검색" value="${_e(f.q||'')}" oninput="raHealthF('q',this.value)">`+
+    (f.g?`<button class="ra-chip btn" onclick="raHealthF('g','')">${f.g}등급만 보는 중 ✕</button>`:'')+`<span class="ra-hint" id="raHealthN" aria-live="polite">${rows.length}건</span></div>`+
+    `<div class="ra-tbl-w"><table class="ra-tbl"><thead><tr><th>${_e(RA_ORG.reg_word)}</th><th>등급</th><th>점수</th><th>최종 개정</th><th>진단</th></tr></thead><tbody id="raHealthTb">${raHealthTbody(rows)}</tbody></table></div>`;
   const rule=d.rules?`<details class="ra-det"><summary>점수 기준</summary><div class="ra-hint">100점에서 감점: 없는 조문 인용 건당 -10(최대 -30) · 조 번호 중복·순서 오류 -8 · 현행 목록에 없는 내규명 인용 -6 · 옛 기관명·직위 -5 · 개정 경과 ${_e(d.rules.age)} · ${_e(d.rules.law)}<br>등급: A 95점 이상(양호) · B 85(관심) · C 75(주의) · D 60(경고) · E 60점 미만(위험)</div></details>`:'';
   const lawSec=`<div class="ra-row"><button class="svc-btn" onclick="raHealthLaws()">${raIc('upper')}상위법 최신성 확인</button>${raTip(`${_e(RA_ORG.reg_word)}가 인용한 법령 ${d.laws.length}개의 현행 시행일을 법제처에서 조회해, ${_e(RA_ORG.reg_word)} 개정일보다 나중에 시행된 법령을 찾습니다.${lawN?` (확인 ${lawN}개)`:''}`)}</div><div id="raLawProg"></div>`+
     raStats([{v:d.laws.length,l:'인용 법령',ic:'upper',tone:'acc'},{v:lawN,l:'시행일 확인',ic:'check',tone:lawN?'ok':'n'},{v:lawN?d.stale_regs:'—',l:'미반영 의심 내규',ic:'alert',tone:lawN&&d.stale_regs?'warn':'n'}])+
@@ -1602,8 +1624,15 @@ function raHealthView(){
 }
 function raMeter(p, tone){ return `<div class="ra-meter"><i class="t-${tone}" style="width:${Math.round(Math.max(0,Math.min(1,p||0))*100)}%"></i></div>`; }
 function raMini(v, tone){ return `<span class="ra-mini" aria-hidden="true"><i class="t-${tone}" style="width:${Math.max(0,Math.min(100,v))}%"></i></span>`; }
+function raHealthRows(d,f){ const q=(f.q||'').replace(/\s+/g,''); return d.rows.filter(r=>(!f.g||r.grade===f.g)&&(!q||r.title.replace(/\s+/g,'').includes(q))); }
+function raHealthTbody(rows){
+  return rows.map(r=>`<tr><td><a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener">${_e(r.title)}</a><div class="ra-sub">${_e(r.category)} · ${r.n_articles}개 조 · 인용 법령 ${r.laws.length}</div></td>`+
+    `<td><span class="ra-gr g-${RA_GRADE[r.grade][1]}">${r.grade}</span></td><td class="num"><span class="ra-sc">${raMini(r.score,RA_GRADE[r.grade][1])}${r.score}</span></td><td>${_e(r.revision)}</td><td>${r.reasons.map(x=>_e(x)).join(', ')||'<span class="ra-mu">이상 없음</span>'}</td></tr>`).join('');
+}
 function raHealthF(k,v){ const H=RA.health; H.f=H.f||{q:'',g:''}; H.f[k]=(k==='g'&&H.f.g===v)?'':v; _raSave();
-  if(k==='q'){ clearTimeout(raHealthF._t); raHealthF._t=setTimeout(()=>{ const y=window.scrollY; raRerender('health'); window.scrollTo(0,y); const i=document.querySelector('#raHealth .ra-tbl-w')?.previousElementSibling?.querySelector('input'); if(i){ i.focus(); i.setSelectionRange(i.value.length,i.value.length); } },250); }
+  if(k==='q'){ clearTimeout(raHealthF._t); raHealthF._t=setTimeout(()=>{   // 입력란은 그대로 두고 표만 바꾼다(한글 조합 중 다시 그리면 글자가 겹친다)
+      const tb=document.getElementById('raHealthTb'), n=document.getElementById('raHealthN'); if(!tb||!_raHealth) return;
+      const rows=raHealthRows(_raHealth,H.f); tb.innerHTML=raHealthTbody(rows); if(n) n.textContent=`${rows.length}건`; },200); }
   else { const y=window.scrollY; raRerender('health'); window.scrollTo(0,y); } }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1614,7 +1643,7 @@ function raBulkView(){
   const U=RA.bulk;
   const form=`<div class="ra-grid2"><label class="ra-f"><span>바뀌기 전 용어</span>${raIn('bulk.old',U.old,'예) 경영지원팀 · 이사장 · 위임전결규정')}</label>`+
     `<label class="ra-f"><span>바뀐 뒤 용어</span>${raIn('bulk.neu',U.neu,'예) 경영관리팀 · 원장 · 위임전결규칙')}</label></div>`+
-    `<label class="ra-chk"><input type="checkbox" ${U.whole!==false?'checked':''} onchange="raSet('bulk.whole',this.checked)"> 낱말 단위로만 ${raTip('다른 낱말의 일부는 제외 — 예: “원장”을 바꿀 때 “부원장”은 그대로')}</label>`+
+    `<div class="ra-row"><label class="ra-chk"><input type="checkbox" ${U.whole!==false?'checked':''} onchange="raSet('bulk.whole',this.checked)"> 낱말 단위로만</label>${raTip('다른 낱말의 일부는 제외 — 예: “원장”을 바꿀 때 “부원장”은 그대로')}</div>`+
     `<label class="ra-f" style="margin-top:8px"><span>정비 사유 ${raTip('개정 이유서에 들어갑니다')}</span>${raTa('bulk.reason',U.reason,'예) 「직제규정」 개정(2026. 1. 1.)으로 부서 명칭이 바뀜에 따라 관련 내규를 일괄 정비하려는 것임.',2)}</label>`+
     (U.only&&U.only.length?`<div class="ra-row"><button class="ra-chip btn" onclick="RA.bulk.only=null;_raSave();raRerender('bulk')" title="범위를 풀고 모든 ${_e(RA_ORG.reg_word)}에서 찾습니다">찾는 범위: 인용 관계에서 고른 ${U.only.length}개 ${_e(RA_ORG.reg_word)} ✕</button></div>`:'')+
     `<div class="ra-row"><button class="svc-btn yes" onclick="raBulkRun()">${raIc('search')}영향 내규 찾기</button>${raTip(`직제 개편·기관명 변경·내규명 변경 때 모든 ${_e(RA_ORG.reg_word)}를 한 번에 정비합니다. 뒤따르는 조사(은/는·이/가·을/를·으로/로)도 맞춰 고칩니다.`)}</div>`;
@@ -1630,7 +1659,7 @@ async function _raBulkRun(){
   U.res=d; U.sel={}; d.regs.forEach(g=>U.sel[g.slug]=true); U.docTab=U.docTab||'amend'; _raSave(); raRerender('bulk');
 }
 function raBulkSel(slug,on){ RA.bulk.sel[slug]=on; _raSave(); raBulkDocsRedraw(); }
-function raBulkSelAll(on){ Object.keys(RA.bulk.sel).forEach(k=>RA.bulk.sel[k]=on); _raSave(); document.querySelectorAll('.ra-detg input[type=checkbox]').forEach(x=>{ x.checked=on; }); raBulkDocsRedraw(); }
+function raBulkSelAll(on){ Object.keys(RA.bulk.sel).forEach(k=>RA.bulk.sel[k]=on); _raSave(); document.querySelectorAll('.ra-detg .ra-bulk-i>input[type=checkbox]').forEach(x=>{ x.checked=on; }); raBulkDocsRedraw(); }
 function raBulkDocsRedraw(){ const b=document.querySelector('#raSecDocs .ra-sec-b'); if(b) b.innerHTML=raBulkDocsView(); else raRerender('bulk'); }
 function raBulkResView(){
   const R=RA.bulk.res; if(!R) return `<div class="ra-empty sm">${raIc('bulk')}용어를 넣고 “영향 내규 찾기”</div>`;
@@ -1641,9 +1670,15 @@ function raBulkResView(){
     raStats([{v:R.reg_count,l:`개 ${RA_ORG.reg_word}`,ic:'doc',tone:'acc'},{v:R.total,l:'곳 수정',ic:'amend',tone:'acc'},{v:nsel,l:'문서에 포함',ic:'check',tone:nsel?'ok':'n'}])+`</div><div>`+
     raBars(R.regs.slice(0,8).map(g=>({l:g.reg,n:g.count})),'곳','내규별 수정 위치 수')+(R.regs.length>8?`<div class="ra-meta">외 ${R.regs.length-8}개 ${_e(RA_ORG.reg_word)}</div>`:'')+`</div></div>`+
     `<div class="ra-meta"><button class="ra-link" onclick="raBulkSelAll(true)">모두 선택</button><button class="ra-link" onclick="raBulkSelAll(false)">모두 해제</button></div>`+
-    `<div class="ra-detg">`+R.regs.map(g=>`<details class="ra-det"><summary><label onclick="event.stopPropagation()"><input type="checkbox" ${sel[g.slug]?'checked':''} onchange="raBulkSel('${_a(g.slug)}',this.checked)"></label> <b>「${_e(g.reg)}」</b> <span class="ra-chip">${g.count}곳</span> <a class="ra-link" href="${raRegUrl(g.slug)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">원문↗</a></summary>`+
-      `<div class="ra-note mono">${_e(g.amend_text).replace(/\n/g,'<br>')}</div>`+
-      g.articles.map(a=>{ const [o,n]=raWordDiff(a.old_body,a.new_body); return `<div class="ra-fixrow"><b>${_e(raLbl(a.no))}(${_e(a.title)})</b> <span class="ra-sub">${_e(a.locs.join(', '))}</span><div class="ra-fixd"><div>${o.replace(/\n/g,'<br>')}</div><div>${n.replace(/\n/g,'<br>')}</div></div></div>`; }).join('')+`</details>`).join('')+`</div>`;
+    `<div class="ra-detg">`+R.regs.map(g=>`<div class="ra-bulk-i"><input type="checkbox" aria-label="「${_e(g.reg)}」 문서에 포함" ${sel[g.slug]?'checked':''} onchange="raBulkSel('${_a(g.slug)}',this.checked)">`+
+      `<details class="ra-det" ontoggle="raBulkOpen(this,'${_a(g.slug)}')"><summary><b>「${_e(g.reg)}」</b> <span class="ra-chip">${g.count}곳</span> <a class="ra-link" href="${raRegUrl(g.slug)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">원문↗</a></summary><div class="ra-bulk-b"></div></details></div>`).join('')+`</div>`;
+}
+// 내규별 수정 내용은 펼칠 때 그린다(내규가 많으면 한꺼번에 그리기 무겁다)
+function raBulkOpen(el, slug){
+  const b=el.querySelector('.ra-bulk-b'); if(!el.open||!b||b.childElementCount) return;
+  const g=((RA.bulk.res||{}).regs||[]).find(x=>x.slug===slug); if(!g) return;
+  b.innerHTML=`<div class="ra-note mono">${_e(g.amend_text).replace(/\n/g,'<br>')}</div>`+
+    g.articles.map(a=>{ const [o,n]=raWordDiff(a.old_body,a.new_body); return `<div class="ra-fixrow"><b>${_e(raLbl(a.no))}(${_e(a.title)})</b> <span class="ra-sub">${_e(a.locs.join(', '))}</span><div class="ra-fixd"><div>${o.replace(/\n/g,'<br>')}</div><div>${n.replace(/\n/g,'<br>')}</div></div></div>`; }).join('');
 }
 const RA_BULK_DOCS=[['amend','내규별 개정문'],['addenda','“다른 내규의 개정” 부칙'],['cmp','통합 신구조문대비표'],['reason','정비 이유서']];
 function raBulkDocs(){
@@ -1742,7 +1777,7 @@ function raUpperToAmend(slug, no){
 // ══════════════════════════════════════════════════════════════════════════
 function raCheckView(){
   const C=RA.check;
-  const one=`<div class="ra-row"><input id="raChkReg" class="ra-in" list="raRegList" style="max-width:320px" placeholder="내규명 (예: 인사규정)" value="${_e(C.reg||'')}" onkeydown="if(event.key==='Enter')raCheckOne()"><datalist id="raRegList"></datalist><button class="svc-btn" onclick="raCheckOne()">이 내규 점검</button></div><div id="raChkOne">${C.one?raCheckOneView(C.one):''}</div>`;
+  const one=`<div class="ra-row"><input id="raChkReg" class="ra-in" list="raRegList" aria-label="점검할 ${_e(RA_ORG.reg_word)}명" style="max-width:320px" placeholder="내규명 (예: 인사규정)" value="${_e(C.reg||'')}" onkeydown="if(event.key==='Enter')raCheckOne()"><datalist id="raRegList"></datalist><button class="svc-btn" onclick="raCheckOne()">이 내규 점검</button></div><div id="raChkOne">${C.one?raCheckOneView(C.one):''}</div>`;
   const all=`<div class="ra-row"><button class="svc-btn yes" onclick="raCheckAll()">${raIc('check')}기관 내규 전체 점검</button>${raTip(`모든 내규에서 없는 조문 인용·현행 목록에 없는 내규명·구 명칭(재단·이사장 등)·조 번호 중복을 찾습니다.`)}</div>`;
   return `<div class="ra-wide">${raPair(raSec(1,'전체 점검','',all),raSec(2,'내규 하나 자세히 점검',raTip('항·호 순서, 표기, 부칙, 별표 인용까지'),one))}<div id="raChkAll">${raCheckAllView()}</div></div>`;
 }
@@ -1817,7 +1852,7 @@ function raGraphSvg(d, sel){
   const hiIn=S?S.citedBy.map(x=>`<path d="${curve(x.j,S.i)}" class="ra-gl in"><title>${_e(d.nodes[x.j].title)} → ${_e(S.title)}</title></path>`).join(''):'';
   const hiOut=S?S.cites.map(x=>`<path d="${curve(S.i,x.j)}" class="ra-gl out"><title>${_e(S.title)} → ${_e(d.nodes[x.j].title)}</title></path>`).join(''):'';
   const dots=d.ring.map(n=>{ const p=pos[n.i], r=2.6+Math.sqrt(n.in)*1.5, on=S&&n.i===S.i, dim=S&&!nb.has(n.i);
-    return `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r.toFixed(1)}" fill="${RA_CAT_COLOR[n.category]||'#8a93a3'}" class="ra-gn${on?' on':''}${dim?' dim':''}" tabindex="0" role="button" aria-label="${_e(n.title)} — 인용받음 ${n.in}, 인용함 ${n.out}" onclick="raGraphSel('${_a(n.slug)}')" onkeydown="if(event.key==='Enter')raGraphSel('${_a(n.slug)}')"><title>${_e(n.title)} (${_e(n.category)}) — 인용받음 ${n.in} · 인용함 ${n.out}</title></circle>`; }).join('');
+    return `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r.toFixed(1)}" fill="${RA_CAT_COLOR[n.category]||'#8a93a3'}" class="ra-gn${on?' on':''}${dim?' dim':''}" tabindex="0" role="button" aria-label="${_e(n.title)} — 인용받음 ${n.in}, 인용함 ${n.out}" onclick="raGraphSel('${_a(n.slug)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();raGraphSel('${_a(n.slug)}')}"><title>${_e(n.title)} (${_e(n.category)}) — 인용받음 ${n.in} · 인용함 ${n.out}</title></circle>`; }).join('');
   // 이름표: 많이 인용되는 내규와 선택한 내규·이웃만(겹침 방지)
   const lab=d.ring.filter(n=>(S&&nb.has(n.i)&&(n.i===S.i||nb.size<=14))||(!S||!nb.has(n.i))&&n.in>=8).map(n=>{ const p=pos[n.i], right=Math.cos(p.a)>=0, lx=C+(R+12)*Math.cos(p.a), ly=C+(R+12)*Math.sin(p.a);
     const deg=p.a*180/Math.PI+(right?0:180); const t=n.title.length>14?n.title.slice(0,13)+'…':n.title;

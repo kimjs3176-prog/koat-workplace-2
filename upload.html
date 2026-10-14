@@ -15,8 +15,8 @@
   --done-bg:#eafaf3; --done-tx:#158060;
 }
 body.dark{
-  --bg:#161a1f; --sf:#1e232a; --tx:#e8ecf1; --mu:#9aa5b4; --ht:#6b7684;
-  --bd:#2c333c; --gl:#14312a;
+  --bg:#161a1f; --sf:#1e232a; --tx:#e8ecf1; --mu:#9aa5b4; --ht:#8a94a3;
+  --bd:#2c333c; --gl:#14312a; --gd:#5fd3a2;
   --warn-bg:#2a2310; --warn-tx:#fbbf24; --warn-bd:#78350f;
   --err-bg:#2a1215; --err-tx:#fca5a5; --err-bd:#7f1d1d;
   --done-bg:#14312a; --done-tx:#6ee7b7;
@@ -274,7 +274,7 @@ body.dark .result.ok{border-color:#065f46;}
     </div>
     <div class="hd-actions">
       <a class="tbtn" href="/">&#x2190; 에이전트로</a>
-      <button class="tbtn" id="darkBtn" onclick="toggleDark()">&#x1F319;</button>
+      <button class="tbtn" id="darkBtn" onclick="toggleDark()" aria-label="다크 모드 켜기/끄기" title="다크 모드">&#x1F319;</button>
     </div>
   </div>
 
@@ -376,7 +376,7 @@ body.dark .result.ok{border-color:#065f46;}
         <table class="queue-table">
           <thead>
             <tr>
-              <th style="width:30px;"><input type="checkbox" class="q-check" id="qCheckAll" onchange="toggleQueueAll(this.checked)"></th>
+              <th style="width:30px;"><input type="checkbox" class="q-check" id="qCheckAll" aria-label="대기 목록 모두 선택" onchange="toggleQueueAll(this.checked)"></th>
               <th>파일</th>
               <th style="min-width:140px;">규정명</th>
               <th style="min-width:100px;">개정 구분</th>
@@ -417,11 +417,11 @@ body.dark .result.ok{border-color:#065f46;}
       <p class="card-d">이 화면에서 올린 규정만 표시됩니다. 되돌리면 등록이 해제되고 파일도 삭제됩니다.</p>
 
       <div class="filter-bar">
-        <select id="mgmtCatFilter" onchange="renderManagement()">
+        <select id="mgmtCatFilter" aria-label="구분으로 거르기" onchange="renderManagement()">
           <option value="">전체 구분</option>
         </select>
         <input type="text" class="filter-search" id="mgmtSearch" placeholder="규정명 검색..." oninput="renderManagement()">
-        <select id="mgmtSort" onchange="renderManagement()">
+        <select id="mgmtSort" aria-label="정렬 순서" onchange="renderManagement()">
           <option value="date-desc">최신 업로드 순</option>
           <option value="date-asc">오래된 순</option>
           <option value="name-asc">이름 가나다순</option>
@@ -433,7 +433,7 @@ body.dark .result.ok{border-color:#065f46;}
         <table class="mgmt-table">
           <thead>
             <tr>
-              <th style="width:30px;"><input type="checkbox" class="q-check" id="mgmtCheckAll" onchange="toggleMgmtAll(this.checked)"></th>
+              <th style="width:30px;"><input type="checkbox" class="q-check" id="mgmtCheckAll" aria-label="등록 목록 모두 선택" onchange="toggleMgmtAll(this.checked)"></th>
               <th>구분</th>
               <th>규정명</th>
               <th>개정 구분</th>
@@ -458,7 +458,7 @@ body.dark .result.ok{border-color:#065f46;}
 
   <!-- Confirm dialog overlay -->
   <div class="overlay" id="confirmOverlay">
-    <div class="dialog" id="confirmDialog"></div>
+    <div class="dialog" id="confirmDialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmT"></div>
   </div>
 
   <div class="foot" id="foot">규정 제·개정 에이전트 &middot; 내규 원문 등록</div>
@@ -482,13 +482,14 @@ function $(id){return document.getElementById(id);}
 function toggleDark(){
   var dark=!document.body.classList.contains('dark');
   document.body.classList.toggle('dark',dark);
-  lsSet('dark',dark?'1':'0');
+  lsSet('darkMode',dark?'1':'0');                 /* 본 화면과 같은 설정을 쓴다 */
   $('darkBtn').textContent=dark?'\u2600':'\uD83C\uDF19';
 }
-if(lsGet('dark')==='1'){
-  document.body.classList.add('dark');
-  $('darkBtn').textContent='\u2600';
-}
+(function(){
+  var v=lsGet('darkMode'); if(v==null&&lsGet('dark')!=null) v=lsGet('dark');   /* 옛 설정 이어받기 */
+  var dark=v==='1'||(v==null&&window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches);
+  if(dark){ document.body.classList.add('dark'); $('darkBtn').textContent='\u2600'; }
+})();
 
 /* ── tabs ── */
 function switchTab(name){
@@ -724,7 +725,7 @@ function renderQueue(){
     var statusCls=q.status;
     var statusLabel={pending:'대기',uploading:'업로드 중...',done:'완료',error:'실패'}[q.status]||q.status;
     return '<tr data-qi="'+i+'">'
-      +'<td data-label=""><input type="checkbox" class="q-check" '+(q.checked?'checked':'')+' onchange="toggleQueueItem('+i+',this.checked)"></td>'
+      +'<td data-label=""><input type="checkbox" class="q-check" aria-label="'+esc(q.title||q.file&&q.file.name||'')+' 선택" '+(q.checked?'checked':'')+' onchange="toggleQueueItem('+i+',this.checked)"></td>'
       +'<td data-label="파일"><div class="q-fname" title="'+esc(q.file.name)+'">'+esc(q.file.name)+'</div>'
       +'<div class="q-size">'+fmtSize(q.file.size)+'</div>'
       +(existing?'<div class="q-replace">\u2714 개정판으로 교체 (현재: '+esc(existing.revision||'정보 없음')+')</div>':'')
@@ -909,7 +910,7 @@ function renderManagement(){
     var slugEnc=encodeURIComponent(u.slug);
     var checked=_mgmtSelected.has(u.slug);
     return '<tr data-slug="'+esc(u.slug)+'">'
-      +'<td data-label=""><input type="checkbox" class="q-check" '+(checked?'checked':'')+' onchange="toggleMgmtItem(\''+jsArg(u.slug)+'\',this.checked)"></td>'
+      +'<td data-label=""><input type="checkbox" class="q-check" aria-label="'+esc(u.title)+' 선택" '+(checked?'checked':'')+' onchange="toggleMgmtItem(\''+jsArg(u.slug)+'\',this.checked)"></td>'
       +'<td data-label="구분"><span class="mgmt-cat">'+esc(u.category||'기타')+'</span></td>'
       +'<td data-label="규정명"><div class="mgmt-title">'+esc(u.title)+'</div>'
       +(u.searchable?'':'<span class="no-search">본문 검색 불가</span>')
@@ -990,7 +991,7 @@ async function batchRevert(){
 
   /* show confirm dialog */
   var dlg=$('confirmDialog');
-  dlg.innerHTML='<h3>선택한 '+slugs.length+'건을 되돌리시겠습니까?</h3>'
+  dlg.innerHTML='<h3 id="confirmT">선택한 '+slugs.length+'건을 되돌리시겠습니까?</h3>'
     +'<p>이전 개정본이 있으면 복원하고, 신규 등록이었다면 파일을 삭제합니다.</p>'
     +'<div class="d-list">'+items.map(function(t){return '<div class="d-list-item">'+esc(t)+'</div>';}).join('')+'</div>'
     +'<div id="batchRevertProgress" style="display:none;margin-bottom:12px;">'
@@ -1000,12 +1001,27 @@ async function batchRevert(){
     +'<button class="btn" id="batchRevertCancel" onclick="closeDialog()">취소</button>'
     +'<button class="btn danger" id="batchRevertConfirm" onclick="doBatchRevert()">되돌리기</button>'
     +'</div>';
+  _dlgRet=document.activeElement;
   $('confirmOverlay').classList.add('show');
+  setTimeout(function(){ var c=$('batchRevertCancel'); if(c) c.focus(); },30);   // 되돌리기는 위험한 동작이라 '취소'에 초점
 }
 
+var _dlgRet=null;
 function closeDialog(){
+  if(!$('confirmOverlay').classList.contains('show')) return;
   $('confirmOverlay').classList.remove('show');
+  if(_dlgRet&&document.contains(_dlgRet)&&_dlgRet.focus) _dlgRet.focus(); _dlgRet=null;
 }
+document.addEventListener('keydown',function(e){
+  var ov=$('confirmOverlay'); if(!ov||!ov.classList.contains('show')) return;
+  if(e.key==='Escape'){ var c=$('batchRevertCancel'); if(!c||!c.disabled){ e.preventDefault(); closeDialog(); } return; }
+  if(e.key!=='Tab') return;
+  var f=Array.prototype.filter.call(ov.querySelectorAll('button,a[href],input'),function(x){return !x.disabled&&x.offsetParent!==null;});
+  if(!f.length) return; var first=f[0], last=f[f.length-1];
+  if(!ov.contains(document.activeElement)){ e.preventDefault(); first.focus(); }
+  else if(e.shiftKey&&document.activeElement===first){ e.preventDefault(); last.focus(); }
+  else if(!e.shiftKey&&document.activeElement===last){ e.preventDefault(); first.focus(); }
+});
 
 async function doBatchRevert(){
   var slugs=Array.from(_mgmtSelected);

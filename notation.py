@@ -75,7 +75,7 @@ def _f(out, line, rule, level, match, message, suggest=""):
 _DATE_RE = re.compile(r"(?<![\d.])((?:19|20)\d{2})\s*([./-])\s*(\d{1,2})\s*\2\s*(\d{1,2})(\.?)(?![\d])")
 _TILDE_RE = re.compile(r"\s+[~∼〜～]\s*|\s*[~∼〜～]\s+|[~〜～]")
 _TIME_RE = re.compile(r"(?<![\d:])(\d{1,2}):(\d{2})(?![\d:])")
-_MONEY_RE = re.compile(r"(?<![\d,.])(\d{4,})\s*원")
+_MONEY_RE = re.compile(r"(?<![\d,.])(금\s*)?(\d{4,16})\s*원")      # 16자리(경 단위)까지만 읽는다
 _MONEY_COMMA_RE = re.compile(r"(?<![\d,.])(금\s*)?(\d{1,3}(?:,\d{3})+)\s*원(?!\s*\(\s*금)")
 _COLON_RE = re.compile(r"([가-힣A-Za-z)」])(\s+):|([가-힣A-Za-z)」]):(?=[^\s/])")
 _DASH_RE = re.compile(r"[—–―]")
@@ -95,6 +95,8 @@ def check(text: str, kind: str = "doc") -> list:
             y, sep, mo, d, dot = m.groups()
             if not (1 <= int(mo) <= 12 and 1 <= int(d) <= 31):
                 continue
+            if re.match(r"\s*호", ln[m.end():]) or re.search(r"(?:버전|ver\.?|v)\s*$", ln[:m.start()], re.I):
+                continue                                   # 문서번호(2024-12-1호)·버전 번호는 날짜가 아니다
             good = _fmt_date(y, mo, d)
             raw = m.group(0)
             if sep != ".":
@@ -109,8 +111,8 @@ def check(text: str, kind: str = "doc") -> list:
         for m in _TILDE_RE.finditer(ln):
             raw = m.group(0)
             msg = "기간을 나타내는 물결표(∼)는 앞뒤를 붙여 씁니다." if raw.strip() in ("∼",) else "기간은 물결표 ‘∼’를 붙여 씁니다."
-            a_ = re.search(r"\S{1,12}$", ln[:m.start()])
-            b_ = re.match(r"\S{1,12}", ln[m.end():])
+            a_ = re.search(r"[^\s:：,，]{1,12}$", ln[:m.start()])   # 쌍점·쉼표는 범위에 넣지 않는다(“: ~20”의 띄어쓰기 보존)
+            b_ = re.match(r"[^\s:：,，]{1,12}", ln[m.end():])
             if a_ or b_:                               # 표기와 제안을 같은 범위로(“1일 ~ 12일” → “1일∼12일”)
                 span = (a_.group(0) if a_ else "") + raw + (b_.group(0) if b_ else "")
                 sug = (a_.group(0) if a_ else "") + "∼" + (b_.group(0) if b_ else "")
@@ -126,11 +128,14 @@ def check(text: str, kind: str = "doc") -> list:
             if ap and h <= 12 and mi < 60:                  # “오후 2:00” → 14:00
                 h24 = (h % 12) + (12 if ap.group(1) == "오후" else 0)
                 _f(out, n, "TIME", "warn", ap.group(0) + m.group(0), "시각은 오전·오후 없이 24시각제로 씁니다.", f"{h24:02d}:{mi:02d}")
-            elif h <= 24 and mi < 60 and len(m.group(1)) == 1:
+            elif (h <= 24 and mi < 60 and len(m.group(1)) == 1
+                  and not re.search(r"(?:비율|비|률|대)\s*$", ln[:m.start()])
+                  and (re.search(r"(?:시각|시간|일시|부터|까지|[~∼]|\d\.\s*)\s*[:：]?\s*$", ln[:m.start()])
+                       or re.match(r"\s*(?:부터|까지|[~∼-])", ln[m.end():]))):   # 경쟁률 1:10 같은 비율은 제외
                 _f(out, n, "TIME", "warn", m.group(0), "시각은 24시각제로 시·분을 두 자리로 씁니다.", f"{h:02d}:{mi:02d}")
         # 금액: 쉼표·한글 병기
-        for m in _MONEY_RE.finditer(ln):
-            v = int(m.group(1))
+        for m in _MONEY_RE.finditer(ln):            # 앞의 “금 ”까지 잡아야 고쳐 쓴 글이 “금 금…”이 되지 않는다
+            v = int(m.group(2))
             _f(out, n, "MONEY", "warn", m.group(0), "금액은 세 자리마다 쉼표를 찍고 한글을 함께 씁니다.", f"금{v:,}원(금{hangul_amount(v)}원)")
         for m in re.finditer(r"금\s+(\d{1,3}(?:,\d{3})+)\s*원\s*\(\s*금\s*([가-힣]+)\s*원?\s*\)|금(\d{1,3}(?:,\d{3})+)원\s+\(\s*금([가-힣]+)원\s*\)", ln):
             v = int((m.group(1) or m.group(3)).replace(",", ""))
