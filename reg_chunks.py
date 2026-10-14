@@ -156,7 +156,12 @@ def iter_chunks(slugs=None, max_chars: int = 1800):
                 text = html_to_text(f.read())
         except Exception:
             continue
-        for a in split_articles(text, title):
+        arts = split_articles(text, title)
+        tp = os.path.join(REG_DIR, slug, "text.txt")
+        if not arts and os.path.exists(tp):          # PDF 등 열람 화면이 안내문뿐이면 뽑아 둔 본문(text.txt)으로
+            with open(tp, encoding="utf-8", errors="replace") as f:
+                arts = split_articles(f.read(), title)
+        for a in arts:
             head = f"{title} 제{a['no']}조"
             if a["art_title"]:
                 head += f"({a['art_title']})"

@@ -339,3 +339,31 @@ test('raBenchSame: 같은 조 제목 판정', () => {
   assert.ok(!c.raBenchSame('목적', '목적외사용금지'));
   assert.ok(!c.raBenchSame('', '목적'));
 });
+
+test('_raNormalize: 손상된 저장본은 구역별로 기본값을 채운다', () => {
+  const c = load();
+  const n = c._raNormalize({ enact: { title: 'X', dels: 'bad' }, amend: { slug: '감사규정', changes: null, sel: 3 }, bulk: 1, tab: 5, extra: 1 });
+  assert.equal(n.enact.title, 'X');
+  assert.ok(Array.isArray(n.enact.dels) || n.enact.dels.length === 0);
+  assert.equal(n.amend.slug, '감사규정');
+  assert.equal(n.amend.changes.length, 0);
+  assert.equal(typeof n.amend.sel, 'object');
+  assert.equal(n.bulk.old, '');
+  assert.equal(n.tab, 'agent');
+  assert.equal(n.extra, 1);
+  assert.equal(c._raNormalize(null).tab, 'agent');
+});
+
+test('raParse·raDocLaw: 조문 칸의 부칙과 별표를 살린다', () => {
+  const c = load();
+  const p = c.raParse('제1조(목적) 가.\n제2조(지급) 수당은 별표 1과 같다.\n[별표 1] 수당 지급 기준\n구분 금액');
+  assert.equal(p.articles.length, 2);
+  assert.ok(!p.articles[1].body.includes('별표 1]'));
+  assert.match(p.appendix, /^\[별표 1\]/);
+  const RA = c.__RA();
+  RA.enact.title = '수당 규칙';
+  RA.enact.draft = { text: '제1조(목적) 가.\n부    칙\n이 규칙은 2027년 1월 1일부터 시행한다.\n[별표 1] 수당 지급 기준', addenda: '' };
+  const law = c.raDocLaw(c.raDocCtx('enact'));
+  assert.match(law, /2027년 1월 1일부터 시행한다/);
+  assert.match(law, /부 {4}칙[\s\S]*\[별표 1\] 수당 지급 기준/);
+});

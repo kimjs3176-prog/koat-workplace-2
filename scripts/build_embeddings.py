@@ -67,7 +67,7 @@ def _retry_after(text: str):
 def embed_batch(texts, api_key: str, model: str, task: str = "RETRIEVAL_DOCUMENT",
                 dim: int = DEFAULT_DIM):
     """텍스트 배치 → 임베딩 벡터 목록."""
-    url = f"{API}/{model}:batchEmbedContents?key={api_key}"
+    url = f"{API}/{model}:batchEmbedContents"
     req = {"model": f"models/{model}", "taskType": task}
     if dim:
         req["outputDimensionality"] = dim
@@ -75,7 +75,7 @@ def embed_batch(texts, api_key: str, model: str, task: str = "RETRIEVAL_DOCUMENT
     last = None
     for attempt in range(RETRIES):
         try:
-            r = requests.post(url, json=body, timeout=120)
+            r = requests.post(url, json=body, timeout=120, headers={"x-goog-api-key": api_key})
             if r.status_code == 200:
                 return [e["values"] for e in r.json()["embeddings"]]
             last = f"{r.status_code} {r.text[:400]}"
@@ -102,6 +102,16 @@ def quantize(vec):
     """단위벡터 → int8. 복원 시 scale 을 곱해 되돌린다."""
     norm = math.sqrt(sum(v * v for v in vec)) or 1.0
     return [max(-127, min(127, int(round(v / norm * 127)))) for v in vec]
+
+
+def text_hash(text: str) -> str:
+    import hashlib
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+
+
+def is_current(c, m: dict) -> bool:
+    """저장된 벡터가 지금 청크 본문으로 만든 것인지. 옛 인덱스(h 없음)는 앞 240자로 견준다."""
+    return m.get("h") == text_hash(c["text"]) if m.get("h") else (m.get("preview") or "") == c["text"][:240]
 
 
 def chunk_key(c, seen) -> str:
@@ -148,7 +158,8 @@ def save(chunks, keys, have, model: str, dim: int, total: int):
         vec, m = got
         metas.append({"k": k, "slug": c["slug"], "title": c["title"], "no": c["no"],
                       "art_title": c["art_title"],
-                      "preview": m.get("preview") or c["text"][:240]})
+                      "preview": m.get("preview") or c["text"][:240],
+                      **({"h": m["h"]} if m.get("h") else {})})
         blobs.append(vec)
     with open(BIN_PATH, "wb") as f:
         for v in blobs:
@@ -199,6 +210,11 @@ def main():
     if args.slug:                                   # 지정 규정은 강제로 다시 만든다
         drop = set(args.slug)
         have = {k: v for k, v in have.items() if k.split("|", 1)[0] not in drop}
+    stale = [k for c, k in zip(chunks, keys) if k in have and not is_current(c, have[k][1])]
+    for k in stale:                                 # 본문이 바뀐 조문(개정판 업로드)은 다시 만든다
+        del have[k]
+    if stale:
+        print(f"본문이 바뀐 청크 {len(stale):,}개는 다시 만듭니다.")
     if have:
         print(f"기존 벡터 {len(have):,}개 재사용 — 남은 {len(chunks) - len(have):,}개 생성")
 
@@ -224,7 +240,7 @@ def main():
                 if len(v) != dim:
                     sys.exit(f"차원 불일치: {len(v)} != {dim} — 모델을 확인하세요.")
                 have[keys[j]] = (bytes((x & 0xFF) for x in quantize(v)),
-                                 {"preview": c["text"][:240]})
+                                 {"preview": c["text"][:240], "h": text_hash(c["text"])})
             print(f"  {len(have):>5,}/{len(chunks):,} 임베딩 완료", flush=True)
             if FLUSH_EVERY and (b + 1) % FLUSH_EVERY == 0:
                 save(chunks, keys, have, args.model, dim, len(chunks))

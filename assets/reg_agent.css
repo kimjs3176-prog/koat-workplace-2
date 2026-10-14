@@ -772,3 +772,4 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
   .ra-wiz li:not(.on)>button{padding:6px;justify-content:center;border-color:transparent;background:transparent;width:auto;}
   .ra-wiz li.on .ra-wiz-t{display:block;}
 }
+.ra-stale[hidden]{display:none;}

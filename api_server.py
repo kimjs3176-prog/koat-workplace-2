@@ -741,13 +741,13 @@ def get_law_articles():
         return jsonify({"error": "법제처 서버 연결 시간 초과 (5초). 잠시 후 다시 시도해주세요."}), 504
     except req_lib.exceptions.ReadTimeout:
         return jsonify({"error": "법제처 서버 응답 시간 초과. 법령 데이터가 클 수 있습니다. 잠시 후 다시 시도해주세요."}), 504
-    except req_lib.exceptions.ConnectionError as e:
-        return jsonify({"error": f"법제처 서버에 연결할 수 없습니다: {e}"}), 502
+    except req_lib.exceptions.ConnectionError:
+        return jsonify({"error": "법제처 서버에 연결할 수 없습니다. 잠시 후 다시 시도해주세요."}), 502
     except req_lib.exceptions.Timeout:
         return jsonify({"error": "법제처 API 응답 시간 초과"}), 504
     except Exception as e:
         import traceback; traceback.print_exc()
-        return jsonify({"error": f"오류: {e}"}), 500
+        return jsonify({"error": f"법령 조회 중 오류가 났습니다({type(e).__name__})."}), 500
 
 
 
@@ -812,7 +812,7 @@ def _gemini_latest_model(api_key: str) -> str:
     try:
         r = _SESSION.get(
             "https://generativelanguage.googleapis.com/v1beta/models",
-            params={"key": api_key, "pageSize": 200}, timeout=8)
+            params={"pageSize": 200}, headers={"x-goog-api-key": api_key}, timeout=8)
         if r.status_code != 200:
             print(f"[ai-model] ListModels 실패({r.status_code}) → 폴백 {fallback}")
             return fallback
@@ -851,7 +851,7 @@ def _gemini_latest_model(api_key: str) -> str:
             print(f"[ai-model] Gemini 최신 모델 선택: {best}")
             return best
     except Exception as e:
-        print(f"[ai-model] 조회 오류: {e}")
+        print(f"[ai-model] 조회 오류: {type(e).__name__}")
     return fallback
 
 
@@ -910,7 +910,7 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
     try:
         if provider == "gemini":
             url = (f"https://generativelanguage.googleapis.com/v1beta/models"
-                   f"/{mdl}:generateContent?key={api_key}")
+                   f"/{mdl}:generateContent")      # 키는 헤더로(URL 에 두면 오류 문구·로그에 새어 나간다)
 
             def call(limit, think):
                 cfg = {"maxOutputTokens": limit, "temperature": temperature}
@@ -919,7 +919,7 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
                 if think:
                     cfg["thinkingConfig"] = think
                 return _ai_post_retry(lambda: req_lib.post(
-                    url, timeout=60, headers={"Content-Type": "application/json"},
+                    url, timeout=60, headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
                     json={"contents": [{"parts": [{"text": f"{system}\n\n{user}"}]}],
                           "generationConfig": cfg}))
 
@@ -983,8 +983,13 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
             if r.status_code != 200:
                 return "", f"Ollama 오류({r.status_code})"
             return (r.json().get("message") or {}).get("content", ""), ""
-    except Exception as e:
-        return "", f"AI 호출 오류: {e}"
+    except req_lib.exceptions.Timeout:
+        return "", "AI 서버 응답이 늦습니다. 잠시 후 다시 시도하세요."
+    except req_lib.exceptions.RequestException:
+        return "", "AI 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요."
+    except Exception as e:                       # 응답 형식 오류 등 — 키·URL 이 섞이지 않게 종류만 알린다
+        print(f"[ai] 호출 오류: {type(e).__name__}")
+        return "", f"AI 응답을 처리하지 못했습니다({type(e).__name__})."
     return "", f"지원하지 않는 프로바이더: {provider}"
 
 
@@ -1116,19 +1121,19 @@ def _embed_query(text: str, api_key: str, model: str, dim: int = 0):
     """
     try:
         url = (f"https://generativelanguage.googleapis.com/v1beta/models"
-               f"/{model}:embedContent?key={api_key}")
+               f"/{model}:embedContent")
         body = {"model": f"models/{model}",
                 "content": {"parts": [{"text": text}]},
                 "taskType": "RETRIEVAL_QUERY"}
         if dim:
             body["outputDimensionality"] = dim
-        r = _SESSION.post(url, timeout=15, json=body)
+        r = _SESSION.post(url, timeout=15, json=body, headers={"x-goog-api-key": api_key})
         if r.status_code != 200:
             print(f"[vec] 질의 임베딩 실패({r.status_code})")
             return None
         return r.json()["embedding"]["values"]
     except Exception as e:
-        print(f"[vec] 질의 임베딩 오류: {e}")
+        print(f"[vec] 질의 임베딩 오류: {type(e).__name__}")
         return None
 
 

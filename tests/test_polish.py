@@ -17,7 +17,7 @@ def test_replace_term_neutral_particles(ra):
 def test_bulk_sentence_records_particle_change(ra):
     s = ra._bulk_sentence([("제3조", ("부원장", "총괄이사")), ("제4조", ("부원장은", "총괄이사는")),
                            ("제5조", ("부원장", "총괄이사"))], "부원장", "총괄이사")
-    assert s == "제3조, 제5조 중 “부원장”을 각각 “총괄이사”로 하고, 제4조 중 “부원장은”을 “총괄이사는”으로 한다."
+    assert s == "제3조 및 제5조 중 “부원장”을 각각 “총괄이사”로 하고, 제4조 중 “부원장은”을 “총괄이사는”으로 한다."
 
 
 def test_bulk_named_term_cap(client, ra):
