@@ -106,3 +106,11 @@ def test_health_issues_have_detail(client):
     assert all(i.get("term") and i.get("new") for i in stale)
     regname = [i for i in iss if i["code"] == "regname" and i.get("new")]
     assert all(i["term"] in i["snip"] for i in regname)
+
+
+def test_regs_catalog_and_search(client):
+    regs = client.get("/api/regagent/catalog").get_json()["regs"]
+    assert regs and all("rev_date" in r and "live" in r for r in regs)
+    d = client.get("/api/regagent/regs/search?q=출장 비").get_json()   # 띄어쓰기 무시
+    assert d["regs"] and all(x["hits"] > 0 and x["first"]["no"] for x in d["regs"])
+    assert client.get("/api/regagent/regs/search?q=x").get_json()["regs"] == []

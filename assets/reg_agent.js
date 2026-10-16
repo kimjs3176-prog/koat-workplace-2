@@ -19,6 +19,7 @@ const RA_IC={
   graph:'<circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.5 6h9M6.3 8.2l4.4 7.6M17.7 8.2l-4.4 7.6"/>',
   spark:'<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/>',
   search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  regs:'<path d="M4 5h2M4 12h2M4 19h2"/><path d="M9 5h11M9 12h11M9 19h11"/>',
   doc:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
   info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
   alert:'<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/>',
@@ -31,6 +32,7 @@ function raIc(k,cls){ return `<svg class="ic${cls?' '+cls:''}" viewBox="0 0 24 2
 const RA_TABS=[
   ['agent','에이전트','한 문장으로 지시하면 끝까지 수행'],
   ['health','건강검진','기관 내규 진단·정비 우선순위'],
+  ['regs','내규 목록','등록된 내규 찾아보기·바로 작업'],
   ['enact','제정','새 내규 초안 · 심의 사전검토 · 문서 세트'],
   ['amend','개정','수정안 · 신구조문대비표 · 인용 정정'],
   ['bulk','일괄 정비','바뀐 용어·명칭을 모든 내규에 반영'],
@@ -42,6 +44,7 @@ const RA_TABS=[
 // 페이지 머리: 제목 + 작업 흐름(아이콘 칩). 설명 문장 대신 흐름으로 보여 준다
 const RA_PAGE={
   agent:['에이전트에게 맡기기',[['spark','한 문장 지시'],['search','대상 찾기'],['amend','초안'],['bulk','인용 영향'],['check','점검·심의'],['doc','문서 세트']]],
+  regs:['내규 목록',[['search','찾기'],['doc','원문·조문'],['amend','개정'],['check','점검']]],
   health:['규정 건강검진',[['search','전체 진단'],['health','점수·등급'],['upper','상위법 최신성'],['amend','정비 착수']]],
   enact:['새 내규 제정',[['info','기본 정보'],['upper','위임 조항'],['search','유사 규정'],['spark','조문 초안'],['check','점검·심의'],['doc','문서 세트']]],
   amend:['내규 개정',[['search','조문 선택'],['spark','수정안'],['doc','대비표'],['bulk','인용 영향'],['check','점검·심의'],['doc','문서 세트']]],
@@ -69,6 +72,7 @@ function _raBlank(){
     amend:{src:'reg',pasteText:'',pasted:false,moves:'',review:null,slug:'',title:'',sel:{},intent:'',effective:'',refText:'',changes:[],purpose:'',main:[],addenda:'',notes:[],impact:null,lint:null,docTab:'cmp',filter:'',abbr:true,lawStyle:'fine',fullRev:false},
     upper:{law:'',arts:'',old:'',neu:'',res:null},
     check:{res:null,reg:'',one:null},
+    regs:{q:'',cat:'',sort:'name',open:''},
     graph:{sel:''},
     proc:{ans:{},chk:{},plan:{}},
     ui:{side:false}};
@@ -358,6 +362,7 @@ function raRender(){
   else if(t==='bulk') b.innerHTML=raBulkView();
   else if(t==='agent') b.innerHTML=raAgentView();
   else if(t==='health') b.innerHTML=raHealthView();
+  else if(t==='regs') b.innerHTML=raRegsView();
   else if(t==='upper') b.innerHTML=raUpperView();
   else if(t==='check') b.innerHTML=raCheckView();
   else if(t==='graph') b.innerHTML=raGraphView();
@@ -1659,6 +1664,72 @@ function raHealthTbody(rows){
     `<td><span class="ra-gr g-${RA_GRADE[r.grade][1]}">${r.grade}</span></td><td class="num"><span class="ra-sc">${raMini(r.score,RA_GRADE[r.grade][1])}${r.score}</span></td><td>${_e(r.revision)}</td><td>${r.reasons.length?raHealthChips(r):'<span class="ra-mu">이상 없음</span>'}</td></tr>`+
     ((RA.health.open||{})[r.slug]?`<tr class="ra-hdet-tr"><td colspan="5"><div class="ra-hdet">${raHealthDetail(r)}</div></td></tr>`:'')).join('');
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// 내규 목록 — 등록된 내규를 구분별로 찾아보고 원문·조문 보기·개정·점검으로 바로 간다
+// ══════════════════════════════════════════════════════════════════════════
+let _raRegHits=null, _raRegArts={};
+function raRegsView(){
+  if(!_raCatalog){ raCatalog().then(()=>{ if(RA.tab==='regs') raRerender('regs'); }); return `<div class="ra-wide">${raSpin(`${RA_ORG.reg_word} 목록을 불러오는 중...`)}</div>`; }
+  const S=RA.regs=Object.assign({q:'',cat:'',sort:'name',open:''},RA.regs||{});
+  if(!_raHealth&&!_raBusy.health&&!raRegsView._h){ raRegsView._h=1;            // 건강 등급은 뒤에서 조용히 불러와 덧붙인다
+    raPost('/api/regagent/health',{law_info:(RA.health||{}).law||{}}).then(d=>{ if(d&&d.success&&!_raHealth){ _raHealth=d; if(RA.tab==='regs') raRegsRedraw(); } }); }
+  const cats={}; _raCatalog.forEach(r=>{ const c=RA_CAT_ORDER.includes(r.category)?r.category:'기타'; cats[c]=(cats[c]||0)+1; });
+  const catBtn=(c,n)=>`<button class="ra-chip btn${S.cat===c?' on':''}" aria-pressed="${S.cat===c}" onclick="raRegsSet('cat','${_a(c)}')">${_e(c||'전체')} <b>${n}</b></button>`;
+  const bar=`<div class="ra-regs-bar"><input class="ra-in" id="raRegsQ" type="search" aria-label="${_e(RA_ORG.reg_word)} 찾기" placeholder="${_e(RA_ORG.reg_word)}명 또는 조문 낱말 (예: 출장비, 겸직)" value="${_e(S.q)}" oninput="raRegsQ(this.value)">`+
+    `<select class="ra-in sm" aria-label="정렬" onchange="raRegsSet('sort',this.value)">${[['name','이름순'],['new','최근 개정순'],['old','오래된 개정순'],['size','조문 많은 순']].map(([v,l])=>`<option value="${v}" ${S.sort===v?'selected':''}>${l}</option>`).join('')}</select>`+
+    `<a class="svc-btn ghost sm" href="/upload" target="_blank" rel="noopener">${raIc('enact')}${_e(RA_ORG.reg_word)} 등록</a></div>`+
+    `<div class="ra-regs-cats">${catBtn('',_raCatalog.length)}${[...RA_CAT_ORDER,'기타'].filter(c=>cats[c]).map(c=>catBtn(c,cats[c])).join('')}</div>`;
+  return `<div class="ra-wide">${raSec(1,`등록된 ${_e(RA_ORG.reg_word)}`,raTip('이름으로 바로 거르고, 두 글자 이상이면 조 제목·본문에 그 낱말이 나오는 내규도 함께 찾습니다.'),bar+`<div id="raRegsList">${raRegsListView()}</div>`)}</div>`;
+}
+function raRegsListView(){
+  const S=RA.regs, q=S.q.replace(/\s+/g,''); const H=_raHealth&&_raHealth.rows?Object.fromEntries(_raHealth.rows.map(r=>[r.slug,r])):{};
+  const hits=_raRegHits&&_raRegHits.q===S.q?Object.fromEntries(_raRegHits.regs.map(x=>[x.slug,x])):{};
+  let list=_raCatalog.filter(r=>(!S.cat||(RA_CAT_ORDER.includes(r.category)?r.category:'기타')===S.cat)&&(!q||r.title.replace(/\s+/g,'').includes(q)||hits[r.slug]));
+  const by={name:(a,b)=>a.title.localeCompare(b.title,'ko'),new:(a,b)=>(b.rev_date||'').localeCompare(a.rev_date||''),old:(a,b)=>(a.rev_date||'9').localeCompare(b.rev_date||'9'),size:(a,b)=>b.live-a.live}[S.sort]||null;
+  list=list.slice().sort((a,b)=>{ const ta=q&&a.title.replace(/\s+/g,'').includes(q)?0:1, tb=q&&b.title.replace(/\s+/g,'').includes(q)?0:1; return ta-tb||(by?by(a,b):0); });   // 이름이 맞는 것 먼저
+  if(!list.length) return `<div class="ra-empty sm">${raIc('search')}${q?`“${_e(S.q)}”${raEul(S.q)} 찾지 못했습니다.`:`등록된 ${_e(RA_ORG.reg_word)}가 없습니다.`}</div>`;
+  const pend=q.length>=2&&!(_raRegHits&&_raRegHits.q===S.q)?`<span class="ra-hint">조문 내용 찾는 중…</span>`:'';
+  return `<div class="ra-meta" aria-live="polite">${list.length}건${pend}</div><ul class="ra-regs">`+list.map(r=>{ const h=H[r.slug], x=hits[r.slug], open=S.open===r.slug;
+    return `<li class="${open?'on':''}"><div class="ra-regs-r"><span class="ra-regs-cat" style="--c:${RA_CAT_COLOR[r.category]||'#8a93a3'}">${_e(r.category||'기타')}</span>`+
+      `<div class="ra-regs-t"><a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener"><b>${_e(r.title)}</b></a>`+
+      `<div class="ra-sub">${_e(r.revision||'')} · ${r.live}개 조${h?` · <span class="ra-gr g-${RA_GRADE[h.grade][1]}" title="건강 점수 ${h.score}점">${h.grade}</span>`:''}</div>`+
+      (x&&x.first?`<div class="ra-snip"><b>${_e(raLbl(x.first.no))}${x.first.title?`(${_e(x.first.title)})`:''}</b> ${raMark(x.first.snip,S.q)} <span class="ra-hint">${x.hits}곳</span></div>`:'')+`</div>`+
+      `<div class="ra-regs-a"><button class="ra-link" aria-expanded="${open}" onclick="raRegsOpen('${_a(r.slug)}')">조문 ${open?'접기':'보기'}</button>`+
+      `<button class="svc-btn sm" onclick="raRegsAmendArt('${_a(r.slug)}','${_a(r.title)}','')">${raIc('amend')}개정</button>`+
+      `<button class="ra-link" onclick="raHealthCheckOne('${_a(r.title)}')">점검</button>`+
+      `<button class="ra-link" onclick="raRegsGraph('${_a(r.slug)}')">인용 관계</button></div></div>`+
+      (open?`<div class="ra-regs-arts" id="raRegArts">${raRegArtsView(r)}</div>`:'')+`</li>`; }).join('')+`</ul>`;
+}
+function raMark(t,q){ const s=_e(t||''); const k=_e(String(q||'').trim()); return k.length>=2?s.split(k).join(`<mark>${k}</mark>`):s; }
+function raRegArtsView(r){
+  const d=_raRegArts[r.slug]; if(!d){ raRegLoadArts(r.slug); return raSpin('조문 불러오는 중...'); }
+  if(!d.success) return raErr(d.error||'조문을 불러오지 못했습니다.');
+  let chap=''; const out=[];
+  d.articles.forEach(a=>{ if(a.chapter&&a.chapter!==chap){ chap=a.chapter; out.push(`<li class="ra-regs-ch">${_e(chap)}</li>`); }
+    out.push(`<li${a.deleted?' class="del"':''}><button class="ra-link" ${a.deleted?'disabled':''} title="이 조문을 골라 개정 작업 시작" onclick="raRegsAmendArt('${_a(r.slug)}','${_a(r.title)}','${_a(a.no)}')">${_e(raLbl(a.no))}</button> ${_e(a.deleted?'삭제':a.title||'')}</li>`); });
+  return `<ul class="ra-regs-al">${out.join('')}</ul>`+(d.has_appendix?`<div class="ra-meta">별표·서식이 있습니다 — 원문에서 확인하세요.</div>`:'')+
+    `<div class="ra-hint">조 번호를 누르면 그 조문을 고른 채 개정 작업을 시작합니다.</div>`;
+}
+async function raRegLoadArts(slug){
+  if(_raRegArts[slug]===0) return; _raRegArts[slug]=0;
+  const d=await raGet('/api/regagent/articles?slug='+encodeURIComponent(slug)); _raRegArts[slug]=d;
+  const el=document.getElementById('raRegArts'); const r=(_raCatalog||[]).find(x=>x.slug===slug); if(el&&r&&RA.regs.open===slug) el.innerHTML=raRegArtsView(r);
+}
+function raRegsSet(k,v){ RA.regs[k]=(k==='cat'&&RA.regs.cat===v)?'':v; _raSave(); raRegsRedraw(); }
+function raRegsRedraw(){ const el=document.getElementById('raRegsList'); if(el) el.innerHTML=raRegsListView(); else raRerender('regs');
+  document.querySelectorAll('.ra-regs-cats .ra-chip').forEach(b=>{ const c=(b.getAttribute('onclick')||'').match(/'([^']*)'\)$/); const on=!!c&&c[1]===RA.regs.cat; b.classList.toggle('on',on); b.setAttribute('aria-pressed',on); }); }
+function raRegsQ(v){
+  RA.regs.q=v; _raSave(); raRegsRedraw();                          // 이름 거르기는 바로(입력란은 그대로 둔다)
+  clearTimeout(raRegsQ._t); const q=v.trim(); if(q.replace(/\s+/g,'').length<2){ _raRegHits=null; return; }
+  raRegsQ._t=setTimeout(async()=>{ const d=await raGet('/api/regagent/regs/search?q='+encodeURIComponent(q)); if(RA.regs.q.trim()!==q||!d.success) return; _raRegHits={q:RA.regs.q,regs:d.regs}; raRegsRedraw(); },300);
+}
+function raRegsOpen(slug){ RA.regs.open=RA.regs.open===slug?'':slug; _raSave(); raRegsRedraw(); }
+function raRegsAmendArt(slug,title,no){
+  const m=raAmendWorkMsg(); if(RA.amend.slug!==slug&&m&&!confirm(m)) return;
+  raAmendStart(slug,title,no?{sel:[no]}:{});
+}
+function raRegsGraph(slug){ RA.graph=RA.graph||{}; RA.graph.sel=slug; _raSave(); raTab('graph'); }
 // ── 건강검진 문제 펼쳐 보기 → 고른 문제로 개정 작업 ──
 const RA_HCODE={ref:'없는 조문 인용',dup:'조 번호 중복',order:'조 번호 순서 오류',regname:'현행 목록에 없는 내규명 인용',stale:'옛 기관명·직위'};
 function raHealthChips(r){
