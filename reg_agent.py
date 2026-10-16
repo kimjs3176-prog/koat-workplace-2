@@ -445,12 +445,21 @@ def delegation_check(title: str, arts: list) -> list:
         m = _DELEG_RE.search(a.get("body", ""))
         if not m or re.search(r"시행세칙|위임|시행", a.get("title", "")) or re.search(r"이\s*(?:규정|규칙)\s*(?:의\s*)?시행에\s*필요한", a["body"]):
             continue
-        n = a["no"].split("의")[0]
-        cited = re.search(r"(?:「\s*" + tp + r"\s*」|규정|규칙|정관)\s*제\s*" + n + r"\s*조(?!\s*의)", cbody)
+        n, _, g = a["no"].partition("의")          # 가지조(제32조의2)는 “제32조의2”로 인용해야 받은 것
+        tail = r"\s*조\s*의\s*" + g + r"(?!\d)" if g else r"\s*조(?!\s*의)"
+        cited = re.search(r"(?:「\s*" + tp + r"\s*」|규정|규칙|정관)\s*제\s*" + n + tail, cbody)
         sent = re.split(r"[.。]\s*|\n", a["body"][:m.start()])[-1]          # 위임 문장 앞부분(“장표의 기록 등에 관하여 …”)
         stop = {"관한", "관하여", "사항", "구체적인", "필요한", "세부사항", "세부", "구체적", "기준", "방법", "절차", "그밖에", "밖에"}
-        words = {_JOSA_TAIL.sub("", w) for w in re.findall(r"[가-힣]{2,}", a.get("title", "") + " " + sent)}
-        topical = any(len(w) >= 2 and w not in stop and w in ctitles for w in words)
+        stop |= {"대한", "관련", "등의", "여부"}
+        tw = {_JOSA_TAIL.sub("", w) for w in re.findall(r"[가-힣]{2,}", a.get("title", ""))} - stop
+        sw = {_JOSA_TAIL.sub("", w) for w in re.findall(r"[가-힣]{2,}", sent)} - stop
+        cts = [a2["title"] for a2 in live]
+        # 받은 것으로 보는 조 제목: 위임 조 제목 낱말 둘 이상, 세 글자 이상 낱말, 또는 두 글자 낱말이 여러 조 제목에 걸침(“장표”)
+        # — “점검” 한 낱말이 엉뚱한 조 하나에 걸린 것만으로는 받았다고 보지 않는다
+        tw = {w for w in tw if len(w) >= 2}
+        topical = any(sum(w in ct for w in tw) >= 2 for ct in cts) or any(
+            (len(w) >= 3 and any(w in ct for ct in cts)) or sum(w in ct for ct in cts) >= 2
+            for w in tw | sw if len(w) >= 2)                   # 조사를 떼고 남은 한 글자(“관”)는 보지 않는다
         out.append({"no": a["no"], "title": a.get("title", ""), "child": child["title"], "phrase": m.group(0),
                     "covered": bool(cited or topical)})
     return out
@@ -724,11 +733,12 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
         # (5) 「내규명」 확인
         for m in _QUOTED_NAME.finditer(body):
             nm = m.group(1).strip()
-            if "법" in nm or nm.endswith(("령", "조례")):
+            ours = _nk(nm) in regnames            # 「임직원 행동강령」·「소송 및 법률자문 규칙」도 우리 내규면 조문 인용을 본다
+            if not ours and ("법" in nm or nm.endswith(("령", "조례"))):
                 continue
-            if not nm.endswith(_REG_SUFFIX):
+            if not ours and not nm.endswith(_REG_SUFFIX):
                 continue
-            if _nk(nm) in regnames and _nk(nm) != _nk(title):
+            if ours and _nk(nm) != _nk(title):
                 # (5-1) 다른 내규의 조문 인용: 「여비규정」 제30조 → 그 내규에 제30조가 있는지·삭제됐는지
                 mr = re.match(r"\s*(?:\(\s*이하[^)]{0,30}\)\s*)?제\s*(\d+)\s*조(?:\s*의\s*(\d+))?", body[m.end():m.end() + 40])
                 if mr:
@@ -748,7 +758,8 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
             ownp = [t for t in [ORG["org_short"], ORG["org_name"]] + [o for o, _ in _STALE_TERMS + _STALE_WORDS] if t]
             if re.sub(r"^(?:" + "|".join(map(re.escape, ownp)) + r")\s*", "", nm) == "정관":
                 continue                  # 「농진원 정관」 등 우리 기관 정관(인용 관계와 같은 기준)
-            near = [regnames[k] for k in difflib.get_close_matches(_nk(nm), list(regnames), n=2, cutoff=0.8)]
+            near = [regnames[k] for k in difflib.get_close_matches(_nk(nm), list(regnames), n=3, cutoff=0.8)
+                    if k != _nk(title)][:2]               # 자기 자신을 “유사 내규”로 권하지 않는다
             own = any(t and t in nm for t in [ORG["org_short"], ORG["org_name"]] + [o for o, _ in _STALE_TERMS + _STALE_WORDS])
             if not near and not own:
                 continue                  # 정부 규정·지침 등 외부 규범으로 본다
@@ -757,12 +768,14 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                 + (f" (유사: {', '.join('「'+x+'」' for x in near)})" if near else ""),
                 term=nm, **({"new": near[0]} if len(near) == 1 else {"cands": near}))
         # (6) 구 명칭
+        # 법령 조문 제목 인용(“농촌진흥법 부칙<…> 제2조(실용화재단 직원의 임용등에 관한 특례)”)은 법령의 글이라 고칠 수 없다
+        sbody = re.sub(r"(?:법|령|규칙)\s*」?\s*(?:부\s*칙\s*(?:<[^>]{0,40}>)?\s*)?제\s*\d+\s*조(?:\s*의\s*\d+)?\s*\([^)]{0,60}\)", " ", body)
         for old, new in _STALE_TERMS:
-            if old in body:
+            if old in sbody:
                 add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”{_josa(old, ('이', '가'))} 있습니다.", f"“{old}” → “{new}”", term=old, new=new)
         for old, new in _STALE_WORDS:
-            if re.search(r"(?<![가-힣])" + re.escape(old) + r"(?:은|는|이|가|의|에|에서|과|와|을|를)?(?![가-힣])", body):
-                add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”{_josa(old, ('이', '가'))} 있습니다.", f"“{old}” → “{new}”", term=old, new=new)
+            if re.search(r"(?<![가-힣])" + re.escape(old) + r"(?:은|는|이|가|의|에|에서|과|와|을|를)?(?![가-힣])", sbody):
+                add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”{_josa(old, ('이', '가'))} 있습니다.", f"“{old}” → “{new}”", term=old, new=new, word=True)
         # (7) 알기 쉬운 표기
         if full:
             for pat, rep in _STYLE_RULES:
@@ -1462,7 +1475,9 @@ def ra_upper():
                     if art_key(no) in tset and m.start() > ms[0].start():
                         spec.append(f"같은 법 {art_label(no)}")
             jn = jun_keys.get((o["slug"], a["no"]))
-            if jn is not None:                     # 이 법을 준용하는 조문은 법 개정이 그대로 옮겨 온다
+            jn_hit = jn is not None and (not tset or not jn or any(   # 준용 조문이 개정 조문에 걸릴 때만
+                art_key(x + ("의" + y if y else "")) in tset for x, y in re.findall(r"제(\d+)조(?:의(\d+))?", "".join(jn))))
+            if jn_hit:                             # 이 법(의 개정 조문)을 준용하는 조문은 법 개정이 그대로 옮겨 온다
                 spec.append("준용" + (f" {', '.join(jn)}" if jn else ""))
             score = len(spec) * 10 + len(term_hits) * 4 + (2 if ms else 0)
             if tset and not spec and not term_hits:
@@ -1516,19 +1531,20 @@ def ra_lint():
     p = parse_text(text, clean=False)
     add = b.get("addenda")
     add = add if isinstance(add, str) else p["addenda"]
-    iss = lint_articles(p["articles"], add, p["appendix"], b.get("title", ""))
+    base = find_reg(b.get("base_slug", ""), "") if b.get("base_slug") else None
+    # 개정안 본문에는 별표·서식이 따라오지 않으므로 비교할 때는 원 내규의 것을 쓴다(“해결됨” 오표시 방지)
+    iss = lint_articles(p["articles"], add, p["appendix"] or (base["appendix"] if base else ""), b.get("title", ""))
     if not p["articles"]:
         iss.insert(0, {"level": "error", "code": "noart", "no": "",
                        "msg": "“제1조(목적)” 형식의 조문을 찾지 못했습니다.", "fix": ""})
     out = {"success": True, "mode": "text", "issues": iss, "articles": len(p["articles"])}
-    base = find_reg(b.get("base_slug", ""), "") if b.get("base_slug") else None
     if base:                              # 개정 전후 비교: 이번 개정으로 새로 생긴 문제·해결된 문제
         key = lambda i: (i["code"], re.sub(r"\s+", "", i["msg"]))
         old = lint_articles(base["articles"], base["addenda"], base["appendix"], base["title"])
         ok = {key(i) for i in old}
         nk_ = {key(i) for i in iss}
         for i in iss:
-            i["new"] = key(i) not in ok
+            i["is_new"] = key(i) not in ok     # (“new”는 구 명칭 문제의 바꿀 말)
         out["fixed"] = [i for i in old if key(i) not in nk_ and i["level"] != "info"][:40]
         out["base"] = base["title"]
     return jsonify(out)
@@ -2498,6 +2514,12 @@ def jun_relations(r: dict, regnames: dict = None) -> list:
             continue
         for sm in _JUN_SENT.finditer(a["body"]):
             sent = sm.group(0).strip()
+            seg = sent[:sent.rfind("준용")]
+            cut = list(re.finditer(r"(?:따라|따른|따르며|따르고|의하여|의한)(?=[\s,])", seg))
+            if cut:                                   # “「민원처리법」 제19조에 따라 …, 「X」를 준용” → 준용 대상은 마지막 절에만
+                seg = seg[cut[-1].end():]
+            if re.search(r"이\s*(?:규칙|규정|지침|세칙|요령|기준|정관)\s*(?:을|를)?\s*(?:각각\s*)?$", seg):
+                continue                              # “… 사항은 이 규칙을 준용한다” — 다른 법령을 준용하는 게 아니다
             tg, last = [], None
 
             def push(name, kind, arts):
@@ -2509,9 +2531,9 @@ def jun_relations(r: dict, regnames: dict = None) -> list:
                         return
                 tg.append({"name": name, "kind": kind, "arts": [arts] if arts else []})
             spans = []
-            for m in _QUOTED_NAME.finditer(sent):
-                nm = re.sub(r"\s+", " ", m.group(1)).strip()
-                ma = _ART_AFTER.match(sent[m.end():m.end() + 80])
+            for m in _QUOTED_NAME.finditer(seg):
+                nm = re.sub(r"법\s+률$", "법률", re.sub(r"\s+", " ", m.group(1)).strip())
+                ma = _ART_AFTER.match(seg[m.end():m.end() + 80])
                 k = _nk(nm)
                 kind = "reg" if k in regnames else "law" if _LAW_NAME_OK.search(nm) else "other"
                 if kind == "law":
@@ -2519,34 +2541,38 @@ def jun_relations(r: dict, regnames: dict = None) -> list:
                 push(regnames.get(k, nm), kind, ma.group(1) if ma else "")
                 last = (regnames.get(k, nm), kind)
                 spans.append((m.start(), m.end() + (ma.end() if ma else 0)))
-            for m in re.finditer(r"(?:동법|같은\s*법)\s*(제\s*\d+\s*조(?:\s*의\s*\d+)?)", sent):
+            for m in re.finditer(r"(?:동법|같은\s*법)\s*(제\s*\d+\s*조(?:\s*의\s*\d+)?)", seg):
                 if last:
                     push(last[0], last[1], m.group(1))
                 spans.append((m.start(), m.end()))
-            bare = re.sub(r"「[^」]*」", " ", sent)           # 낫표 안 이름은 위에서 처리했다
+            bare = re.sub(r"「[^」]*」", " ", seg)           # 낫표 안 이름은 위에서 처리했다
             for k, t in regnames.items():          # 낫표 없이 쓴 우리 내규명(“임원추천위원회 운영규정을 준용”)
                 if len(k) < 4 or any(x["name"] == t for x in tg) or _nk(t) == _nk(r["title"]):
                     continue
                 if re.search(r"(?<![가-힣])" + r"\s*".join(map(re.escape, k)) + r"(?![가-힣]*(?:시행세칙|세칙))(?=\s*(?:제|을|를|의|과|와|및|·|,|\s|$))", bare):
                     push(t, "reg", "")
-            if re.search(r"(?<![가-힣」])정관\s*제\s*\d+", sent):
+            if re.search(r"(?<![가-힣」])정관\s*제\s*\d+", seg):
                 own = next((t for k, t in regnames.items() if t.endswith("정관")), "정관")
-                for m in re.finditer(r"(?<![가-힣」])정관\s*(제\s*\d+\s*조(?:\s*의\s*\d+)?)", sent):
+                for m in re.finditer(r"(?<![가-힣」])정관\s*(제\s*\d+\s*조(?:\s*의\s*\d+)?)", seg):
                     push(own, "reg", m.group(1))
                     spans.append((m.start(), m.end()))
-            rest = sent
+            rest = seg
             for s0, e0 in sorted(spans, reverse=True):
                 rest = rest[:s0] + " " * (e0 - s0) + rest[e0:]
             for m in re.finditer(r"(?<![가-힣」\d])(제\s*\d+\s*조(?:\s*의\s*\d+)?(?:\s*제\s*\d+\s*항)?)", rest):
                 pre = rest[max(0, m.start() - 6):m.start()]
                 if re.match(r"\s*\d*\s*\(", rest[m.end():m.end() + 4]) and m.start() < 3:
                     continue                          # 본문 앞에 붙은 조 머리(“제4조2(…)”)
-                if not re.search(r"[가-힣]법\s*$|령\s*$|칙\s*$", pre):
+                if (re.search(r"이\s*(?:규칙|규정|지침|세칙|요령|기준)\s*$", pre)
+                        or not re.search(r"[가-힣]법\s*$|령\s*$|칙\s*$|(?:규정|지침|요령|기준)\s*$", pre)):
                     push(r["title"], "self", m.group(1))
             if not tg:
-                m = re.search(r"([가-힣A-Za-z·]{2,30}(?:법|법령|법률|기준|규정))\s*(?:등\s*)?(?:을|를)\s*(?:각각\s*)?준용", sent)
-                if m and not re.match(r"(?:관련|관계|해당|위|이|그)", m.group(1)):
-                    push(m.group(1), "other", "")
+                m = re.search(r"([가-힣A-Za-z·]{2,30}(?:법|법령|법률|기준|규정))\s*(?:등\s*)?(?:을|를)\s*(?:각각\s*)?준용", sent[:sent.rfind("준용") + 2])
+                if m and m.start(1) >= len(sent[:sent.rfind("준용")]) - len(seg) and not re.match(r"(?:관련|관계|해당|위|이|그)", m.group(1)):
+                    nm, w = m.group(1), re.search(r"([가-힣]{2,10})\s+$", sent[:m.start(1)])
+                    if w and w.group(1)[-1] not in "은는이가을를에의도와과로서며고면":
+                        nm = w.group(1) + " " + nm           # “강사수당 지급기준” — 앞 낱말까지 이름으로
+                    push(nm, "other", "")
             if tg:
                 out.append({"no": a["no"], "title": a["title"], "text": sent[-220:], "targets": tg})
     return out
@@ -2609,11 +2635,15 @@ def ra_relations():
     cites = [dict(node(e["t"]), n=e["n"]) for e in g["edges"] if e["s"] == me]
     cited_by = [dict(node(e["s"]), n=e["n"]) for e in g["edges"] if e["t"] == me]
     ji = jun_index()
-    laws = []
+    laws = {}
     for nm in cited_laws(r):
         cnt = sum(len(re.findall(r"「\s*" + r"\s*".join(map(re.escape, nm.replace(" ", ""))) + r"\s*」", a["body"]))
                   for a in r["articles"] if not a["deleted"])
-        laws.append({"name": nm, "count": cnt, "jun": any(t["name"] == nm for j in ji["by"].get(r["slug"], []) for t in j["targets"])})
+        full = _law_aliases(nm)[-1]                    # 약칭(공운법)과 정식 명칭은 한 줄로
+        x = laws.setdefault(full, {"name": full, "count": 0,
+                                   "jun": any(t["name"] == full for j in ji["by"].get(r["slug"], []) for t in j["targets"])})
+        x["count"] += cnt
+    laws = list(laws.values())
     laws.sort(key=lambda x: (-x["jun"], -x["count"]))
     return jsonify({"success": True, "slug": r["slug"], "title": r["title"],
                     "cites": sorted(cites, key=lambda x: -x["n"]), "cited_by": sorted(cited_by, key=lambda x: -x["n"]),
