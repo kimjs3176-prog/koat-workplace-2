@@ -829,3 +829,21 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 .ra-lcmp svg.ic{width:15px;height:15px;}
 .ra-lcmp .bad{color:var(--bad);} .ra-lcmp .ok{color:var(--ok);}
 .ra-lint li.lv-ok{color:var(--mu);}
+/* 내규 목록: 검색 조문·조문 본문·관계 */
+.ra-regs-hits{list-style:none;margin:4px 0 0;padding:0;font-size:12.5px;color:var(--tx2);}
+.ra-regs-hits li{padding:1px 0;}
+.ra-regs-hits mark,.ra-regs-abb mark{background:var(--warn-l);color:var(--tx);font-weight:700;border-radius:3px;padding:0 2px;}
+.ra-regs-al li.on{font-weight:700;color:var(--tx);}
+.ra-regs-ab{border:1px solid var(--bd);border-left:3px solid var(--g);border-radius:10px;background:var(--sf);padding:10px 12px;margin:0 0 10px;}
+.ra-regs-abh{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px;font-size:13.5px;}
+.ra-regs-abh .svc-btn{margin:0;}
+.ra-regs-abb{font-size:13px;line-height:1.75;color:var(--tx2);}
+.ra-rel{display:flex;flex-direction:column;gap:12px;}
+.ra-rel-h{font-size:12.5px;font-weight:800;color:var(--tx);margin-bottom:4px;display:flex;align-items:center;gap:4px;}
+.ra-rel-l{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13px;}
+.ra-rel-l li{display:block;}
+.ra-rel-l .ra-link{margin-right:6px;}
+.ra-rel-l .ra-snip{margin-top:2px;}
+.ra-lr{margin:6px 0 2px;padding:8px 10px;border-radius:8px;background:var(--sf2);display:flex;flex-direction:column;gap:6px;font-size:12.5px;}
+.ra-lr-g{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;}
+.ra-uplaw{margin:4px 0 6px;align-items:center;}
