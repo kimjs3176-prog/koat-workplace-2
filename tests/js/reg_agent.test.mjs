@@ -382,3 +382,33 @@ test('raQtyDiff: 금액·기간·분수 바뀜을 찾는다', () => {
   assert.equal(c.raQtyDiff('2분의 1 이상', '3분의 2 이상').to[0], '3분의2');
   assert.equal(c.raQtyDiff('원장이 정한다', '기관장이 정한다'), null);
 });
+
+test('raAmendSentences: 삭제 문형·단서·순서·끝에 덧붙인 항·별표 괄호', () => {
+  const c = load();
+  const S = (o, n) => c.raAmendSentences(o, n).head;
+  const b = { no: '7', title: 't', body: '① 가는 한다.\n② 나는 한다.\n③ 다는 한다.' };
+  assert.equal(S(b, { ...b, body: '① 가는 한다.\n② 삭제\n③ 다는 한다.' }), '제7조제2항을 삭제한다.');
+  const d = { no: '25', title: 't', body: '① 가.\n② 여비를 지급할 수 있다. 다만, 해당 여비는 받을 수 없다.' };
+  assert.equal(S(d, { ...d, body: '① 가.\n② 여비를 지급할 수 있다.' }), '제25조제2항 단서를 삭제한다.');
+  assert.equal(S({ ...d, body: '① 가.\n② 여비를 지급할 수 있다.' }, d), '제25조제2항에 단서를 다음과 같이 신설한다.');
+  const t = { no: '28', title: 't', body: '① 가는 3일로 한다.\n② 나는 2만원으로 한다.' };
+  assert.equal(S(t, { ...t, body: t.body + '\n③ 다.\n④ 라.' }), '제28조에 제3항 및 제4항을 각각 다음과 같이 신설한다.');
+  const r = c.raAmendSentences(t, { ...t, body: '① 가는 5일로 한다.\n② 나는 3만원으로 한다.' }).head;
+  assert.ok(r.indexOf('“3일”') < r.indexOf('“2만원”'), r);
+  const x = { no: '11', title: 't', body: '수수료는 〔별표 2〕와 같다. 기타 사항은 따로 정한다.' };
+  assert.equal(S(x, { ...x, body: '수수료는 〔별표 3〕와 같다. 기타 사항은 따로 정한다.' }), '제11조 중 “〔별표 2〕”를 “〔별표 3〕”으로 한다.');
+});
+
+test('raFullRenumber: 전부개정은 조 번호를 다시 매기고 내부 인용도 고친다', () => {
+  const c = load();
+  const F = { arts: [
+    { no: '1', title: '목적', body: '이 규칙은 …' },
+    { no: '2', title: '', body: '', deleted: true },
+    { no: '3', title: '위원회', body: '제4조에 따른 위원과 「상법」 제4조를 본다.' },
+    { no: '3의2', title: '간사', body: '제3조의 위원회에 간사를 둔다.' },
+    { no: '4', title: '위원', body: '가.' }] };
+  const r = c.raFullRenumber(F);
+  assert.equal(r.arts.map(a => a.no).join(','), '1,2,3,4');
+  assert.equal(r.arts[1].body, '제4조에 따른 위원과 「상법」 제4조를 본다.');
+  assert.equal(r.arts[2].body, '제2조의 위원회에 간사를 둔다.');
+});

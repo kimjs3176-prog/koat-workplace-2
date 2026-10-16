@@ -134,3 +134,13 @@ def test_write_reg_drops_stale_text(tmp_path, monkeypatch):
     reg_import.write_reg("r", "<p>v2</p>", "", "a.pdf", b"%PDF")
     files = sorted(p.name for p in (tmp_path / "r").iterdir())
     assert files == ["index.html", "original.pdf"]
+
+
+def test_template_bylaw_purpose_and_full_sentences(ra):
+    t = ra.template_enact({"title": "여비규정 시행세칙", "purpose": "여비 지급", "contents": "출장 신청\n정산: 출장 후 5일 이내에 정산한다"})
+    a = t["articles"]
+    assert a[0]["body"] == "이 세칙은 「여비규정」에서 위임된 사항과 그 시행에 필요한 사항을 규정함을 목적으로 한다."
+    assert "이하 “" not in "".join(x["body"] for x in a)        # 쓰지 않는 약칭 정의는 두지 않는다
+    assert a[3]["body"].startswith("출장 신청은 ") and a[4]["body"] == "출장 후 5일 이내에 정산한다."
+    assert sum("따로 정한다" in x["body"] for x in a) == 1
+    assert t["addenda"] == ["이 세칙은 발령한 날부터 시행한다."]
