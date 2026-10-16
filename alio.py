@@ -74,7 +74,7 @@ def _request(method: str, path: str, *, json_body=None, binary=False, retries=2,
         try:
             r = _S.request(method, BASE + path, json=json_body, timeout=min(TIMEOUT, max(0.8, left)), stream=binary)
         except requests.RequestException as e:
-            last = AlioError("NETWORK", f"알리오 연결 실패: {type(e).__name__}")
+            last = AlioError("NETWORK", "알리오에 연결하지 못했습니다(네트워크 차단 또는 사이트 점검). 잠시 뒤 다시 시도하세요.")
             continue
         try:
             if r.status_code == 429 or r.status_code >= 500:

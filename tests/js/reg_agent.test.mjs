@@ -367,3 +367,10 @@ test('raParse·raDocLaw: 조문 칸의 부칙과 별표를 살린다', () => {
   assert.match(law, /2027년 1월 1일부터 시행한다/);
   assert.match(law, /부 {4}칙[\s\S]*\[별표 1\] 수당 지급 기준/);
 });
+
+test('raSwapTerm: 낱말을 바꾸고 뒤 조사를 맞춘다', () => {
+  const c = load();
+  assert.equal(c.raSwapTerm('재단은 재단이사장을 둔다. 재단의 장', '재단', '농진원', true).text, '농진원은 재단이사장을 둔다. 농진원의 장');
+  assert.equal(c.raSwapTerm('위원회를 둔다', '위원회', '심의단', true).text, '심의단을 둔다');
+  assert.equal(c.raSwapTerm('「구 지침」으로 정한다', '구 지침', '새 지침서', false).text, '「새 지침서」으로 정한다');
+});

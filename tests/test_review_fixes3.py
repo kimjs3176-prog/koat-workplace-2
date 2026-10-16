@@ -56,3 +56,53 @@ def test_plan_coerces_types(client, ai):
     ai(('{"mode":"amend","intent":["여비규정 출장비 인상"]}', ""))
     r = client.post("/api/regagent/plan", json=dict(AI, request="여비규정 출장비를 올려줘"))
     assert r.status_code == 200
+
+
+# ── 법제처·표기·형식 점검 ─────────────────────────────────────────────────
+import notation as nt  # noqa: E402
+
+
+@pytest.mark.parametrize("text", ["100000000000000000000원", "경쟁률 1:10", "문서번호 2024-12-1호", "버전 2020.1.2"])
+def test_notation_no_false_or_crash(text):
+    assert not [f for f in nt.check(text, "law") if f["rule"] in ("MONEY", "TIME", "DATE_FORMAT", "DATE_DOT")]
+
+
+def test_notation_money_includes_geum_and_tilde_keeps_colon():
+    f = [x for x in nt.check("금 30000원", "law") if x["rule"] == "MONEY"][0]
+    assert f["match"] == "금 30000원"
+    t = [x for x in nt.check("기간: ~20일", "law") if x["rule"] == "TILDE"][0]
+    assert ":" not in t["match"]
+
+
+def test_lint_ho_attached_and_appx_brackets():
+    arts = [{"no": "1", "title": "목적", "body": "다음 각 호와 같다.\n1.「병역법」에 따른 자\n2. 나\n3. 다", "deleted": False},
+            {"no": "2", "title": "서식", "body": "별지 제7호 서식에 따른다. 「다른규정」 별표 3을 따른다.", "deleted": False}]
+    items = ra.lint_articles(arts, "부칙\n이 규정은 발령한 날부터 시행한다.", "〔별지 제7호 서식〕 신청서", "x 규정", full=True)
+    codes = [i["code"] for i in items]
+    assert "ho" not in codes and "appx" not in codes
+
+
+def test_parse_deleted_with_title():
+    r = ra.parse_text("제13조(가) 내용\n제14조(보고사항) <삭제 2023.06.28.>\n제15조(다) 내용", clean=True)
+    assert [a["deleted"] for a in r["articles"]] == [False, True, False]
+
+
+def test_law_api_fails_fast(client, monkeypatch):
+    import api_server
+    import requests
+
+    def boom(*a, **k):
+        raise requests.exceptions.ProxyError("blocked")
+    monkeypatch.setattr(api_server._LAW_SESSION, "get", boom)
+    r = client.get("/api/law/articles?name=근로기준법")
+    assert r.status_code == 502
+
+
+def test_health_issues_have_detail(client):
+    rows = client.get("/api/regagent/health").get_json()["rows"]
+    iss = [i for r in rows for i in r["issues"]]
+    assert iss and all("art_title" in i and "snip" in i for i in iss)
+    stale = [i for i in iss if i["code"] == "stale"]
+    assert all(i.get("term") and i.get("new") for i in stale)
+    regname = [i for i in iss if i["code"] == "regname" and i.get("new")]
+    assert all(i["term"] in i["snip"] for i in regname)

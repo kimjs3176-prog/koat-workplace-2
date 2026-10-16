@@ -58,9 +58,9 @@ HEADERS = {
 }
 
 # ── 재시도 정책이 적용된 requests 세션 ────────────────────────────────────────
-def _make_session(verify: bool = True) -> req_lib.Session:
+def _make_session(verify: bool = True, retries: int = 4) -> req_lib.Session:
     retry = Retry(
-        total=4,                              # 최대 4회 재시도
+        total=retries,                        # 기본 4회 재시도
         backoff_factor=0.8,                   # 0.8→1.6→3.2→6.4s
         status_forcelist={429, 500, 502, 503, 504},
         allowed_methods={"GET", "POST"},
@@ -84,7 +84,8 @@ def _make_session(verify: bool = True) -> req_lib.Session:
 _SESSION = _make_session()
 # 법제처(law.go.kr)는 인증서 체인 문제가 있어 이 호출에만 검증을 끈다.
 # 민감한 토큰을 보내는 GitHub/Google 세션과 분리해 노출을 막는다.
-_LAW_SESSION = _make_session(verify=False)
+# 재시도는 _law_get_xml 한 곳에서만 한다(겹치면 법제처 장애 때 수십 초씩 붙잡힌다).
+_LAW_SESSION = _make_session(verify=False, retries=0)
 
 
 # ── 공통 HTTP 헬퍼 ────────────────────────────────────────────────────────────
@@ -94,7 +95,7 @@ _T_XML  = (5, 20)   # XML 조문 전문
 _T_LONG = (5, 30)   # 긴 응답 (조문 전문 대용량)
 
 def _decode(raw: bytes) -> str:
-    for enc in ("utf-8", "euc-kr"):
+    for enc in ("utf-8", "cp949"):              # cp949 는 euc-kr 의 상위 집합(“똠” 등)
         try:
             return raw.decode(enc, errors="strict")
         except (UnicodeDecodeError, LookupError):
@@ -123,9 +124,10 @@ def _law_get_json(params: dict, timeout=None) -> dict:
     raise last_err
 
 def _law_get_xml(endpoint: str, params: dict, timeout=None) -> ET.Element:
+    """법제처 XML 조회. 연결이 끊기면 한 번만 다시 시도한다(연결 거부·차단은 바로 실패)."""
     timeout = timeout or _T_XML
     last_err = None
-    for attempt in range(3):
+    for attempt in range(2):
         try:
             r = _LAW_SESSION.get(
                 f"{BASE}/{endpoint}",
@@ -138,10 +140,13 @@ def _law_get_xml(endpoint: str, params: dict, timeout=None) -> ET.Element:
             if not text:
                 raise ValueError("빈 XML 응답")
             return _xml_fromstring(text)
+        except (req_lib.exceptions.ProxyError, req_lib.exceptions.SSLError, req_lib.exceptions.ConnectTimeout):
+            raise                               # 차단·인증서·연결 시간 초과는 다시 해도 같다
         except (req_lib.exceptions.ConnectionError,
                 req_lib.exceptions.ChunkedEncodingError) as e:
             last_err = e
-            time.sleep(1.5 * (attempt + 1))
+            if attempt == 0:
+                time.sleep(0.8)
             continue
     raise last_err
 
@@ -326,9 +331,10 @@ def _lookup_law(law_name: str, target: str = "law") -> dict:
         for it in items:
             nm = _txt(it, *_NAME_TAGS)
             n = _norm_key(nm)
+            rest = n[len(want):] if n.startswith(want) else ""
             rank = (0 if n == want else            # 완전 일치
-                    1 if n.startswith(want) else   # '특허법 시행령' 류
-                    2 if want in n else 3)         # 부분 포함 → 무관
+                    1 if n.startswith(want) and not re.match(r"시행(령|규칙)", rest) else   # 이름 뒤가 조금 다른 같은 법
+                    2 if want in n else 3)         # 시행령·부분 포함 → 법 자체가 없으면 엉뚱한 본문을 열지 않게 뒤로
             status = _txt(it, "현행연혁코드", "현행연혁구분", "현행여부")
             ef = re.sub(r"\D", "", _txt(it, "시행일자"))[:8]
             anc = re.sub(r"\D", "", _txt(it, "공포일자", "발령일자"))[:8]
@@ -470,7 +476,7 @@ def _struct_label(u: ET.Element) -> tuple:
         ttl_txt = (u.findtext("조문제목") or u.findtext("조제목") or "").strip()
         if ttl_txt:
             # "제2장 발명의 진흥" → no_label="제2장", title="발명의 진흥"
-            m = re.match(r"^(제\s*\d+\s*(?:장|절|관|편))\s*(.*)", ttl_txt)
+            m = re.match(r"^(제\s*\d+\s*(?:장|절|관|편)(?:\s*의\s*\d+)?)\s*(.*)", ttl_txt)
             if m:
                 if not no_label:
                     no_label = m.group(1).replace(" ", "")
@@ -484,7 +490,7 @@ def _struct_label(u: ET.Element) -> tuple:
         content_el = u.find("조문내용")
         if content_el is not None:
             ct = (content_el.text or "").strip()
-            m = re.match(r"^(제\s*\d+\s*(?:장|절|관|편))\s*(.*)", ct)
+            m = re.match(r"^(제\s*\d+\s*(?:장|절|관|편)(?:\s*의\s*\d+)?)\s*(.*)", ct)
             if m:
                 if not no_label:
                     no_label = m.group(1).replace(" ", "")
@@ -688,6 +694,8 @@ def get_law_articles():
         # Step 1~3: 법령ID(현행 본문) → 현행 시행본 MST 순으로 조회
         tried = []
         info = _lookup_law(law_name, "law")
+        if info.get("error") and not info.get("mst"):     # 법제처 연결 실패를 '조문 없음'으로 감추지 않는다
+            return jsonify({"error": "법제처 서버에 연결할 수 없습니다. 잠시 후 다시 시도해주세요."}), 502
         root = None
         if info.get("rank", 99) > 1:
             # 국가법령 중 이름이 맞는 게 없으면(부분 일치뿐) 행정규칙에 정확히 같은 이름이
@@ -700,8 +708,8 @@ def get_law_articles():
             root = _fetch_law_root(law_name, "law", info=info)
             tried.append("law:" + ("성공" if root is not None else "실패"))
 
-        # Step 4: 행정규칙(admrul) fallback — lawService.do 모두 실패한 경우
-        if root is None:
+        # Step 4: 행정규칙(admrul) fallback — lawService.do 모두 실패한 경우(앞에서 이미 행정규칙을 찾아봤으면 생략)
+        if root is None and not any(t.startswith("admrul") for t in tried) and info.get("rank", 99) > 1:
             try:
                 mst_admrul = _get_mst(law_name, target="admrul")
                 if mst_admrul:
