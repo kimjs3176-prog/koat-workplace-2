@@ -374,3 +374,11 @@ test('raSwapTerm: 낱말을 바꾸고 뒤 조사를 맞춘다', () => {
   assert.equal(c.raSwapTerm('위원회를 둔다', '위원회', '심의단', true).text, '심의단을 둔다');
   assert.equal(c.raSwapTerm('「구 지침」으로 정한다', '구 지침', '새 지침서', false).text, '「새 지침서」으로 정한다');
 });
+
+test('raQtyDiff: 금액·기간·분수 바뀜을 찾는다', () => {
+  const c = load();
+  const d = c.raQtyDiff('숙박비는 3만원, 기간은 30일로 한다.', '숙박비는 5만원, 기간은 30일로 한다.');
+  assert.equal(JSON.stringify(d), JSON.stringify({ from: ['3만원'], to: ['5만원'] }));
+  assert.equal(c.raQtyDiff('2분의 1 이상', '3분의 2 이상').to[0], '3분의2');
+  assert.equal(c.raQtyDiff('원장이 정한다', '기관장이 정한다'), null);
+});
