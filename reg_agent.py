@@ -1046,6 +1046,8 @@ def template_enact(b: dict) -> dict:
     """AI 없이 쓰는 표준 조문 골격."""
     title = (b.get("title") or "○○ 운영규칙").strip()
     kind = _kind_of(title)
+    if kind == "시행세칙":
+        kind = "세칙"                                         # “이 세칙은 …” 이 표준 자기 지칭
     eun = _josa(kind)
     purpose = (b.get("purpose") or "○○에 관한 사항").strip().rstrip(".")
     dels = b.get("delegations") or []
@@ -1053,9 +1055,14 @@ def template_enact(b: dict) -> dict:
     if dels:
         d0 = dels[0]
         basis = _del_ref(d0) + "에 따라 "
+    head_ga = f"{ORG['head']}{_josa(ORG['head'], ('이', '가'))}"
+    parent = re.sub(r"\s*시행세칙$", "", title) if title.endswith("시행세칙") else ""
+    if parent and parent != title:                            # 시행세칙: 모 규정 위임 사항을 정하는 표준 문형
+        purpose_body = f"이 세칙은 「{parent}」에서 위임된 사항과 그 시행에 필요한 사항을 규정함을 목적으로 한다."
+    else:                                                     # 약칭은 조문에서 쓰지 않으므로 “(이하 …)” 정의를 두지 않는다
+        purpose_body = f"이 {kind}{eun} {basis}{ORG['org_name']}의 {purpose}에 필요한 사항을 정함을 목적으로 한다."
     arts = [
-        {"no": "1", "title": "목적",
-         "body": f"이 {kind}{eun} {basis}{ORG['org_name']}(이하 “{ORG['org_short']}”{_josa(ORG['org_short'], ('이라', '라'))} 한다)의 {purpose}에 필요한 사항을 정함을 목적으로 한다."},
+        {"no": "1", "title": "목적", "body": purpose_body},
         {"no": "2", "title": "정의",
          "body": f"이 {kind}에서 사용하는 용어의 뜻은 다음과 같다.\n1. “○○”이란 ○○을 말한다.\n2. “△△”이란 △△을 말한다."},
         {"no": "3", "title": "적용범위",
@@ -1064,13 +1071,17 @@ def template_enact(b: dict) -> dict:
     n = 4
     for line in [x.strip(" -·•\t") for x in (b.get("contents") or "").split("\n") if x.strip()]:
         head = re.split(r"[:：]", line, 1)
-        t = head[0].strip()[:20] if len(head) > 1 else re.sub(r"\s.*$", "", line)[:14]
-        desc = head[1].strip() if len(head) > 1 else line
-        arts.append({"no": str(n), "title": t or "○○",
-                     "body": f"① {desc}\n② 제1항에 따른 ○○에 필요한 사항은 {ORG['head']}{_josa(ORG['head'], ('이', '가'))} 따로 정한다."})
+        t = head[0].strip()[:20] if len(head) > 1 else (line if len(line) <= 12 else re.sub(r"\s.*$", "", line)[:14])
+        desc = (head[1].strip() if len(head) > 1 else line).rstrip(".")
+        if re.search(r"(다|한다|된다|있다|없다)$", desc):          # 이미 완결된 문장
+            body = desc + "."
+        else:                                                 # “출장 신청” 같은 명사구 → 서술어를 갖춘 조문
+            body = (f"{desc}{_josa(desc, ('은', '는'))} 다음 각 호의 기준에 따라 {head_ga} 정한다."
+                    f"\n1. ○○\n2. ○○")
+        arts.append({"no": str(n), "title": t or "○○", "body": body})
         n += 1
     arts.append({"no": str(n), "title": "세부사항",
-                 "body": f"이 {kind}에서 정한 사항 외에 {purpose}에 필요한 세부사항은 {ORG['head']}{_josa(ORG['head'], ('이', '가'))} 따로 정한다."})
+                 "body": f"이 {kind}에서 정한 사항 외에 {purpose}에 필요한 세부사항은 {head_ga} 따로 정한다."})
     eff = (b.get("effective") or "").strip() or "발령한 날"
     addenda = f"이 {kind}{eun} {eff}부터 시행한다."
     return {"title": title, "articles": arts, "addenda": [addenda],
@@ -1874,18 +1885,38 @@ def replace_term(text: str, old: str, new: str, whole: bool = True):
 
 
 def _loc_label(art: dict, pos: int) -> str:
-    """본문 위치 → “제5조제2항” 같은 개정문용 위치."""
+    """본문 위치 → “제5조제2항” 같은 개정문용 위치. 호가 딸린 항(조)의 머리글이면 “각 호 외의 부분”,
+    단서가 있는 항·호면 “본문”·“단서”를 붙인다."""
     lbl = art_label(art["no"])
-    before = art["body"][:pos]
-    hs = re.findall(r"(?:^|\n)\s*([" + _HANG_CH + "])", before)
+    body = art["body"]
+    before = body[:pos]
+    hs = list(re.finditer(r"(?:^|\n)\s*([" + _HANG_CH + "])", before))
     if hs:
-        lbl += f"제{_HANG_CH.index(hs[-1]) + 1}항"
-        seg = before[before.rfind(hs[-1]):]
+        lbl += f"제{_HANG_CH.index(hs[-1].group(1)) + 1}항"
+        u0 = hs[-1].start(1)
     else:
-        seg = before
-    ho = re.findall(r"(?:^|\n)\s*(\d{1,2})\.\s", seg)
+        u0 = 0
+    nxt = re.search(r"\n\s*[" + _HANG_CH + "]", body[pos:])
+    u1 = pos + nxt.start() if nxt else len(body)                    # 이 항(또는 조 본문)의 끝
+    seg = body[u0:pos]
+    ho = list(re.finditer(r"(?:^|\n)\s*(\d{1,2})\.(?!\d)", seg))
     if ho:
-        lbl += f"제{ho[-1]}호"
+        lbl += f"제{ho[-1].group(1)}호"
+        h0 = u0 + ho[-1].start(1)
+        nh = re.search(r"\n\s*\d{1,2}\.(?!\d)", body[pos:u1])
+        unit = body[h0:pos + nh.start() if nh else u1]
+        upos = pos - h0
+    else:
+        has_ho = re.search(r"(?:^|\n)\s*\d{1,2}\.(?!\d)", body[u0:u1])
+        if has_ho:
+            lbl += " 각 호 외의 부분"
+            unit = body[u0:u0 + has_ho.start()]
+        else:
+            unit = body[u0:u1]
+        upos = pos - u0
+    d = re.search(r"(?:^|\s)다만[,，]", unit)
+    if d:
+        lbl += " 단서" if upos >= d.start() else " 본문"
     return lbl
 
 
@@ -1896,20 +1927,36 @@ def _ro(w: str) -> str:
     return "로" if (not _has_batchim(w) or (("가" <= w[-1] <= "힣") and (ord(w[-1]) - 0xAC00) % 28 == 8)) else "으로"
 
 
+def _split_loc(lb: str):
+    """“제16조제2항제4호 본문” → (조, 항, 나머지)"""
+    m = re.match(r"(제\d+조(?:의\d+)?)(제\d+항)?(.*)$", lb.replace(" 제목", "\x00제목"))
+    if not m:
+        return lb, "", ""
+    return m.group(1), m.group(2) or "", (m.group(3) or "").replace("\x00", " ").strip()
+
+
 def _join_locs(locs: list) -> str:
-    """["제13조 제목", "제13조제1항", "제15조"] → "제13조의 제목, 같은 조 제1항 및 제15조" (개정문 표기)."""
-    out, prev = [], None
+    """개정문 위치 나열: 같은 조는 조를 빼고(“제7조제1항 및 제4항”), 같은 항은 “같은 항 제4호”,
+    조 제목과 함께면 “제13조의 제목 및 같은 조 제1항”."""
+    out, prev = [], (None, None)
+    bare = {lb for lb in locs if re.fullmatch(r"제\d+조(?:의\d+)?", lb)}
+    locs = [(f"{lb}(제목을 포함한다)" if lb in bare and f"{lb} 제목" in locs else lb)
+            for lb in locs if not (lb.endswith(" 제목") and lb[:-3] in bare)]   # 제목과 본문을 함께 고치면 “제24조(제목을 포함한다)”
     for lb in locs:
-        m = re.match(r"(제\d+조(?:의\d+)?)\s*(.*)$", lb)
-        art, rest = (m.group(1), m.group(2)) if m else (lb, "")
+        art, hang, rest = _split_loc(lb)
         if rest == "제목":
             txt = f"{art}의 제목"
-        elif art == prev:
-            txt = "같은 조" + (f" {rest}" if rest else "")
+            hang = "제목"
+        elif art == prev[0] and prev[1] == "제목":
+            txt = "같은 조" + (f" {hang}{rest}".rstrip() if (hang or rest) else "")
+        elif art == prev[0] and hang and hang == prev[1]:
+            txt = "같은 항 " + rest.lstrip()
+        elif art == prev[0]:
+            txt = (hang + (rest if rest.startswith("제") else (" " + rest if rest else ""))) or "같은 조"
         else:
             txt = lb
-        out.append(txt)
-        prev = art
+        out.append(txt.strip())
+        prev = (art, hang)
     return out[0] if len(out) < 2 else ", ".join(out[:-1]) + " 및 " + out[-1]
 
 
@@ -1922,10 +1969,22 @@ def _bulk_sentence(pairs: list, old: str, new: str) -> str:
         locs = groups.setdefault(key, [])
         if lb not in locs:
             locs.append(lb)
-    parts = []
-    for (o_, n_), locs in groups.items():
+    def lkey(lb):                                  # 조·항·호 순서(제목은 그 조 맨 앞)
+        art, hang, rest = _split_loc(lb)
+        ho = re.search(r"제(\d+)호", rest)
+        return (art_key(art.replace("제", "").replace("조", "")), -1 if rest == "제목" else int(re.sub(r"\D", "", hang) or 0),
+                int(ho.group(1)) if ho else 0)
+    for k in groups:
+        groups[k].sort(key=lkey)
+    parts, last = [], None
+    for (o_, n_), locs in sorted(groups.items(), key=lambda kv: lkey(kv[1][0])):
         each = "각각 " if len(locs) > 1 else ""
-        parts.append(f"{_join_locs(locs)} 중 “{o_}”{_josa(o_, ('을', '를'))} {each}“{n_}”{_ro(n_)} ")
+        where = _join_locs(locs)
+        art = _split_loc(locs[0])[0]
+        if last and art == last:                   # 앞 문장과 같은 조에서 이어지면 “같은 조”
+            where = re.sub(r"^" + re.escape(art) + r"(?=제|의|\s|$)", "같은 조 ", where).replace("같은 조 의", "같은 조의").replace("  ", " ")
+        parts.append(f"{where} 중 “{o_}”{_josa(o_, ('을', '를'))} {each}“{n_}”{_ro(n_)} ")
+        last = _split_loc(locs[-1])[0]
     return "하고, ".join(parts) + "한다."
 
 
