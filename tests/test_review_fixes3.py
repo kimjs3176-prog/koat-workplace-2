@@ -136,7 +136,7 @@ def test_lint_compare_with_base(client):
     text += "\n제90조(신설) 제999조에 따른다."
     d = client.post("/api/regagent/lint", json={"text": text, "title": "여비규정", "base_slug": r["slug"]}).get_json()
     assert d["base"] == "여비규정" and "fixed" in d
-    assert any(i.get("new") and "제999조" in i["msg"] for i in d["issues"])
+    assert any(i.get("is_new") and "제999조" in i["msg"] for i in d["issues"])
 
 
 # ── 내규 조회·관련법령 ───────────────────────────────────────────────────
@@ -171,3 +171,49 @@ def test_law_rel_parser_and_fail_fast(client, monkeypatch):
 def test_regs_search_returns_articles(client):
     d = client.get("/api/regagent/regs/search?q=출장비").get_json()
     assert d["regs"][0]["arts"] and d["regs"][0]["n_arts"] >= len(d["regs"][0]["arts"])
+
+
+# ── 최근 기능 점검 보완 ──────────────────────────────────────────────────
+def test_jun_only_last_clause_targets():
+    by = {r["title"]: {j["no"]: j for j in ra.jun_relations(r)} for r in ra.all_regs()}
+    assert "30" not in by["연구개발성과 사업화 관리규칙"]                       # “이 규칙을 준용” — 다른 법령 준용 아님
+    assert [t["name"] for t in by["분석시험 의뢰 및 처리규칙"]["11"]["targets"]] == ["행정절차법 시행령"]
+    assert [t["name"] for t in by["ESG경영에 관한 규칙"]["26"]["targets"]] == ["통합공시매뉴얼"]
+    assert [t["name"] for t in by["치유농업사 자격시험 규칙 시행세칙"]["7"]["targets"]] == ["강사수당 지급기준"]
+
+
+def test_upper_jun_boost_needs_article_hit(client):
+    d = client.post("/api/regagent/upper", json={"law": "공운법", "arts": ["11"]}).get_json()
+    c = {(x["reg"], x["no"]): x for x in d["candidates"]}
+    assert "준용" not in " ".join(c.get(("한국농업기술진흥원 정관", "11"), {"specific": []})["specific"])
+
+
+def test_relations_merge_law_alias(client):
+    r = next(x for x in ra.all_regs() if x["title"].endswith("정관"))
+    laws = client.get("/api/regagent/relations?slug=" + r["slug"]).get_json()["laws"]
+    names = [x["name"] for x in laws]
+    assert "공운법" not in names and len(names) == len(set(names))
+    assert next(x for x in laws if x["name"] == "공공기관의 운영에 관한 법률")["jun"]
+
+
+def test_lint_compare_flag_and_appendix(client):
+    r = next(x for x in ra.all_regs() if x["title"] == "직원채용지침")
+    text = "\n".join(f"제{a['no']}조({a['title']}) {a['body']}" for a in r["articles"] if not a["deleted"])
+    d = client.post("/api/regagent/lint", json={"text": text, "title": r["title"], "base_slug": r["slug"]}).get_json()
+    assert not [i for i in d["fixed"] if i["code"] == "appx"]                   # 별표는 원 내규 것으로 본다
+    plain = client.post("/api/regagent/lint", json={"text": "제1조(목적) 이 규정은 실용화재단의 업무를 정한다."}).get_json()
+    assert all("is_new" not in i for i in plain["issues"])                      # 비교 없이는 “이번 개정” 표시 없음
+
+
+def test_xref_checks_own_gangryeong_and_branch_delegation():
+    r = next(x for x in ra.all_regs() if x["title"] == "윤리경영규정")
+    iss = ra.lint_articles(r["articles"], r["addenda"], r["appendix"], r["title"])
+    assert any(i["code"] == "xref" and "행동강령" in i["msg"] for i in iss)
+    h = next(x for x in ra.all_regs() if x["title"] == "인사규정")
+    cov = {d["no"]: d["covered"] for d in ra.delegation_check(h["title"], h["articles"])}
+    assert cov["32의2"] is False
+
+
+def test_stale_skips_quoted_law_article_title():
+    arts = ra.parse_text("제1조(목적) 「농촌진흥법」 부칙 제2조(실용화재단 직원의 임용등에 관한 특례)에 따른다.")["articles"]
+    assert not [i for i in ra.lint_articles(arts, "", "", "인사규정") if i["code"] == "stale"]

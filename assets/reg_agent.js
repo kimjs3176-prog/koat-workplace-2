@@ -136,7 +136,8 @@ function raNormNo(s){   // “제7조의2제1항” → “7의2” (항·호 �
   return m?m[1]+(m[2]?'의'+m[2]:''):'';
 }
 function raJosa(w,p){ p=p||['은','는']; const c=String(w||'').trim().slice(-1); if(c>='가'&&c<='힣') return ((c.charCodeAt(0)-0xAC00)%28)?p[0]:p[1]; return p[0]; }
-function raKind(title){ const t=String(title||'').trim(); for(const s of ['시행세칙','정관','규정','규칙','세칙','지침','요령','기준','매뉴얼','강령']) if(t.endsWith(s)) return s; return '규정'; }
+// 끝 괄호는 떼고 본다: “… 규칙(구 직무발명 보상규칙)” → 규칙
+function raKind(title){ const t=String(title||'').trim().replace(/\s*\([^()]*\)$/,''); for(const s of ['시행세칙','정관','규정','규칙','세칙','지침','요령','기준','매뉴얼','강령']) if(t.endsWith(s)) return s; return '규정'; }
 function raToday(add){ const d=new Date(); d.setDate(d.getDate()+(add||0)); return `${d.getFullYear()}. ${d.getMonth()+1}. ${d.getDate()}.`; }
 function raAi(){ const s=getAiSettings(); const p=s.provider||''; return p?{provider:p, api_key:s['key_'+p]||'', model:s['model_'+p]||''}:{}; }
 function raHasAi(){ const s=getAiSettings(); const p=s.provider||''; return !!(p&&(s['key_'+p]||p==='ollama')); }
@@ -198,6 +199,15 @@ function raRing(v, max, tone, center, sub){
     `<text x="42" y="${sub?44:48}" text-anchor="middle" class="ra-ring-v">${center}</text>${sub?`<text x="42" y="60" text-anchor="middle" class="ra-ring-s">${_e(sub)}</text>`:''}</svg>`;
 }
 async function raCatalog(){ if(_raCatalog) return _raCatalog; const d=await raGet('/api/regagent/catalog'); _raCatalog=(d&&d.regs)||[]; return _raCatalog; }
+// 다른 탭(내규 등록)에서 돌아오면 목록이 바뀌었는지 조용히 확인하고, 바뀌었으면 목록·관계·조문 캐시를 새로 받는다
+if(typeof document!=='undefined'&&document.addEventListener) document.addEventListener('visibilitychange',async()=>{
+  if(document.visibilityState!=='visible'||!_raCatalog||raCatalog._chk) return; raCatalog._chk=1;
+  try{ const d=await raGet('/api/regagent/catalog'); const regs=(d&&d.regs)||null;
+    const sig=x=>x.map(r=>r.slug+'|'+(r.rev_date||'')+'|'+r.live).join(',');
+    if(regs&&_raCatalog&&sig(regs)!==sig(_raCatalog)){ _raCatalog=regs; _raRel={}; _raRegArts={}; _raRegHits=null; _raHealth=null; raRegsView._h=0;
+      if(RA.tab==='regs') raRerender('regs'); _toast(`${RA_ORG.reg_word} 목록이 바뀌어 새로 불러왔습니다.`); }
+  } finally{ raCatalog._chk=0; }
+});
 function raRegUrl(slug){ return '/regulations/'+encodeURIComponent(slug)+'/index.html'; }
 
 // 조문 객체 ↔ 텍스트
@@ -669,8 +679,8 @@ async function raLint(mode, silent){
 function raLintView(iss, onlyNos, compact, fixed){
   if(!iss) return '';
   let list=iss; if(onlyNos) list=iss.filter(i=>!i.no||onlyNos.has(i.no));
-  const cmp=list.some(i=>'new' in i)||raArr(fixed).length;     // 개정 전후 비교 결과가 있으면
-  const nNew=list.filter(i=>i.new&&i.level!=='info').length, nOld=list.filter(i=>i.new===false&&i.level!=='info').length;
+  const cmp=list.some(i=>'is_new' in i)||raArr(fixed).length;     // 개정 전후 비교 결과가 있으면
+  const nNew=list.filter(i=>i.is_new&&i.level!=='info').length, nOld=list.filter(i=>i.is_new===false&&i.level!=='info').length;
   const fx=raArr(fixed);
   const head=cmp&&!compact?`<div class="ra-lcmp"><span class="${nNew?'bad':'ok'}">${raIc(nNew?'alert':'check')}이번 개정으로 새로 생긴 문제 <b>${nNew}</b>건</span>`+
     `<span class="ok">${raIc('check')}해결된 문제 <b>${fx.length}</b>건</span><span>${raIc('info')}원래 있던 문제 <b>${nOld}</b>건</span></div>`:'';
@@ -678,9 +688,9 @@ function raLintView(iss, onlyNos, compact, fixed){
   if(!list.length) return head+`<div class="ra-ok">${raIc('check')}발견된 문제 없음</div>`+fixedList;
   const cnt=l=>list.filter(i=>i.level===l).length;
   const ic={error:raIc('bad'),warn:raIc('alert'),info:raIc('tip')};
-  const sorted=cmp?list.slice().sort((a,b)=>(b.new?1:0)-(a.new?1:0)):list;   // 새로 생긴 문제를 먼저
+  const sorted=cmp?list.slice().sort((a,b)=>(b.is_new?1:0)-(a.is_new?1:0)):list;   // 새로 생긴 문제를 먼저
   return head+(compact?'':raStack([{n:cnt('error'),l:'오류',tone:'bad'},{n:cnt('warn'),l:'주의',tone:'warn'},{n:cnt('info'),l:'표기 제안',tone:'acc'}],'점검 결과'))+`<ul class="ra-lint">`+
-    sorted.map(i=>`<li class="lv-${i.level}"><span>${ic[i.level]||''}</span><span>${i.new&&i.level!=='info'?'<span class="ra-chip hi">이번 개정</span> ':''}${_e(i.msg)}${i.fix?` <em class="ra-fix">${_e(i.fix)}</em>`:''}</span></li>`).join('')+`</ul>`+fixedList;
+    sorted.map(i=>`<li class="lv-${i.level}"><span>${ic[i.level]||''}</span><span>${i.is_new&&i.level!=='info'?'<span class="ra-chip hi">이번 개정</span> ':''}${_e(i.msg)}${i.fix?` <em class="ra-fix">${_e(i.fix)}</em>`:''}</span></li>`).join('')+`</ul>`+fixedList;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -726,7 +736,8 @@ function raAgWorkMsg(mode){
 // ── 경과조치 제안: 금액·기간·비율·횟수가 바뀐 조문이 있으면 부칙에 경과조치를 둘지 묻는다 ──
 const RA_QTY=/\d+\s*분의\s*\d+|\d[\d,.]*\s*(?:만\s*|천\s*|억\s*)?(?:원|일|개월|월|년|시간|분(?!\s*의)|%|퍼센트|명|회|배|호봉|점)/g;
 function raQtyDiff(o,n){
-  const bag=t=>(String(t||'').match(RA_QTY)||[]).map(x=>x.replace(/\s+/g,''));
+  // 천 단위 쉼표는 같은 값으로(1,000원=1000원), “2024년” 같은 연도는 날짜라 금액·기간으로 보지 않는다
+  const bag=t=>(String(t||'').match(RA_QTY)||[]).map(x=>x.replace(/[\s,]+/g,'')).filter(x=>!/^(?:19|20)\d\d년$/.test(x));
   const a=bag(o), b=bag(n), rm=a.slice(), ad=[];
   b.forEach(x=>{ const k=rm.indexOf(x); if(k>=0) rm.splice(k,1); else ad.push(x); });
   return rm.length||ad.length?{from:rm,to:ad}:null;
@@ -753,8 +764,14 @@ function raTransAdd(){
   const tr=`(경과조치) 이 ${kind} 시행 당시 종전의 ${lbls}에 따라 진행 중인 사항에 대해서는 종전의 규정에 따른다.`;
   let cur=String(A.addenda||'').trim();
   if(!cur) cur=`제1조(시행일) 이 ${kind}${j} ${A.effective||'발령한 날'}부터 시행한다.`;
-  else if(!/^제\s*\d+\s*조/m.test(cur)) cur=`제1조(시행일) ${cur.replace(/^\s*부\s*칙\s*/,'')}`;     // 한 문장 부칙을 조 형식으로
-  const n=(cur.match(/^제\s*(\d+)\s*조/gm)||[]).length+1;
+  else if(!/^제\s*\d+\s*조\s*\(/m.test(cur)){                     // 한 문장·①② 부칙을 조 형식으로
+    const body=cur.replace(/^\s*부\s*칙\s*/,''), items=body.split(/(?=^\s*[①-⑳])/m).map(x=>x.trim()).filter(Boolean);
+    cur=items.length>1&&/^[①-⑳]/.test(items[0])
+      ?items.map((x,i)=>{ x=x.replace(/^[①-⑳]\s*/,''); return `제${i+1}조${/^\(/.test(x)?'':i?' ':'(시행일) '}${x}`; }).join('\n')
+      :`제1조(시행일) ${body.replace(/^[①]\s*(?:\(시행일\)\s*)?/,'')}`;
+  }
+  // 조 머리(“제N조(”)만 세고 가장 큰 번호 다음으로 — “제5조는 …”처럼 줄 첫머리 인용은 세지 않는다
+  const n=Math.max(0,...[...cur.matchAll(/^제\s*(\d+)\s*조\s*\(/gm)].map(m=>+m[1]))+1;
   A.addenda=cur+`\n제${n}조${tr}`; raDirty('amend'); _raSave(); raRerender('amend');
   _toast('부칙에 경과조치를 넣었습니다. 문구를 사안에 맞게 다듬으세요.',4500);
 }
@@ -814,13 +831,14 @@ function raApplySubs(){
 // 낱말 바꾸기 + 뒤따르는 조사 맞추기(“재단은”→“농진원은”, “위원회를”→“심의회를”)
 function raSwapTerm(text, old, neu, word){
   if(!old||old===neu) return {text, n:0};
-  const J=[['은','는'],['이','가'],['을','를'],['과','와'],['으로','로'],['이라','라'],['이나','나'],['이며','며'],['이고','고']];
+  const J=[['은','는'],['이','가'],['을','를'],['과','와'],['으로','로'],['으로서','로서'],['으로써','로써'],['이라','라'],['이라는','라는'],['이란','란'],['이므로','므로'],['이다','다'],['이었','였'],['이나','나'],['이며','며'],['이고','고']];
   const esc=old.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-  const re=new RegExp((word?'(?<![가-힣])':'')+esc+'(?:(으로|이라|이나|이며|이고|에서|에게|까지|부터|은|는|이|가|을|를|과|와|로|라|나|며|고|의|에|도|만)(?![가-힣]))?'+(word?'(?![가-힣])':''),'g');   // 조사는 낱말이 끝날 때만
+  // 조사는 낱말이 끝날 때만(“이었·였”은 어미가 이어진다: “부이사장이었다”)
+  const re=new RegExp((word?'(?<![가-힣])':'')+esc+'(?:(이었|였)|(으로서|으로써|이라는|이므로|으로|이라|이란|이나|이며|이고|이다|에서|에게|까지|부터|로서|로써|라는|므로|은|는|이|가|을|를|과|와|로|라|란|나|며|고|다|의|에|도|만)(?![가-힣]))?'+(word?'(?![가-힣])':''),'g');
   let n=0; const b=raBat(neu);
-  const out=text.replace(re,(m,j)=>{ n++; if(!j) return neu;
+  const out=text.replace(re,(m,j1,j2)=>{ n++; const j=j1||j2; if(!j) return neu;
     const pair=J.find(p=>p.includes(j)); if(!pair) return neu+j;
-    const pick=pair[0]==='으로'?(b===1?'으로':'로'):(b?pair[0]:pair[1]); return neu+pick; });
+    const pick=pair[0].startsWith('으로')?(b===1?pair[0]:pair[1]):(b?pair[0]:pair[1]); return neu+pick; });
   return {text:out, n};
 }
 function raArtsView(){
@@ -1774,8 +1792,9 @@ function raRegsListView(){
   let list=_raCatalog.filter(r=>(!S.cat||(RA_CAT_ORDER.includes(r.category)?r.category:'기타')===S.cat)&&(!q||r.title.replace(/\s+/g,'').includes(q)||hits[r.slug]));
   const by={name:(a,b)=>a.title.localeCompare(b.title,'ko'),new:(a,b)=>(b.rev_date||'').localeCompare(a.rev_date||''),old:(a,b)=>(a.rev_date||'9').localeCompare(b.rev_date||'9'),size:(a,b)=>b.live-a.live}[S.sort]||null;
   list=list.slice().sort((a,b)=>{ const ta=q&&a.title.replace(/\s+/g,'').includes(q)?0:1, tb=q&&b.title.replace(/\s+/g,'').includes(q)?0:1; return ta-tb||(by?by(a,b):0); });   // 이름이 맞는 것 먼저
-  if(!list.length) return `<div class="ra-empty sm">${raIc('search')}${q?`“${_e(S.q)}”${raEul(S.q)} 찾지 못했습니다.`:`등록된 ${_e(RA_ORG.reg_word)}가 없습니다.`}</div>`;
   const pend=q.length>=2&&!(_raRegHits&&_raRegHits.q===S.q)?`<span class="ra-hint">조문 내용 찾는 중…</span>`:'';
+  if(pend) setTimeout(raRegsFetch,0);
+  if(!list.length) return `<div class="ra-empty sm">${raIc('search')}${q?(pend?`“${_e(S.q)}”${raEul(S.q)} 조문 내용에서 찾는 중…`:`“${_e(S.q)}”${raEul(S.q)} 찾지 못했습니다.`):`등록된 ${_e(RA_ORG.reg_word)}가 없습니다.`}</div>`;
   return `<div class="ra-meta" aria-live="polite">${list.length}건${pend}</div><ul class="ra-regs">`+list.map(r=>{ const h=H[r.slug], x=hits[r.slug], open=S.open===r.slug;
     return `<li class="${open?'on':''}"><div class="ra-regs-r"><span class="ra-regs-cat" style="--c:${RA_CAT_COLOR[r.category]||'#8a93a3'}">${_e(r.category||'기타')}</span>`+
       `<div class="ra-regs-t"><a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener"><b>${_e(r.title)}</b></a>`+
@@ -1806,12 +1825,27 @@ async function raRegLoadArts(slug){
   const el=document.getElementById('raRegArts'); const r=(_raCatalog||[]).find(x=>x.slug===slug); if(el&&r&&RA.regs.open===slug) el.innerHTML=raRegArtsView(r);
 }
 function raRegsSet(k,v){ RA.regs[k]=(k==='cat'&&RA.regs.cat===v)?'':v; _raSave(); raRegsRedraw(); }
-function raRegsRedraw(){ const el=document.getElementById('raRegsList'); if(el) el.innerHTML=raRegsListView(); else raRerender('regs');
+// 다시 그린 뒤에도 키보드 위치를 잃지 않게: 누른 버튼(onclick이 같은 것)에 초점을 되돌린다
+function raKeepFocus(draw, fallback){
+  const a=document.activeElement, k=a&&a!==document.body&&a.getAttribute&&a.getAttribute('onclick');
+  draw();
+  if(!k||document.activeElement&&document.activeElement!==document.body) return;
+  const b=[...document.querySelectorAll('[onclick]')].find(x=>x.getAttribute('onclick')===k)||(fallback&&document.querySelector(fallback));
+  if(b) b.focus({preventScroll:true});
+}
+function raRegsRedraw(){ const el=document.getElementById('raRegsList'); raKeepFocus(()=>{ if(el) el.innerHTML=raRegsListView(); else raRerender('regs'); });
   document.querySelectorAll('.ra-regs-cats .ra-chip').forEach(b=>{ const c=(b.getAttribute('onclick')||'').match(/'([^']*)'\)$/); const on=!!c&&c[1]===RA.regs.cat; b.classList.toggle('on',on); b.setAttribute('aria-pressed',on); }); }
 function raRegsQ(v){
-  RA.regs.q=v; _raSave(); raRegsRedraw();                          // 이름 거르기는 바로(입력란은 그대로 둔다)
-  clearTimeout(raRegsQ._t); const q=v.trim(); if(q.replace(/\s+/g,'').length<2){ _raRegHits=null; return; }
-  raRegsQ._t=setTimeout(async()=>{ const d=await raGet('/api/regagent/regs/search?q='+encodeURIComponent(q)); if(RA.regs.q.trim()!==q||!d.success) return; _raRegHits={q:RA.regs.q,regs:d.regs}; raRegsRedraw(); },300);
+  RA.regs.q=v; _raSave(); raRegsFetch(); raRegsRedraw();           // 이름 거르기는 바로(입력란은 그대로 둔다)
+}
+// 조문 내용 찾기(뒤에서). 새로 고침·관계 칩으로 검색어가 바뀐 경우에도 목록을 그릴 때 불러 “찾는 중…”에 멈추지 않게 한다
+function raRegsFetch(){
+  const q=String(RA.regs.q||'').trim(); if(q.replace(/\s+/g,'').length<2){ clearTimeout(raRegsFetch._t); raRegsFetch._q=''; _raRegHits=null; return; }
+  if(raRegsFetch._q===q||(_raRegHits&&_raRegHits.q===RA.regs.q)) return;
+  clearTimeout(raRegsFetch._t); raRegsFetch._q=q;
+  raRegsFetch._t=setTimeout(async()=>{ const d=await raGet('/api/regagent/regs/search?q='+encodeURIComponent(q));
+    if(raRegsFetch._q===q) raRegsFetch._q=''; if(RA.regs.q.trim()!==q) return;
+    _raRegHits={q:RA.regs.q,regs:d&&d.success?d.regs:[]}; raRegsRedraw(); },300);
 }
 function raRegsOpen(slug, view){ const S=RA.regs; view=view||'arts'; if(S.open===slug&&(S.view||'arts')===view) S.open=''; else { S.open=slug; S.view=view; } S.art=''; _raSave(); raRegsRedraw(); }
 function raRegsShowArt(slug, no){ const S=RA.regs; if(S.open!==slug||S.view==='rel'){ S.open=slug; S.view='arts'; } S.art=S.art===no?'':no; _raSave(); raRegsRedraw();
@@ -1888,7 +1922,7 @@ function raHealthOpen(slug, code){
   const H=RA.health; H.open=H.open||{};
   H.open[slug]=(H.open[slug]===code)?'':code;                 // 같은 칩을 다시 누르면 닫는다
   if(!H.open[slug]) delete H.open[slug];
-  _raSave(); const y=window.scrollY; raRerender('health'); window.scrollTo(0,y);
+  _raSave(); const y=window.scrollY; raKeepFocus(()=>raRerender('health'), `button.ra-chip.btn[onclick*="raHealthOpen('${slug.replace(/["\\]/g,'')}'"]`); window.scrollTo(0,y);
   const el=document.getElementById('raHd-'+slug); if(el&&H.open[slug]){ const f=el.querySelector('input,button'); if(f) f.focus({preventScroll:true}); }
 }
 function raHealthPick(slug, i, on){ const H=RA.health; H.pick=H.pick||{}; H.pick[slug]=H.pick[slug]||{}; H.pick[slug][i]=on; _raSave(); const r=raHealthRow(slug); if(!r) return; const code=(H.open||{})[slug]||'all'; const n=raHealthPicked(r).filter(x=>code==='all'||x.code===code).length;
@@ -1922,7 +1956,7 @@ function raHealthToAmend(slug){
   if(!sel.length){ _toast('개정 작업에 넣을 문제를 하나 이상 고르세요.'); return; }
   const m=raAmendWorkMsg(); if(RA.amend.slug!==slug&&m&&!confirm(m)) return;
   const nos=[...new Set(sel.map(x=>raNormNo(x.no)).filter(Boolean))];
-  const subs=sel.filter(x=>x.new&&x.term).map(x=>({no:raNormNo(x.no), old:x.term, new:x.new, word:x.code==='stale'}));
+  const subs=sel.filter(x=>x.new&&x.term).map(x=>({no:raNormNo(x.no), old:x.term, new:x.new, word:!!x.word}));
   const what=sel.map(x=>x.new?`${raLbl(x.no)} “${x.term}”→“${x.new}”`:`${raLbl(x.no)} ${RA_HCODE[x.code]||x.code}`);
   const kinds=[...new Set(sel.map(x=>RA_HCODE[x.code]||x.code))];
   raAmendStart(slug, r.title, {sel:nos, force:true, fresh:RA.amend.slug!==slug, subs,

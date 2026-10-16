@@ -412,3 +412,14 @@ test('raFullRenumber: 전부개정은 조 번호를 다시 매기고 내부 인�
   assert.equal(r.arts[1].body, '제4조에 따른 위원과 「상법」 제4조를 본다.');
   assert.equal(r.arts[2].body, '제2조의 위원회에 간사를 둔다.');
 });
+
+test('경과조치·조사 교체: ①② 부칙 변환, 최대 조 번호, 금액 쉼표·연도, 괄호 붙은 내규명', () => {
+  const c = load();
+  vm.runInContext(`raTransItems=()=>[{no:'5',txt:'x'}]; raDirty=()=>{}; _raSave=()=>{}; raRerender=()=>{};`, c);
+  const add = (title, addenda) => vm.runInContext(`RA.amend.title=${JSON.stringify(title)}; RA.amend.addenda=${JSON.stringify(addenda)}; raTransAdd(); RA.amend.addenda`, c);
+  assert.equal(add('업무처리 규칙(구 직무발명 보상규칙)', '①(시행일) 이 규칙은 2024. 1. 1.부터 시행한다.\n②(적용례) 가.'),
+    '제1조(시행일) 이 규칙은 2024. 1. 1.부터 시행한다.\n제2조(적용례) 가.\n제3조(경과조치) 이 규칙 시행 당시 종전의 제5조에 따라 진행 중인 사항에 대해서는 종전의 규정에 따른다.');
+  assert.match(add('여비규정', '제1조(시행일) 가.\n제3조(경과) 나.\n제5조는 다.'), /\n제4조\(경과조치\)/);
+  assert.equal(c.raQtyDiff('1,000원 2024년', '1000원 2025년'), null);
+  assert.equal(c.raSwapTerm('재단으로서 재단이었다', '재단', '농진원', false).text, '농진원으로서 농진원이었다');
+});
