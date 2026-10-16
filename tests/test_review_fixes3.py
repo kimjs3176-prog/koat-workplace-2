@@ -137,3 +137,37 @@ def test_lint_compare_with_base(client):
     d = client.post("/api/regagent/lint", json={"text": text, "title": "여비규정", "base_slug": r["slug"]}).get_json()
     assert d["base"] == "여비규정" and "fixed" in d
     assert any(i.get("new") and "제999조" in i["msg"] for i in d["issues"])
+
+
+# ── 내규 조회·관련법령 ───────────────────────────────────────────────────
+def test_jun_relations_and_users(client):
+    r = next(x for x in ra.all_regs() if x["title"] == "이사회 운영규정")
+    rel = {j["no"]: j for j in ra.jun_relations(r)}
+    assert [t["name"] for t in rel["8"]["targets"]] == ["상법"] and rel["8"]["targets"][0]["arts"] == ["제391조", "제391조의3"]
+    assert any(t["name"] == "임원추천위원회 운영규정" and t["kind"] == "reg" for t in rel["16"]["targets"])
+    u = client.get("/api/regagent/law-users?law=공운법").get_json()          # 약칭도 정식 명칭과 같게
+    assert u["jun"] and u["cite"]
+    d = client.get("/api/regagent/relations?slug=" + r["slug"]).get_json()
+    assert d["jun"] and d["laws"] and any(l["jun"] for l in d["laws"])
+
+
+def test_upper_marks_jun(client):
+    d = client.post("/api/regagent/upper", json={"law": "상법"}).get_json()
+    assert any(s.startswith("준용") for c in d["candidates"] for s in c["specific"])
+
+
+def test_law_rel_parser_and_fail_fast(client, monkeypatch):
+    import xml.etree.ElementTree as ET
+    import api_server
+    import requests
+    x = ("<LawSearch><law><법령명>근로기준법</법령명><관련법령명>선원법</관련법령명><관련구분>피준용</관련구분></law>"
+         "<상하위법><시행령><법령명>근로기준법 시행령</법령명></시행령></상하위법></LawSearch>")
+    items = api_server._law_rel_items(ET.fromstring(x), "근로기준법")
+    assert {(i["name"], i["rel"]) for i in items} == {("선원법", "피준용"), ("근로기준법 시행령", "하위법")}
+    monkeypatch.setattr(api_server._LAW_SESSION, "get", lambda *a, **k: (_ for _ in ()).throw(requests.exceptions.ProxyError("x")))
+    assert client.get("/api/law/related?name=근로기준법").status_code == 502
+
+
+def test_regs_search_returns_articles(client):
+    d = client.get("/api/regagent/regs/search?q=출장비").get_json()
+    assert d["regs"][0]["arts"] and d["regs"][0]["n_arts"] >= len(d["regs"][0]["arts"])

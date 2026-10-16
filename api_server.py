@@ -684,6 +684,100 @@ def index():
 
 
 
+# ── 관련법령: 법령 체계도(상위·하위법)·관련법령(준용·피준용 등) ─────────────────────────
+_REL_CACHE: dict = {}
+_REL_KIND = (("피준용", "피준용"), ("준용", "준용"), ("상위", "상위법"), ("하위", "하위법"), ("시행령", "하위법"),
+             ("시행규칙", "하위법"), ("위임", "위임"), ("인용", "인용"), ("관련", "관련법령"))
+
+
+def _law_rel_items(root: ET.Element, me: str) -> list:
+    """법제처 XML(체계도·관련법령)에서 법령명이 든 항목을 모두 찾아 [{name, rel, id, mst}].
+    응답 형식이 바뀌어도 쓰도록 태그 이름(법령명·관련법령명)과 조상·형제 태그(상위/하위/준용/피준용/관련)로 판단한다."""
+    parent = {c: p for p in root.iter() for c in p}
+    out, seen = [], set()
+    want = _norm_key(me)
+    for el in root.iter():
+        if "법령명" not in el.tag or not (el.text or "").strip():
+            continue
+        nm = el.text.strip()
+        if _norm_key(nm) == want or el.tag.endswith(("약칭", "영문")):
+            continue
+        holder = parent.get(el, root)
+        rel = ""
+        for sib in list(holder):                  # 형제 태그의 구분값(관계구분·관련구분 등)
+            if re.search(r"구분|관계|종류", sib.tag) and (sib.text or "").strip():
+                rel = sib.text.strip()
+                break
+        if not rel:
+            node = holder
+            while node is not None and not rel:   # 조상 태그 이름(상위법·하위법·준용법령…)
+                for k, lab in _REL_KIND:
+                    if k in node.tag:
+                        rel = lab
+                        break
+                node = parent.get(node)
+        if not rel:
+            for k, lab in _REL_KIND:
+                if k in el.tag:
+                    rel = lab
+                    break
+        key = (_norm_key(nm), rel)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": nm, "rel": rel or "관련법령",
+                    "id": (holder.findtext("법령ID") or holder.findtext("관련법령ID") or "").strip(),
+                    "mst": _mst_of(holder)})
+    return out
+
+
+@app.route("/api/law/related")
+def get_law_related():
+    """법령명 → 관련 법령(상위·하위법, 준용·피준용 등). 법제처 체계도·관련법령 API를 쓰고,
+    둘 다 실패하면 시행령·시행규칙 이름을 추정해 돌려준다(source=guess)."""
+    name = re.sub(r"[「」]", "", request.args.get("name", "")).strip()
+    if len(name) < 2:
+        return jsonify({"success": False, "error": "법령명을 입력하세요."}), 400
+    hit = _REL_CACHE.get(name)
+    if hit and time.time() - hit["at"] < 6 * 3600:
+        return jsonify(hit["v"])
+    info = _lookup_law(name, "law")
+    if info.get("error") and not info.get("mst"):
+        return jsonify({"success": False, "error": "법제처 서버에 연결할 수 없습니다. 잠시 후 다시 시도해주세요."}), 502
+    if not info.get("mst") or info.get("rank", 99) > 1:
+        return jsonify({"success": False, "error": f"「{name}」{'을' if _has_batchim(name) else '를'} 법제처에서 찾지 못했습니다."}), 404
+    law = info.get("name") or name
+    items, src = [], []
+    ref = {"ID": info["id"]} if info.get("id") else {"MST": info["mst"]}
+    for target, extra in (("lsStmd", ref), ("lsRlt", None)):       # 체계도(상·하위법) → 관련법령(준용·피준용 등)
+        try:
+            if extra is not None:
+                root = _law_get_xml("lawService.do", {"target": target, **extra}, timeout=(5, 15))
+            else:
+                root = _law_get_xml("lawSearch.do", {"target": target, "query": law, "display": "100"}, timeout=(5, 15))
+            got = _law_rel_items(root, law)
+            if got:
+                src.append(target)
+                have = {(_norm_key(x["name"]), x["rel"]) for x in items}
+                items += [x for x in got if (_norm_key(x["name"]), x["rel"]) not in have]
+        except (req_lib.exceptions.RequestException, ET.ParseError, ValueError) as e:
+            print(f"[law-related] {target} 실패: {type(e).__name__}")
+    if not items:                                 # 체계도를 못 받으면 하위법 이름을 추정
+        base = re.sub(r"\s*(시행령|시행규칙)$", "", law)
+        items = [{"name": f"{base} {k}", "rel": "하위법(추정)", "id": "", "mst": ""} for k in ("시행령", "시행규칙")
+                 if not law.endswith(k)]
+        src = ["guess"]
+    v = {"success": True, "law": law, "id": info.get("id", ""), "mst": info.get("mst", ""), "items": items[:120], "source": src}
+    if src != ["guess"]:
+        _REL_CACHE[name] = {"at": time.time(), "v": v}
+    return jsonify(v)
+
+
+def _has_batchim(w: str) -> bool:
+    c = (w or " ")[-1]
+    return "가" <= c <= "힣" and (ord(c) - 0xAC00) % 28 != 0
+
+
 @app.route("/api/law/articles")
 def get_law_articles():
     """법령명으로 조문 전체 조회"""

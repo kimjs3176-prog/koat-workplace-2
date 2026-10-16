@@ -173,7 +173,7 @@ GitHub Actions(`.github/workflows/ci.yml`)가 푸시·PR마다 두 테스트를 
 
 | 이름 | 용도 |
 |---|---|
-| `LAW_OC` | 법제처 Open API 사용자 ID(상위법 조문 불러오기) |
+| `LAW_OC` | 국가법령정보센터 Open API 사용자 ID(기본 `tjsl0919`) — 상위법 조문, 법령 최신성, 관련 법령(체계도 `lsStmd`·관련법령 `lsRlt`: 상·하위법, 준용·피준용) 조회에 씀 |
 | `SCENARIO_AI_PROVIDER`, `SCENARIO_AI_MODEL`, `GEMINI_API_KEY`, `CLAUDE_API_KEY`, `OPENAI_API_KEY` | 서버 공용 AI 키(사용자 키가 우선) |
 | `GEMINI_MODEL`, `GEMINI_MODEL_PREF` | Gemini 모델 고정·선호 버전 |
 | `SEMANTIC_MIN_SCORE` | 의미 검색 최소 유사도 |
