@@ -1163,7 +1163,34 @@ def ra_catalog():
     regs = all_regs()
     return jsonify({"success": True, "count": len(regs),
                     "regs": [{"slug": r["slug"], "title": r["title"], "category": r["category"],
-                              "revision": r["revision"], "n": len(r["articles"])} for r in regs]})
+                              "revision": r["revision"], "n": len(r["articles"]),
+                              "live": sum(1 for a in r["articles"] if not a["deleted"]),
+                              "rev_date": rev_date(r.get("revision", ""))} for r in regs]})
+
+
+@bp.route("/api/regagent/regs/search")
+def ra_regs_search():
+    """내규 목록 검색: 조 제목·본문에 낱말이 나오는 내규 → [{slug, hits, first:{no,title,snip}}] (많이 나온 순)."""
+    q = re.sub(r"\s+", " ", (request.args.get("q") or "")).strip()[:40]
+    if len(q.replace(" ", "")) < 2:
+        return jsonify({"success": True, "q": q, "regs": []})
+    pat = re.compile(r"\s*".join(map(re.escape, q.replace(" ", ""))))      # 띄어쓰기는 무시
+    out = []
+    for r in all_regs():
+        hits, first = 0, None
+        for a in r["articles"]:
+            if a["deleted"]:
+                continue
+            n = len(pat.findall(a["title"])) + len(pat.findall(a["body"]))
+            if n:
+                hits += n
+                if first is None:
+                    m = pat.search(a["body"])
+                    first = {"no": a["no"], "title": a["title"], "snip": _snip(a["body"], m.start(), 40) if m else a["title"]}
+        if hits:
+            out.append({"slug": r["slug"], "hits": hits, "first": first})
+    out.sort(key=lambda x: -x["hits"])
+    return jsonify({"success": True, "q": q, "regs": out[:200]})
 
 
 @bp.route("/api/regagent/articles")
