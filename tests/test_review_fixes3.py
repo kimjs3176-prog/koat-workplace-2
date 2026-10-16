@@ -114,3 +114,26 @@ def test_regs_catalog_and_search(client):
     d = client.get("/api/regagent/regs/search?q=출장 비").get_json()   # 띄어쓰기 무시
     assert d["regs"] and all(x["hits"] > 0 and x["first"]["no"] for x in d["regs"])
     assert client.get("/api/regagent/regs/search?q=x").get_json()["regs"] == []
+
+
+# ── 점검·제개정 강화 ───────────────────────────────────────────────────────
+def test_lint_xref_other_reg_article():
+    arts = [{"no": "1", "title": "목적", "body": "「여비규정」 제999조 및 「여비규정」 제1조에 따른다.", "deleted": False}]
+    iss = [i for i in ra.lint_articles(arts, "", "", "가상 지침") if i["code"] == "xref"]
+    assert len(iss) == 1 and "제999조" in iss[0]["msg"] and iss[0]["reg"] == "여비규정"
+
+
+def test_delegation_check_finds_uncovered():
+    r = next(x for x in ra.all_regs() if x["title"] == "인사규정")
+    res = ra.delegation_check(r["title"], r["articles"])
+    assert res and any(d["no"] == "16" and not d["covered"] for d in res)
+    assert sum(1 for d in res if d["covered"]) >= len(res) // 2
+
+
+def test_lint_compare_with_base(client):
+    r = next(x for x in ra.all_regs() if x["title"] == "여비규정")
+    text = "\n".join(f"제{a['no']}조({a['title']}) {a['body']}" for a in r["articles"] if not a["deleted"])
+    text += "\n제90조(신설) 제999조에 따른다."
+    d = client.post("/api/regagent/lint", json={"text": text, "title": "여비규정", "base_slug": r["slug"]}).get_json()
+    assert d["base"] == "여비규정" and "fixed" in d
+    assert any(i.get("new") and "제999조" in i["msg"] for i in d["issues"])

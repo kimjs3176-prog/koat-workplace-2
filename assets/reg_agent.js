@@ -367,7 +367,7 @@ function raRender(){
   else if(t==='check') b.innerHTML=raCheckView();
   else if(t==='graph') b.innerHTML=raGraphView();
   else b.innerHTML=raProcView();
-  if(t==='amend'||t==='upper'||t==='check') raFillCatalog();
+  if(t==='amend'||t==='upper'||t==='check'||t==='enact') raFillCatalog();
 }
 // 짧은 섹션 두 개를 나란히(좁은 화면에서는 위아래)
 function raPair(a,b){ return `<div class="ra-pair">${a}${b}</div>`; }
@@ -399,12 +399,12 @@ function raEnactView(){
   const s2=raDelegView();
   const refTab=E.refTab||(E.simSrc==='alio'?'alio':'law');
   const nRef=Object.values(E.refs||{}), nAl=nRef.filter(r=>r.src==='alio').length;
-  const refSeg=`<div class="ra-seg ra-wiz-seg" role="tablist">`+[['law','상위법 근거',(E.dels||[]).length],['own','우리 기관 비슷한 규정',nRef.length-nAl],['alio','다른 기관(알리오)',nAl]]
+  const refSeg=`<div class="ra-seg ra-wiz-seg" role="tablist">`+[['law','상위법·상위 내규 근거',(E.dels||[]).length],['own','우리 기관 비슷한 규정',nRef.length-nAl],['alio','다른 기관(알리오)',nAl]]
     .map(([k,l,n])=>`<button role="tab" class="${refTab===k?'on':''}" onclick="raSet('enact.refTab','${k}');raSet('enact.simSrc','${k==='alio'?'alio':'own'}');raRerender('enact')">${l}${n?` <b class="ra-cnt">${n}</b>`:''}</button>`).join('')+`</div>`;
   const s4=`<div class="ra-row"><button class="svc-btn yes" onclick="raEnactDraft()">${raIc('spark')}조문 초안 작성</button>`+
     `${raTip(`${raHasAi()?'AI가 위 내용·위임 조항·참고 조문으로 조문 체계와 표준 조문을 씁니다.':'AI 키가 없으면 표준 조문 골격(목적·정의·적용범위·본칙·세부사항·부칙)을 만들어 드립니다.'}`)}</div><div id="raDraft">${raEnactDraftView()}</div>`;
   const s3own=`<div class="ra-row"><button class="svc-btn" onclick="raFindSimilar()">${raIc('search')}비슷한 규정 찾기</button>${raTip(`목적·주요 내용으로 기관 ${RA_ORG.reg_word}${_raCatalog?' '+_raCatalog.length+'건':''}에서 비슷한 조문을 찾습니다. 체크한 조문은 초안 작성 때 참고합니다.`)}</div><div id="raSim">${raSimView()}</div>`;
-  const refHelp={law:'이 내규를 만들 근거가 되는 법령 조문을 고르면 제1조(목적)에 반영됩니다.',own:'우리 기관 내규에서 비슷한 조문을 찾아 문체·구성을 맞춥니다.',alio:'다른 공공기관이 같은 주제를 어떻게 정했는지 찾아 참고합니다.'}[refTab];
+  const refHelp={law:'이 내규를 만들 근거가 되는 법령 조문이나 우리 기관 상위 내규(예: 「인사규정」)의 위임 조항을 고르면 제1조(목적)에 반영됩니다.',own:'우리 기관 내규에서 비슷한 조문을 찾아 문체·구성을 맞춥니다.',alio:'다른 공공기관이 같은 주제를 어떻게 정했는지 찾아 참고합니다.'}[refTab];
   const body=[
     ()=>s1,
     ()=>refSeg+`<p class="ra-wiz-hint">${raIc('info')}${refHelp}</p>`+(refTab==='law'?s2:refTab==='alio'?raAlioView('enact'):s3own)+
@@ -523,21 +523,38 @@ function raDelegView(){
     const q=(E.lawQ||'').replace(/\s+/g,'');
     const arts=E.lawArts.filter(a=>!q||(a.label+a.title+a.text).replace(/\s+/g,'').includes(q)).slice(0,80);
     pick=`<div class="ra-pick"><div class="ra-pick-h">「${_e(E.lawName)}」 ${E.lawArts.length}개 조문 <input class="ra-in sm" placeholder="조문 검색(예: 위임, 정한다)" value="${_e(E.lawQ||'')}" oninput="RA.enact.lawQ=this.value;raRenderPick()"></div><div id="raPickList" class="ra-pick-l">`+
-      arts.map(a=>`<label class="ra-pick-i"><input type="checkbox" ${E.dels.some(d=>d.law===E.lawName&&raDelArt(d)===a.label)?'checked':''} onchange="raDelToggle('${_a(a.label)}',this.checked)"><span><b>${_e(a.label)}</b>${a.title?`(${_e(a.title)})`:''} <em>${_e(a.text.slice(0,140))}</em></span></label>`).join('')+
+      arts.map(a=>`<label class="ra-pick-i"><input type="checkbox" ${E.dels.some(d=>d.law===E.lawName&&raDelArt(d)===a.label)?'checked':''} onchange="raDelToggle('${_a(a.label)}',this.checked)"><span>${a.deleg?'<span class="ra-chip warn">위임</span> ':''}<b>${_e(a.label)}</b>${a.title?`(${_e(a.title)})`:''} <em>${_e(a.deleg?raDelegSnip(a.text):a.text.slice(0,140))}</em></span></label>`).join('')+
       `</div></div>`;
   }
-  return `<div class="ra-row"><input id="raLawName" class="ra-in" style="max-width:280px" placeholder="법령명 (예: 농촌진흥법)" value="${_e(E.lawName||'')}" onkeydown="if(event.key==='Enter')raLawLoad()"><button class="svc-btn" onclick="raLawLoad()">조문 불러오기</button><button class="svc-btn ghost" onclick="raDelManual()">직접 입력</button></div>`+
+  return `<div class="ra-row"><input id="raLawName" class="ra-in" style="max-width:280px" list="raRegList" aria-label="법령명 또는 우리 기관 내규명" placeholder="법령명 또는 상위 내규명 (예: 농촌진흥법, 인사규정)" value="${_e(E.lawName||'')}" onkeydown="if(event.key==='Enter')raLawLoad()"><datalist id="raRegList"></datalist><button class="svc-btn" onclick="raLawLoad()">조문 불러오기</button>${raParentOf(E.title)&&E.lawName!==raParentOf(E.title)?`<button class="ra-chip btn" onclick="raOwnLoad('${_a(raParentOf(E.title))}').then(ok=>{ if(!ok) _toast('「${_a(raParentOf(E.title))}」${raEul(raParentOf(E.title))} 내규 목록에서 찾지 못했습니다.'); })">${raIc('regs')}「${_e(raParentOf(E.title))}」 위임 조항 불러오기</button>`:''}<button class="svc-btn ghost" onclick="raDelManual()">직접 입력</button></div>`+
     `<div id="raPick">${pick}</div><div class="ra-dels">${list||`<div class="ra-empty sm">${raIc('upper')}선택한 위임 조항 없음 ${raTip('상위법 근거를 고르면 제1조(목적)에 반영됩니다.')}</div>`}</div>`;
 }
+function raDelegSnip(t){ const m=String(t).match(RA_DELEG_RE); if(!m) return String(t).slice(0,140); const k=Math.max(0,m.index-90); return (k?'…':'')+String(t).slice(k,m.index+m[0].length); }
 function raRenderPick(){
   const E=RA.enact, box=document.getElementById('raPickList'); if(!box||!E.lawArts) return;
   const q=(E.lawQ||'').replace(/\s+/g,'');
   box.innerHTML=E.lawArts.filter(a=>!q||(a.label+a.title+a.text).replace(/\s+/g,'').includes(q)).slice(0,80)
-    .map(a=>`<label class="ra-pick-i"><input type="checkbox" ${E.dels.some(d=>d.law===E.lawName&&raDelArt(d)===a.label)?'checked':''} onchange="raDelToggle('${_a(a.label)}',this.checked)"><span><b>${_e(a.label)}</b>${a.title?`(${_e(a.title)})`:''} <em>${_e(a.text.slice(0,140))}</em></span></label>`).join('');
+    .map(a=>`<label class="ra-pick-i"><input type="checkbox" ${E.dels.some(d=>d.law===E.lawName&&raDelArt(d)===a.label)?'checked':''} onchange="raDelToggle('${_a(a.label)}',this.checked)"><span>${a.deleg?'<span class="ra-chip warn">위임</span> ':''}<b>${_e(a.label)}</b>${a.title?`(${_e(a.title)})`:''} <em>${_e(a.deleg?raDelegSnip(a.text):a.text.slice(0,140))}</em></span></label>`).join('');
+}
+// 우리 기관 상위 내규(「인사규정」 등)의 위임 조항도 근거로 고를 수 있게 한다 — 위임 문구가 있는 조문을 앞에
+const RA_DELEG_RE=/(?:시행세칙|세칙|지침|요령|규칙|예규|기준)(?:으로|로|에서)\s*(?:따로\s*)?정한다|따로\s*정한다|별도로\s*정한다/;
+function raParentOf(title){ const t=String(title||'').trim(); const m=t.match(/^(.+?)\s*(?:시행세칙|세칙)$/); return m?m[1].trim():''; }
+async function raOwnLoad(title){
+  const regs=await raCatalog(); const r=regs.find(x=>x.title.replace(/\s+/g,'')===String(title).replace(/\s+/g,'')); if(!r) return false;
+  const E=RA.enact; _raBusy.law=true; E.lawName=r.title; raRerender('enact');
+  const d=await raGet('/api/regagent/articles?slug='+encodeURIComponent(r.slug));
+  _raBusy.law=false;
+  if(!d.success){ E.lawArts=null; _toast(d.error||'조문을 불러오지 못했습니다.'); raRerender('enact'); return true; }
+  const arts=d.articles.filter(a=>!a.deleted).map(a=>({label:raLbl(a.no), title:a.title||'', text:String(a.body||'').trim(), deleg:RA_DELEG_RE.test(a.body||'')}));
+  E.lawArts=[...arts.filter(a=>a.deleg),...arts.filter(a=>!a.deleg)]; E.lawOwn=true; E.lawQ='';
+  const n=arts.filter(a=>a.deleg).length;
+  _toast(n?`「${r.title}」에서 하위 내규에 맡긴 위임 조항 ${n}개를 맨 위에 두었습니다.`:`「${r.title}」에는 “…으로 정한다” 같은 위임 문구가 없습니다. 근거가 되는 조문을 직접 고르세요.`,5000);
+  raRerender('enact'); return true;
 }
 async function raLawLoad(){
   const nm=(document.getElementById('raLawName')||{}).value||''; if(!nm.trim()){ _toast('법령명을 입력하세요.'); return; }
-  const E=RA.enact; _raBusy.law=true; E.lawName=nm.trim(); raRerender('enact');
+  if(await raOwnLoad(nm.trim())) return;                         // 우리 기관 내규명이면 법제처 대신 그 내규에서
+  const E=RA.enact; E.lawOwn=false; _raBusy.law=true; E.lawName=nm.trim(); raRerender('enact');
   try{
     const d=await raGet('/api/law/articles?name='+encodeURIComponent(nm.trim()));
     if(d.error||!d.articles||!d.articles.length){ E.lawArts=null; _toast(d.error||d.message||'조문을 불러오지 못했습니다.'); }
@@ -640,22 +657,29 @@ async function raLint(mode, silent){
   const box=document.getElementById('raLint');
   let body;
   if(mode==='enact'){ const D=RA.enact.draft; if(!D) return; body={text:D.text, addenda:raDocCtx('enact').addenda, title:RA.enact.title}; }
-  else { const t=raAmendFullText(); if(!t){ _toast('먼저 내규를 불러오세요.'); return; } body={text:t.text, addenda:raDocCtx('amend').addenda, title:RA.amend.title}; }
+  else { const t=raAmendFullText(); if(!t){ _toast('먼저 내규를 불러오세요.'); return; } body={text:t.text, addenda:raDocCtx('amend').addenda, title:RA.amend.title, base_slug:RA.amend.src==='reg'?RA.amend.slug:''}; }
   if(box && !silent) box.innerHTML=raSpin('점검 중...');
   const gen=_raGen[mode], S=RA[mode];
   const d=await raPost('/api/regagent/lint', body);
   if(gen!==_raGen[mode]||S!==RA[mode]) return;
-  S.lint=d.success?d.issues:null; _raSave();
-  if(box) box.innerHTML=d.success?raLintView(d.issues):raErr(d.error||'점검 실패');
+  S.lint=d.success?d.issues:null; S.lintFixed=d.success&&d.fixed?d.fixed:null; _raSave();
+  if(box) box.innerHTML=d.success?raLintView(d.issues,null,false,S.lintFixed):raErr(d.error||'점검 실패');
 }
-function raLintView(iss, onlyNos, compact){
+function raLintView(iss, onlyNos, compact, fixed){
   if(!iss) return '';
   let list=iss; if(onlyNos) list=iss.filter(i=>!i.no||onlyNos.has(i.no));
-  if(!list.length) return `<div class="ra-ok">${raIc('check')}발견된 문제 없음</div>`;
+  const cmp=list.some(i=>'new' in i)||raArr(fixed).length;     // 개정 전후 비교 결과가 있으면
+  const nNew=list.filter(i=>i.new&&i.level!=='info').length, nOld=list.filter(i=>i.new===false&&i.level!=='info').length;
+  const fx=raArr(fixed);
+  const head=cmp&&!compact?`<div class="ra-lcmp"><span class="${nNew?'bad':'ok'}">${raIc(nNew?'alert':'check')}이번 개정으로 새로 생긴 문제 <b>${nNew}</b>건</span>`+
+    `<span class="ok">${raIc('check')}해결된 문제 <b>${fx.length}</b>건</span><span>${raIc('info')}원래 있던 문제 <b>${nOld}</b>건</span></div>`:'';
+  const fixedList=fx.length&&!compact?`<details class="ra-det"><summary>해결된 문제 ${fx.length}건 보기</summary><ul class="ra-lint">`+fx.map(i=>`<li class="lv-ok"><span>${raIc('check')}</span><span><s>${_e(i.msg)}</s></span></li>`).join('')+`</ul></details>`:'';
+  if(!list.length) return head+`<div class="ra-ok">${raIc('check')}발견된 문제 없음</div>`+fixedList;
   const cnt=l=>list.filter(i=>i.level===l).length;
   const ic={error:raIc('bad'),warn:raIc('alert'),info:raIc('tip')};
-  return (compact?'':raStack([{n:cnt('error'),l:'오류',tone:'bad'},{n:cnt('warn'),l:'주의',tone:'warn'},{n:cnt('info'),l:'표기 제안',tone:'acc'}],'점검 결과'))+`<ul class="ra-lint">`+
-    list.map(i=>`<li class="lv-${i.level}"><span>${ic[i.level]||''}</span><span>${_e(i.msg)}${i.fix?` <em class="ra-fix">${_e(i.fix)}</em>`:''}</span></li>`).join('')+`</ul>`;
+  const sorted=cmp?list.slice().sort((a,b)=>(b.new?1:0)-(a.new?1:0)):list;   // 새로 생긴 문제를 먼저
+  return head+(compact?'':raStack([{n:cnt('error'),l:'오류',tone:'bad'},{n:cnt('warn'),l:'주의',tone:'warn'},{n:cnt('info'),l:'표기 제안',tone:'acc'}],'점검 결과'))+`<ul class="ra-lint">`+
+    sorted.map(i=>`<li class="lv-${i.level}"><span>${ic[i.level]||''}</span><span>${i.new&&i.level!=='info'?'<span class="ra-chip hi">이번 개정</span> ':''}${_e(i.msg)}${i.fix?` <em class="ra-fix">${_e(i.fix)}</em>`:''}</span></li>`).join('')+`</ul>`+fixedList;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -683,20 +707,52 @@ function raAmendView(){
     ()=>s2+raStaleNote('amend')+`<div id="raSecChg">${s3}</div>`,
     ()=>raRunBar('amend')+raSub(`신구조문대비표 <span class="ra-leg"><u class="ra-d">삭제</u><u class="ra-i">추가</u></span>`,`<label class="ra-chk"><input type="checkbox" ${A.abbr?'checked':''} onchange="raSet('amend.abbr',this.checked);raRefreshCmp()"> 바뀌지 않은 항·호는 “(현행과 같음)”으로 줄이기</label><div id="raCmp">${raCmpView()}</div>`)+
       raPair(raSub('인용 영향',`<div class="ra-row"><button class="svc-btn" onclick="raImpact()">${raIc('search')}영향 범위 찾기</button>${raTip(`조 번호를 옮기는 경우 이동표(예: 7→8)를 넣으면 고칠 인용 표기를 함께 보여 줍니다.`)}<input id="raMoves" class="ra-in sm" style="max-width:180px" placeholder="이동표 예: 7→8, 9→10" value="${_e(A.moves||'')}" oninput="raSet('amend.moves',this.value)"></div><div id="raImpact">${raImpactView()}</div>`),
-        raSub('형식 점검',`<div class="ra-row"><button class="svc-btn" onclick="raLint('amend')">${raIc('check')}점검 실행</button><label class="ra-chk"><input type="checkbox" id="raLintOnly" checked onchange="raLintRedraw()"> 고친 조문 관련만 보기</label></div><div id="raLint">${raLintView(A.lint, raLintOnlySet())}</div>`))+
+        raSub('형식 점검',`<div class="ra-row"><button class="svc-btn" onclick="raLint('amend')">${raIc('check')}점검 실행</button><label class="ra-chk"><input type="checkbox" id="raLintOnly" checked onchange="raLintRedraw()"> 고친 조문 관련만 보기</label></div><div id="raLint">${raLintView(A.lint, raLintOnlySet(), false, A.lintFixed)}</div>`))+
       raSub('심의 사전검토',raReviewSec('amend')),
     ()=>`<div id="raSecDocs">${raDocsView('amend')}</div>`,
   ];
   return raWiz('amend', body);
 }
 function raLintOnlySet(){ const el=document.getElementById('raLintOnly'); if(el&&!el.checked) return null; return new Set(RA.amend.changes.map(c=>c.no)); }
-function raLintRedraw(){ const b=document.getElementById('raLint'); if(b) b.innerHTML=raLintView(RA.amend.lint, raLintOnlySet()); }
+function raLintRedraw(){ const b=document.getElementById('raLint'); if(b) b.innerHTML=raLintView(RA.amend.lint, raLintOnlySet(), false, RA.amend.lintFixed); }
 function raAmendWorkMsg(){ const A=RA.amend, n=raEffChanges().length; return n||String(A.intent||'').trim()?`지금 개정 작업(${n?`수정안 ${n}건`:'개정 의도'})을 지우고 다른 ${RA_ORG.reg_word}로 새로 시작할까요?`:''; }
 function raAgWorkMsg(mode){
   if(mode==='amend'){ const A=RA.amend, n=raEffChanges().length; return n||String(A.intent||'').trim()?`개정 탭의 진행 중인 작업(${n?`수정안 ${n}건`:'개정 의도'})을 지우고 에이전트 결과로 바꿀까요?`:''; }
   if(mode==='enact'){ const E=RA.enact; return E.draft||String(E.contents||'').trim()?`제정 탭의 진행 중인 작업(${E.draft?'조문 초안':'기본 정보'})을 지우고 에이전트 결과로 바꿀까요?`:''; }
   if(mode==='bulk'){ const U=RA.bulk; return U.res&&String(U.reason||'').trim()?'일괄 정비 탭의 결과와 정비 사유를 지우고 새로 찾을까요?':''; }
   return '';
+}
+// ── 경과조치 제안: 금액·기간·비율·횟수가 바뀐 조문이 있으면 부칙에 경과조치를 둘지 묻는다 ──
+const RA_QTY=/\d+\s*분의\s*\d+|\d[\d,.]*\s*(?:만\s*|천\s*|억\s*)?(?:원|일|개월|월|년|시간|분(?!\s*의)|%|퍼센트|명|회|배|호봉|점)/g;
+function raQtyDiff(o,n){
+  const bag=t=>(String(t||'').match(RA_QTY)||[]).map(x=>x.replace(/\s+/g,''));
+  const a=bag(o), b=bag(n), rm=a.slice(), ad=[];
+  b.forEach(x=>{ const k=rm.indexOf(x); if(k>=0) rm.splice(k,1); else ad.push(x); });
+  return rm.length||ad.length?{from:rm,to:ad}:null;
+}
+function raTransItems(){
+  return raEffChanges().filter(c=>c.type!=='insert').map(c=>{ const o=raOld(c.no); if(!o) return null;
+    if(c.type==='delete') return {no:c.no, txt:'조문 삭제'};
+    const d=raQtyDiff(o.body,c.body); return d?{no:c.no, txt:`${d.from.join(', ')||'—'} → ${d.to.join(', ')||'—'}`}:null; }).filter(Boolean);
+}
+function raTransHint(){
+  const A=RA.amend, it=raTransItems(); if(!it.length||/경과\s*조치/.test(A.addenda||'')) return '';
+  return `<div class="ra-note ra-trans"><div class="ra-note-i">${raIc('info')}<div><b>경과조치를 둘지 검토하세요</b> — 금액·기간·비율 등이 바뀌거나 삭제된 조문이 있습니다. 시행 전에 이미 진행 중인 일에 어느 규정을 적용할지 부칙에 정해 두면 다툼을 막을 수 있습니다.`+
+    `<ul>${it.slice(0,6).map(x=>`<li>${_e(raLbl(x.no))}: ${_e(x.txt)}</li>`).join('')}</ul>`+
+    `<button class="svc-btn sm" onclick="raTransAdd()">${raIc('amend')}부칙에 경과조치 넣기</button></div></div></div>`;
+}
+function raTransAdd(){
+  const A=RA.amend, it=raTransItems(); if(!it.length) return;
+  const kind=raKind(A.title), j=raJosa(kind);
+  const nos=[...new Set(it.map(x=>x.no))].sort(raCmp), lb=nos.map(raLbl);
+  const lbls=lb.length<2?lb[0]:lb.slice(0,-1).join('·')+' 및 '+lb[lb.length-1];
+  const tr=`(경과조치) 이 ${kind} 시행 당시 종전의 ${lbls}에 따라 진행 중인 사항에 대해서는 종전의 규정에 따른다.`;
+  let cur=String(A.addenda||'').trim();
+  if(!cur) cur=`제1조(시행일) 이 ${kind}${j} ${A.effective||'발령한 날'}부터 시행한다.`;
+  else if(!/^제\s*\d+\s*조/m.test(cur)) cur=`제1조(시행일) ${cur.replace(/^\s*부\s*칙\s*/,'')}`;     // 한 문장 부칙을 조 형식으로
+  const n=(cur.match(/^제\s*(\d+)\s*조/gm)||[]).length+1;
+  A.addenda=cur+`\n제${n}조${tr}`; raDirty('amend'); _raSave(); raRerender('amend');
+  _toast('부칙에 경과조치를 넣었습니다. 문구를 사안에 맞게 다듬으세요.',4500);
 }
 function raAmendSrc(v){ const A=RA.amend; if(A.src===v) return; const m=raAmendWorkMsg(); if(m&&!confirm(m)){ raRerender('amend'); return; } raGenBump('amend'); A.src=v; if(v==='reg'){ A.pasted=false; } else { A.slug=''; } _raArts=null; Object.assign(A,{title:'',sel:{},changes:[],impact:null,lint:null,review:null,nota:null,moves:'',ab:null}); _raSave(); raRerender('amend'); }
 async function raPasteLoad(restore){
@@ -849,7 +905,7 @@ function raChangesView(){
   }).join('')+
   `<div class="ra-grid2" style="margin-top:12px"><label class="ra-f"><span>개정 이유</span><textarea class="ra-ta" rows="3" oninput="raSet('amend.purpose',this.value)">${_e(A.purpose)}</textarea></label>`+
   `<label class="ra-f"><span>주요 내용 ${raTip('한 줄에 하나')}</span><textarea class="ra-ta" rows="3" oninput="RA.amend.main=this.value.split('\\n');_raSave()">${_e((A.main||[]).join('\n'))}</textarea></label></div>`+
-  `<label class="ra-f"><span>부칙</span><textarea class="ra-ta mono" rows="${Math.min(8,Math.max(2,String(A.addenda||'').split('\n').length))}" placeholder="비우면 “이 ${_e(raKind(A.title))}${raJosa(raKind(A.title))} 발령한 날부터 시행한다.”" oninput="raSet('amend.addenda',this.value)">${_e(A.addenda)}</textarea></label>`+raAbView('amend')+
+  `<label class="ra-f"><span>부칙</span><textarea class="ra-ta mono" rows="${Math.min(8,Math.max(2,String(A.addenda||'').split('\n').length))}" placeholder="비우면 “이 ${_e(raKind(A.title))}${raJosa(raKind(A.title))} 발령한 날부터 시행한다.”" oninput="raSet('amend.addenda',this.value)">${_e(A.addenda)}</textarea></label>`+raTransHint()+raAbView('amend')+
   (A.notes&&A.notes.length?`<div class="ra-note"><b>함께 확인할 점</b><ul>${A.notes.map(n=>`<li>${_e(n)}</li>`).join('')}</ul></div>`:'')+
   `<div class="ra-row"><button class="svc-btn" onclick="raRerender('amend')">대비표·문서 새로고침</button></div>`;
 }
@@ -1645,7 +1701,7 @@ function raHealthView(){
   const table=`<div class="ra-row"><input class="ra-in sm" style="max-width:220px" aria-label="${_e(RA_ORG.reg_word)}명으로 진단표 거르기" placeholder="${_e(RA_ORG.reg_word)}명 검색" value="${_e(f.q||'')}" oninput="raHealthF('q',this.value)">`+
     (f.g?`<button class="ra-chip btn" onclick="raHealthF('g','')">${f.g}등급만 보는 중 ✕</button>`:'')+`<span class="ra-hint" id="raHealthN" aria-live="polite">${rows.length}건</span></div>`+
     `<div class="ra-tbl-w"><table class="ra-tbl"><thead><tr><th>${_e(RA_ORG.reg_word)}</th><th>등급</th><th>점수</th><th>최종 개정</th><th>진단</th></tr></thead><tbody id="raHealthTb">${raHealthTbody(rows)}</tbody></table></div>`;
-  const rule=d.rules?`<details class="ra-det"><summary>점수 기준</summary><div class="ra-hint">100점에서 감점: 없는 조문 인용 건당 -10(최대 -30) · 조 번호 중복·순서 오류 -8 · 현행 목록에 없는 내규명 인용 -6 · 옛 기관명·직위 -5 · 개정 경과 ${_e(d.rules.age)} · ${_e(d.rules.law)}<br>등급: A 95점 이상(양호) · B 85(관심) · C 75(주의) · D 60(경고) · E 60점 미만(위험)</div></details>`:'';
+  const rule=d.rules?`<details class="ra-det"><summary>점수 기준</summary><div class="ra-hint">100점에서 감점: 없는 조문 인용 건당 -10(최대 -30) · 다른 내규의 없는·삭제된 조문 인용 -8 · 조 번호 중복·순서 오류 -8 · 현행 목록에 없는 내규명 인용 -6 · 옛 기관명·직위 -5 · 개정 경과 ${_e(d.rules.age)} · ${_e(d.rules.law)}<br>등급: A 95점 이상(양호) · B 85(관심) · C 75(주의) · D 60(경고) · E 60점 미만(위험)</div></details>`:'';
   const lawSec=`<div class="ra-row"><button class="svc-btn" onclick="raHealthLaws()">${raIc('upper')}상위법 최신성 확인</button>${raTip(`${_e(RA_ORG.reg_word)}가 인용한 법령 ${d.laws.length}개의 현행 시행일을 법제처에서 조회해, ${_e(RA_ORG.reg_word)} 개정일보다 나중에 시행된 법령을 찾습니다.${lawN?` (확인 ${lawN}개)`:''}`)}</div><div id="raLawProg"></div>`+
     raStats([{v:d.laws.length,l:'인용 법령',ic:'upper',tone:'acc'},{v:lawN,l:'시행일 확인',ic:'check',tone:lawN?'ok':'n'},{v:lawN?d.stale_regs:'—',l:'미반영 의심 내규',ic:'alert',tone:lawN&&d.stale_regs?'warn':'n'}])+
     raMeter(lawN/Math.max(1,d.laws.length),'acc')+`<div class="ra-meta" style="margin-top:6px">법제처 확인 ${Math.round(lawN/Math.max(1,d.laws.length)*100)}%</div>`;
@@ -1731,11 +1787,11 @@ function raRegsAmendArt(slug,title,no){
 }
 function raRegsGraph(slug){ RA.graph=RA.graph||{}; RA.graph.sel=slug; _raSave(); raTab('graph'); }
 // ── 건강검진 문제 펼쳐 보기 → 고른 문제로 개정 작업 ──
-const RA_HCODE={ref:'없는 조문 인용',dup:'조 번호 중복',order:'조 번호 순서 오류',regname:'현행 목록에 없는 내규명 인용',stale:'옛 기관명·직위'};
+const RA_HCODE={ref:'없는 조문 인용',xref:'다른 내규의 없는·삭제된 조문 인용',deleg:'시행세칙 위임 확인',dup:'조 번호 중복',order:'조 번호 순서 오류',regname:'현행 목록에 없는 내규명 인용',stale:'옛 기관명·직위'};
 function raHealthChips(r){
   const on=(RA.health.open||{})[r.slug];
   const chip=(code,label,tone)=>`<button class="ra-chip btn${tone?' '+tone:''}${on===code?' on':''}" aria-expanded="${on===code}" onclick="raHealthOpen('${_a(r.slug)}','${code}')">${_e(label)}</button>`;
-  return Object.entries(r.counts||{}).map(([c,n])=>chip(c,`${RA_HCODE[c]||c} ${n}건`,['ref','dup','order'].includes(c)?'hi':'warn')).join('')+
+  return Object.entries(r.counts||{}).map(([c,n])=>chip(c,`${RA_HCODE[c]||c} ${n}건`,['ref','xref','dup','order'].includes(c)?'hi':'warn')).join('')+
     (r.age>=2?chip('age',`개정 후 ${r.age}년 경과`,''):'')+
     (raArr(r.stale_laws).length?chip('law',`내규 개정 뒤 시행된 상위법 ${r.stale_laws.length}건`,'warn'):'');
 }
@@ -1758,7 +1814,7 @@ function raHealthDetail(r){
   const rows=iss.map((x,i)=>({x,i})).filter(({x})=>code==='all'||x.code===code);
   let h='';
   if(rows.length) h+=`<ul class="ra-hlist">`+rows.map(({x,i})=>`<li><label class="ra-hpick"><input type="checkbox" ${p[i]!==false?'checked':''} onchange="raHealthPick('${_a(r.slug)}',${i},this.checked)" aria-label="${_e(raLbl(x.no))} 문제를 개정 작업에 넣기"></label><div>`+
-      `<div class="ra-hl-h"><span class="ra-chip ${['ref','dup','order'].includes(x.code)?'hi':'warn'}">${_e(RA_HCODE[x.code]||x.code)}</span><b>${_e(raLbl(x.no))}${x.art_title?`(${_e(x.art_title)})`:''}</b></div>`+
+      `<div class="ra-hl-h"><span class="ra-chip ${['ref','xref','dup','order'].includes(x.code)?'hi':'warn'}">${_e(RA_HCODE[x.code]||x.code)}</span><b>${_e(raLbl(x.no))}${x.art_title?`(${_e(x.art_title)})`:''}</b></div>`+
       `<div class="ra-hl-m">${_e(String(x.msg||'').replace(/^제\d+조(?:의\d+)?(?:의|에서|에)\s+/,'').replace(x.new?/\s*\(유사: [^)]*\)$/:/$^/,''))}</div>`+
       (x.snip?`<div class="ra-snip">${mark(x.snip,x.term)}</div>`:'')+
       (x.new?`<div class="ra-hl-fix">${raIc('amend')}고칠 말: <s>${_e(x.term)}</s> → <b>${_e(x.new)}</b></div>`:raArr(x.cands).length?`<div class="ra-hl-fix">비슷한 현행 ${_e(RA_ORG.reg_word)}: ${x.cands.map(c=>'「'+_e(c)+'」').join(', ')}</div>`:'')+
@@ -1972,7 +2028,7 @@ function raCheckToAmend(slug, title){
   if(!iss.length&&RA.check.one&&RA.check.one.reg===title) iss=RA.check.one.issues||[];
   iss=iss.filter(i=>i.level!=='info');
   const nos=[...new Set(iss.map(i=>raNormNo(i.no)).filter(Boolean))].slice(0,12);
-  const kinds=[...new Set(iss.map(i=>({ref:'없는 조문 인용',dup:'조 번호 중복',order:'조 번호 순서',regname:'내규 명칭',stale:'구 명칭',gap:'결번',title:'조 제목',hang:'항 번호',ho:'호 번호',addenda:'부칙'})[i.code]).filter(Boolean))];
+  const kinds=[...new Set(iss.map(i=>({ref:'없는 조문 인용',xref:'다른 내규 조문 인용',deleg:'시행세칙 위임',dup:'조 번호 중복',order:'조 번호 순서',regname:'내규 명칭',stale:'구 명칭',gap:'결번',title:'조 제목',hang:'항 번호',ho:'호 번호',addenda:'부칙'})[i.code]).filter(Boolean))];
   raAmendStart(slug, title, {sel:nos, intent:kinds.length?`점검 결과 정비: ${kinds.slice(0,4).join('·')}`:''});
 }
 

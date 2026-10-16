@@ -823,3 +823,9 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 .ra-regs-al li.del{color:var(--mu);}
 .ra-regs-al .ra-regs-ch{font-weight:700;color:var(--tx);margin-top:6px;column-span:none;}
 @media (max-width:640px){ .ra-regs-r{flex-wrap:wrap;} .ra-regs-a{width:100%;justify-content:flex-start;padding-left:54px;} .ra-regs-arts{margin-left:0;} }
+/* 개정 전후 점검 비교 */
+.ra-lcmp{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;margin:0 0 8px;color:var(--tx2);}
+.ra-lcmp span{display:inline-flex;align-items:center;gap:4px;}
+.ra-lcmp svg.ic{width:15px;height:15px;}
+.ra-lcmp .bad{color:var(--bad);} .ra-lcmp .ok{color:var(--ok);}
+.ra-lint li.lv-ok{color:var(--mu);}

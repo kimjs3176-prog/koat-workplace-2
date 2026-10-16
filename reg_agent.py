@@ -416,6 +416,46 @@ def resolve_reg(b: dict):
     return find_reg(b.get("slug", ""), b.get("reg", ""))
 
 
+def _reg_arts(title: str) -> dict:
+    """내규명 → {조 번호 키: 조문}. 다른 내규 조문 인용을 확인할 때 쓴다."""
+    r = next((x for x in all_regs() if x["title"] == title), None)
+    return {art_key(a["no"]): a for a in r["articles"]} if r and r["articles"] else {}
+
+
+_DELEG_RE = re.compile(r"(시행세칙|세칙)(?:으로|로|에서)\s*(?:따로\s*)?정한다")
+
+
+def delegation_check(title: str, arts: list) -> list:
+    """「X」에서 “…은 시행세칙으로 정한다”고 맡긴 조문 → 「X 시행세칙」이 그 조를 받았는지.
+    받았다고 보는 경우: 시행세칙이 「X」·규정 제N조를 인용하거나, 시행세칙 조 제목에 위임 조 제목의 낱말이 있음.
+    “이 규정 시행에 필요한 사항” 같은 일반 위임(조 제목 ‘시행세칙’ 등)은 보지 않는다."""
+    if not title:
+        return []
+    child = next((r for r in all_regs() if _nk(r["title"]) == _nk(title + " 시행세칙")), None)
+    if not child:
+        return []
+    live = [a for a in child["articles"] if not a["deleted"]]
+    cbody = "\n".join(a["body"] for a in live)
+    ctitles = " ".join(a["title"] for a in live)
+    tp = r"\s*".join(map(re.escape, re.sub(r"\s+", "", title)))
+    out = []
+    for a in arts:
+        if a.get("deleted"):
+            continue
+        m = _DELEG_RE.search(a.get("body", ""))
+        if not m or re.search(r"시행세칙|위임|시행", a.get("title", "")) or re.search(r"이\s*(?:규정|규칙)\s*(?:의\s*)?시행에\s*필요한", a["body"]):
+            continue
+        n = a["no"].split("의")[0]
+        cited = re.search(r"(?:「\s*" + tp + r"\s*」|규정|규칙|정관)\s*제\s*" + n + r"\s*조(?!\s*의)", cbody)
+        sent = re.split(r"[.。]\s*|\n", a["body"][:m.start()])[-1]          # 위임 문장 앞부분(“장표의 기록 등에 관하여 …”)
+        stop = {"관한", "관하여", "사항", "구체적인", "필요한", "세부사항", "세부", "구체적", "기준", "방법", "절차", "그밖에", "밖에"}
+        words = {_JOSA_TAIL.sub("", w) for w in re.findall(r"[가-힣]{2,}", a.get("title", "") + " " + sent)}
+        topical = any(len(w) >= 2 and w not in stop and w in ctitles for w in words)
+        out.append({"no": a["no"], "title": a.get("title", ""), "child": child["title"], "phrase": m.group(0),
+                    "covered": bool(cited or topical)})
+    return out
+
+
 def _reg_names() -> dict:
     """정규화 내규명 → 정식 명칭."""
     return {_nk(r["title"]): r["title"] for r in all_regs()}
@@ -688,6 +728,21 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                 continue
             if not nm.endswith(_REG_SUFFIX):
                 continue
+            if _nk(nm) in regnames and _nk(nm) != _nk(title):
+                # (5-1) 다른 내규의 조문 인용: 「여비규정」 제30조 → 그 내규에 제30조가 있는지·삭제됐는지
+                mr = re.match(r"\s*(?:\(\s*이하[^)]{0,30}\)\s*)?제\s*(\d+)\s*조(?:\s*의\s*(\d+))?", body[m.end():m.end() + 40])
+                if mr:
+                    rno = mr.group(1) + (("의" + mr.group(2)) if mr.group(2) else "")
+                    tgt = _reg_arts(regnames[_nk(nm)])
+                    a2 = tgt.get(art_key(rno)) if tgt else None
+                    raw = body[m.start():m.end() + mr.end()].strip()
+                    if tgt and a2 is None:
+                        add("error", "xref", no, f"{lbl}에서 인용한 「{nm}」 {art_label(rno)}가 그 {ORG['reg_word']}에 없습니다: “{raw}”",
+                            term=raw, reg=regnames[_nk(nm)])
+                    elif a2 is not None and a2["deleted"]:
+                        add("error", "xref", no, f"{lbl}에서 인용한 「{nm}」 {art_label(rno)}는 삭제된 조문입니다: “{raw}”",
+                            term=raw, reg=regnames[_nk(nm)])
+                continue
             if _nk(nm) in regnames or _nk(nm) == _nk(title) or nm == "정관" or re.sub(r"\s+", "", nm) in _EXTERNAL_REGS:
                 continue
             ownp = [t for t in [ORG["org_short"], ORG["org_name"]] + [o for o, _ in _STALE_TERMS + _STALE_WORDS] if t]
@@ -739,6 +794,12 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
         # (8-2) 용어 정의 — 중복 정의·쓰지 않는 용어·정의 전 사용
         for lv, tno, msg in term_check(arts):
             add(lv, "term", tno, msg)
+        # (8-3) 시행세칙 위임 — 이 내규가 “시행세칙으로 정한다”고 맡긴 사항을 시행세칙이 받았는지
+        for dg in delegation_check(title, arts):
+            if not dg["covered"]:
+                add("info", "deleg", dg["no"],
+                    f"{art_label(dg['no'])}({dg['title']})에서 시행세칙으로 위임했지만 「{dg['child']}」에서 이 조를 받은 조문이 보이지 않습니다. 위임 사항이 정해졌는지 확인하세요.",
+                    term=dg["phrase"], reg=dg["child"])
         # (9) 부칙·시행일
         if not (addenda or "").strip():
             add("warn", "addenda", "", f"부칙이 없습니다. 시행일을 정하는 부칙을 두세요{_lref('addenda')}.")
@@ -1416,7 +1477,7 @@ def ra_lint():
         rows, tot = [], {"error": 0, "warn": 0, "info": 0}
         for r in all_regs():
             iss = [i for i in lint_articles(r["articles"], r["addenda"], r["appendix"], r["title"], full=False)
-                   if i["code"] in ("ref", "regname", "stale", "dup", "order")]
+                   if i["code"] in ("ref", "xref", "regname", "stale", "dup", "order")]
             if not iss:
                 continue
             for i in iss:
@@ -1443,8 +1504,18 @@ def ra_lint():
     if not p["articles"]:
         iss.insert(0, {"level": "error", "code": "noart", "no": "",
                        "msg": "“제1조(목적)” 형식의 조문을 찾지 못했습니다.", "fix": ""})
-    return jsonify({"success": True, "mode": "text", "issues": iss,
-                    "articles": len(p["articles"])})
+    out = {"success": True, "mode": "text", "issues": iss, "articles": len(p["articles"])}
+    base = find_reg(b.get("base_slug", ""), "") if b.get("base_slug") else None
+    if base:                              # 개정 전후 비교: 이번 개정으로 새로 생긴 문제·해결된 문제
+        key = lambda i: (i["code"], re.sub(r"\s+", "", i["msg"]))
+        old = lint_articles(base["articles"], base["addenda"], base["appendix"], base["title"])
+        ok = {key(i) for i in old}
+        nk_ = {key(i) for i in iss}
+        for i in iss:
+            i["new"] = key(i) not in ok
+        out["fixed"] = [i for i in old if key(i) not in nk_ and i["level"] != "info"][:40]
+        out["base"] = base["title"]
+    return jsonify(out)
 
 
 @bp.route("/api/regagent/parse", methods=["POST"])
@@ -1973,7 +2044,7 @@ def review_draft(b: dict) -> dict:
     if not style and not longs:
         f("clear", "ok", "표기·문장 길이에서 특이사항이 없습니다.")
     # 체제·효력
-    st = [i for i in lint if i["code"] in ("dup", "order", "gap", "first", "title", "empty", "hang", "ho", "mok", "ref", "addenda", "appx", "noart")]
+    st = [i for i in lint if i["code"] in ("dup", "order", "gap", "first", "title", "empty", "hang", "ho", "mok", "ref", "xref", "deleg", "addenda", "appx", "noart")]
     for i in st[:8]:
         f("form", "warn" if i["level"] != "info" else "check", i["msg"])
     if not arts:
@@ -2191,7 +2262,7 @@ def cited_laws(reg: dict) -> list:
 
 
 # 감점(건당, 상한). 점수 기준은 화면에도 그대로 안내한다
-_H_W = {"ref": (10, 30), "dup": (8, 16), "order": (8, 16), "regname": (6, 18), "stale": (5, 15)}
+_H_W = {"ref": (10, 30), "xref": (8, 24), "dup": (8, 16), "order": (8, 16), "regname": (6, 18), "stale": (5, 15)}
 _H_GRADE = [("A", 95), ("B", 85), ("C", 75), ("D", 60), ("E", 0)]
 
 
@@ -2202,7 +2273,7 @@ def health_row(r: dict, law_info: dict, today: str) -> dict:
     for i in iss:
         cnt[i["code"]] = cnt.get(i["code"], 0) + 1
     pen, reasons = 0, []
-    labels = {"ref": "없는 조문 인용", "dup": "조 번호 중복", "order": "조 번호 순서 오류",
+    labels = {"ref": "없는 조문 인용", "xref": "다른 내규의 없는·삭제된 조문 인용", "dup": "조 번호 중복", "order": "조 번호 순서 오류",
               "regname": "현행 목록에 없는 내규명 인용", "stale": "옛 기관명·직위"}
     for code, n in cnt.items():
         w, cap = _H_W[code]
@@ -2261,7 +2332,7 @@ def ra_health():
                     "rules": {"weights": _H_W, "grades": _H_GRADE,
                               "age": "2년 -4 · 3년 -8 · 5년 이상 -15", "law": "상위법 건당 -8(최대 -32)"},
                     "avg": round(sum(x["score"] for x in rows) / n, 1), "grades": grades,
-                    "with_errors": sum(1 for x in rows if x["counts"].get("ref") or x["counts"].get("dup") or x["counts"].get("order")),
+                    "with_errors": sum(1 for x in rows if x["counts"].get("ref") or x["counts"].get("xref") or x["counts"].get("dup") or x["counts"].get("order")),
                     "with_issues": sum(1 for x in rows if x["reasons"]),
                     "issue_total": sum(sum(x["counts"].values()) for x in rows),
                     "stale_regs": sum(1 for x in rows if x["stale_laws"]),
