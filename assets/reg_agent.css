@@ -776,3 +776,27 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 .ra-bulk-i{display:flex;gap:8px;align-items:flex-start;}
 .ra-bulk-i>input{margin-top:13px;flex:none;width:18px;height:18px;}
 .ra-bulk-i>.ra-det{flex:1;min-width:0;}
+/* 건강검진: 문제 펼쳐 보기 */
+.ra-prio li{flex-wrap:wrap;}
+.ra-hdet{flex-basis:100%;min-width:0;}
+.ra-hdet:empty{display:none;}
+.ra-hdet:not(:empty){margin-top:10px;padding-top:10px;border-top:1px dashed var(--bd);}
+.ra-hdet-tr td{background:var(--sf2);}
+.ra-hlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
+.ra-hlist li{display:flex;gap:8px;align-items:flex-start;border:0;padding:0;}
+.ra-hpick input{width:17px;height:17px;margin-top:3px;}
+.ra-hlist li>div{flex:1;min-width:0;}
+.ra-hl-h{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px;}
+.ra-hl-m{font-size:12.5px;color:var(--tx2);margin-top:2px;line-height:1.55;}
+.ra-hlist .ra-snip mark{background:var(--warn-l);color:var(--tx);font-weight:700;border-radius:3px;padding:0 2px;}
+.ra-hl-fix{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-size:12.5px;margin-top:4px;color:var(--tx);}
+.ra-hl-fix svg.ic{width:14px;height:14px;color:var(--g);}
+.ra-hl-fix s{color:var(--mu);}
+.ra-hl-x{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12.5px;color:var(--tx2);margin-top:8px;}
+.ra-hl-x svg.ic{width:15px;height:15px;color:var(--mu);flex:none;}
+.ra-hgo{margin-top:10px;}
+.ra-hgo .svc-btn{margin:0;}
+.ra-chip.btn.on{outline:2px solid var(--g);outline-offset:1px;}
+.ra-chip.btn.hi{color:var(--bad);background:var(--bad-l);border-color:transparent;}
+.ra-chip.btn.warn{color:var(--warn);background:var(--warn-l);border-color:transparent;}
+.ra-chip.btn.hi:hover,.ra-chip.btn.warn:hover{filter:brightness(.96);text-decoration:underline;}

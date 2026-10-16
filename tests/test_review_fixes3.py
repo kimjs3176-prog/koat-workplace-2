@@ -96,3 +96,13 @@ def test_law_api_fails_fast(client, monkeypatch):
     monkeypatch.setattr(api_server._LAW_SESSION, "get", boom)
     r = client.get("/api/law/articles?name=근로기준법")
     assert r.status_code == 502
+
+
+def test_health_issues_have_detail(client):
+    rows = client.get("/api/regagent/health").get_json()["rows"]
+    iss = [i for r in rows for i in r["issues"]]
+    assert iss and all("art_title" in i and "snip" in i for i in iss)
+    stale = [i for i in iss if i["code"] == "stale"]
+    assert all(i.get("term") and i.get("new") for i in stale)
+    regname = [i for i in iss if i["code"] == "regname" and i.get("new")]
+    assert all(i["term"] in i["snip"] for i in regname)

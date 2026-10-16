@@ -616,8 +616,8 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
     issues = []
     regnames = _reg_names()
 
-    def add(level, code, no, msg, fix=""):
-        issues.append({"level": level, "code": code, "no": no, "msg": msg, "fix": fix})
+    def add(level, code, no, msg, fix="", **ex):
+        issues.append({"level": level, "code": code, "no": no, "msg": msg, "fix": fix, **ex})
 
     names = {}
     for a in arts:
@@ -677,10 +677,10 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
         for rno, raw, pos in internal_refs(body):
             if art_key(rno) not in have and rno not in seen:
                 seen.add(rno)
-                add("error", "ref", no, f"{lbl}에서 인용한 {art_label(rno)}가 이 내규에 없습니다: “{raw.strip()}”")
+                add("error", "ref", no, f"{lbl}에서 인용한 {art_label(rno)}가 이 내규에 없습니다: “{raw.strip()}”", term=raw.strip())
             elif art_key(rno) in gone and rno not in seen:
                 seen.add(rno)
-                add("error", "ref", no, f"{lbl}에서 삭제된 {art_label(rno)}를 인용합니다: “{raw.strip()}”")
+                add("error", "ref", no, f"{lbl}에서 삭제된 {art_label(rno)}를 인용합니다: “{raw.strip()}”", term=raw.strip())
         # (5) 「내규명」 확인
         for m in _QUOTED_NAME.finditer(body):
             nm = m.group(1).strip()
@@ -699,14 +699,15 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                 continue                  # 정부 규정·지침 등 외부 규범으로 본다
             add("warn", "regname", no,
                 f"{lbl}의 「{nm}」{_josa(nm)} 현행 내규 목록에 없습니다. 명칭 변경·폐지 여부를 확인하세요."
-                + (f" (유사: {', '.join('「'+x+'」' for x in near)})" if near else ""))
+                + (f" (유사: {', '.join('「'+x+'」' for x in near)})" if near else ""),
+                term=nm, **({"new": near[0]} if len(near) == 1 else {"cands": near}))
         # (6) 구 명칭
         for old, new in _STALE_TERMS:
             if old in body:
-                add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”{_josa(old, ('이', '가'))} 있습니다.", f"“{old}” → “{new}”")
+                add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”{_josa(old, ('이', '가'))} 있습니다.", f"“{old}” → “{new}”", term=old, new=new)
         for old, new in _STALE_WORDS:
             if re.search(r"(?<![가-힣])" + re.escape(old) + r"(?:은|는|이|가|의|에|에서|과|와|을|를)?(?![가-힣])", body):
-                add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”{_josa(old, ('이', '가'))} 있습니다.", f"“{old}” → “{new}”")
+                add("warn", "stale", no, f"{lbl}에 구 명칭 “{old}”{_josa(old, ('이', '가'))} 있습니다.", f"“{old}” → “{new}”", term=old, new=new)
         # (7) 알기 쉬운 표기
         if full:
             for pat, rep in _STYLE_RULES:
@@ -2204,9 +2205,17 @@ def health_row(r: dict, law_info: dict, today: str) -> dict:
         reasons.append(f"내규 개정 뒤 시행된 상위법 {len(stale_laws)}건")
     score = max(0, 100 - pen)
     grade = next(g for g, cut in _H_GRADE if score >= cut)
+    by_no = {a["no"]: a for a in r["articles"]}
+    detail = []
+    for i in iss[:30]:                    # 화면에서 바로 확인하도록 조 제목과 문제 부분 앞뒤 글을 붙인다
+        a = by_no.get(i["no"]) or {}
+        body = a.get("body", "")
+        k = body.find(i["term"]) if i.get("term") else -1
+        snip = _snip(body, k) if k >= 0 else body[:90] + ("…" if len(body) > 90 else "")
+        detail.append({**i, "art_title": a.get("title", ""), "snip": snip})
     return {"slug": r["slug"], "title": r["title"], "category": r["category"], "revision": r.get("revision", ""),
             "rev_date": rd, "age": age, "score": score, "grade": grade, "counts": cnt,
-            "issues": iss[:12], "laws": laws, "stale_laws": stale_laws, "reasons": reasons,
+            "issues": detail, "laws": laws, "stale_laws": stale_laws, "reasons": reasons,
             "n_articles": len(r["articles"])}
 
 
