@@ -217,3 +217,43 @@ def test_xref_checks_own_gangryeong_and_branch_delegation():
 def test_stale_skips_quoted_law_article_title():
     arts = ra.parse_text("제1조(목적) 「농촌진흥법」 부칙 제2조(실용화재단 직원의 임용등에 관한 특례)에 따른다.")["articles"]
     assert not [i for i in ra.lint_articles(arts, "", "", "인사규정") if i["code"] == "stale"]
+
+
+def test_ref_after_quoted_definition_is_external():
+    assert ra.internal_refs("이 세칙은 “치유농업사 자격시험 규칙(이하”규칙“이라 한다)” 제44조제1항에 의하여") == []
+
+
+# ── 점검 라운드: API 견고성·점검 오탐 ───────────────────────────────────────
+def test_api_bad_types_no_500(client):
+    assert client.post("/api/regagent/health", json={"law_info": {"공공기관의 운영에 관한 법률": "20240101"}}).status_code == 200
+    r = client.post("/api/regagent/similar", data='{"query":"출장","limit":1e400}', content_type="application/json")
+    assert r.status_code == 200
+    assert client.post("/api/regagent/upper", json={"law": "가" * 300}).status_code == 400
+
+
+def test_parse_nested_title_and_mismatched_annot():
+    p = ra.parse_text("제38조(후속(연계 지원)) ① 가.\n② 나.")
+    assert p["articles"][0]["title"] == "후속(연계 지원)" and p["articles"][0]["body"].startswith("①")
+    p = ra.parse_text("제25조(평가) [제24조에서 이동, 종전 제24조는 삭제 2023.01.11〕 ① 가.\n② 나.")
+    assert p["articles"][0]["body"].startswith("①")
+
+
+def test_term_def_ira_hameun_and_abbr_fragments():
+    arts = ra.parse_text("제1조(목적) 이 규칙은 치유농업사 자격시험을 정한다.\n"
+                         "제2조(정의) 1. “감사인” 이라 함은 감사를 하는 사람을 말한다.\n"
+                         "제3조(시험) 치유농업사 자격시험(이하 “자격시험”이라 한다)은 감사인이 본다. 자격시험은 매년 한다.")["articles"]
+    msgs = " ".join(m for _, _, m in ra.term_check(arts))
+    assert "“감사인”이 다른 곳에서" not in msgs and "먼저 씁니다" not in msgs
+
+
+def test_bulk_josa_non_hangul_and_join_locs():
+    assert ra._bulk_sentence([("제1조", ("ESG", "지속가능경영"))], "ESG", "지속가능경영") == "제1조 중 “ESG”를 “지속가능경영”으로 한다."
+    assert ra._ro("제1") == "로" and ra._ro("제3") == "으로"
+    assert ra._join_locs(["제5조제1항제1호", "제5조제1항제3호", "제5조제2항"]) == "제5조제1항제1호, 같은 항 제3호 및 같은 조 제2항"
+    assert ra._join_locs(["제3조제1항 본문", "제3조제1항 단서"]) == "제3조제1항"
+
+
+def test_template_purpose_forms():
+    t = ra.template_enact({"title": "안전관리규정", "purpose": "안전관리에 관한 사항을 정함"})
+    assert "사항을 정함에 필요한" not in t["articles"][0]["body"] and "안전관리에 필요한 사항" in t["articles"][0]["body"]
+    assert "에 관한 사항에 필요한" not in ra.template_enact({"title": "X 지침"})["articles"][0]["body"]

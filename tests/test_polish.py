@@ -52,7 +52,7 @@ def test_clean_addenda_strips_heading(ra):
 def test_template_has_no_term_noise(ra):
     t = ra.template_enact({"title": "드론 운영지침", "purpose": "드론 운영",
                            "delegations": [{"law": "항공안전법", "art": "제5조(기술지원)"}]})
-    assert "제5조에 따라" in t["articles"][0]["body"]          # 위임 조항 제목은 빼고 인용
+    assert "「항공안전법」 제5조에서 위임된 사항" in t["articles"][0]["body"]   # 위임 조항 제목은 빼고 인용
     assert not ra.term_check(t["articles"])
     assert "을(를)" not in t["reason"]["purpose"]
 
