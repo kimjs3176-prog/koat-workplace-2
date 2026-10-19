@@ -229,7 +229,7 @@ test('raAbBuild: 부칙 도우미 — 시행일만이면 한 문장, 여럿이�
   RA.amend.ab = { eff: 'issue', other: true };
   RA.amend.impact = { outer: [{ reg: '국외여비지침', hits: [{ no: '3', cites: '5', text: '「여비규정」 제5조', suggest: '「여비규정」 제5조 → 제6조' }] }] };
   const o = c.raAbBuild('amend').split('\n');
-  assert.equal(o[1], '제2조(다른 내규의 개정) 「국외여비지침」 일부를 다음과 같이 개정한다.');
+  assert.equal(o[1], '제2조(다른 내규의 개정) 국외여비지침 일부를 다음과 같이 개정한다.');
   assert.equal(o[2], '제3조 중 “「여비규정」 제5조”를 “「여비규정」 제6조”로 한다.');
 });
 
@@ -422,4 +422,17 @@ test('경과조치·조사 교체: ①② 부칙 변환, 최대 조 번호, 금�
   assert.match(add('여비규정', '제1조(시행일) 가.\n제3조(경과) 나.\n제5조는 다.'), /\n제4조\(경과조치\)/);
   assert.equal(c.raQtyDiff('1,000원 2024년', '1000원 2025년'), null);
   assert.equal(c.raSwapTerm('재단으로서 재단이었다', '재단', '농진원', false).text, '농진원으로서 농진원이었다');
+});
+
+test('개정문 문형: 어미를 조사로 떼지 않음·낱말 삭제·안쪽 따옴표·같은 항', () => {
+  const c = load();
+  const S = (no, ob, nb) => c.raAmendSentences({ no, title: 't', body: ob }, { no, title: 't', body: nb, type: 'modify' }).head;
+  assert.equal(S('4', '원장은 수당을 지급하는 경우 통보한다.', '원장은 수당을 지급할 수 있는 경우 통보한다.'), '제4조 중 “지급하는”을 “지급할 수 있는”으로 한다.');
+  assert.equal(S('9', '원장은 예산의 범위에서 수당을 지급할 수 있다.', '원장은 수당을 지급할 수 있다.'), '제9조 중 “예산의 범위에서 ”를 삭제한다.');
+  assert.ok(!/““/.test(S('11', '용어는 다음과 같다.\n1. “직원”이란 정규직을 말한다.\n2. “부서”란 팀을 말한다.', '용어는 다음과 같다.\n1. “직원”이란 정규직을 말한다.\n2. “부서”란 팀과 실을 말한다.')));
+  assert.equal(S('8', '① 가.\n② 다음 각 호.\n1. 갑\n2. 을\n3. 병', '① 가.\n② 다음 각 호.\n1. 갑\n2. 삭제\n3. 병\n4. 정'), '제8조제2항제2호를 삭제하고, 같은 항에 제4호를 다음과 같이 신설한다.');
+  const B = '① 위원회는 7명으로 구성한다.\n② 위원장은 원장이 된다.';
+  const r = c.raCmpCell({ no: '5', title: '위원회', body: B }, { no: '5', title: '위원회의 구성', body: B }, true);
+  assert.equal(r[3], '제5조(위원회의 구성) ① (현행과 같음)\n② (현행과 같음)');
+  assert.equal(r[2], '제5조(위원회) ① (생 략)\n② (생 략)');
 });

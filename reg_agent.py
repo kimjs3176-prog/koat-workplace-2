@@ -35,8 +35,9 @@ _CTX: dict = {}
 
 # ── 요청 본문 정리: 잘못된 형식(배열·숫자 본문, 필드 타입 오류)은 기본값으로 바꿔 500 대신 400/정상 처리 ──
 _STR_KEYS = {"text", "title", "reg", "slug", "query", "exclude", "law", "old", "new", "mode", "purpose", "intent",
-             "effective", "contents", "filename", "request", "category", "dept", "provider", "api_key", "model"}
-_STRLIST_KEYS = {"nos", "arts", "slugs", "names", "main", "focus"}
+             "effective", "contents", "filename", "request", "category", "dept", "provider", "api_key", "model",
+             "q", "kw", "idx"}
+_STRLIST_KEYS = {"nos", "arts", "slugs", "names", "main", "focus", "orgs"}
 _DICTLIST_KEYS = {"delegations", "targets", "refs", "blocks", "alio_refs"}
 _DICT_KEYS = {"moves", "ans", "law_info", "texts", "kinds"}
 _MAX_LIST = 2000
@@ -181,10 +182,10 @@ _ANNOT_ANGLE = re.compile(
 # [본조신설 2020.03.20.] · [전문개정 …] · [본조제목변경 …]
 _ANNOT_SQ = re.compile(
     r"\s*\[\s*(?:본조신설|전문개정|본조제목변경|제목개정|본조개정|본조이동|종전)[^\]\n]{0,80}\]"
-    r"|\s*〔[^〕\n]{0,80}(?:이동|종전|신설|개정)[^〕\n]{0,60}〕")
+    r"|\s*[〔\[][^\]〕\n]{0,80}(?:이동|종전|신설|개정)[^\]〕\n]{0,60}[〕\]]")   # 짝이 안 맞는 “[제24조에서 이동 …〕”도
 _CHAP_LINE = re.compile(r"^제\s*(\d+)\s*(장|절|관|편)\s*(.{0,40})$")
 _ART_LINE = re.compile(
-    r"^제\s*(\d+)\s*조(?:\s*의\s*(\d+))?\s*(?:[(（]\s*([^)）\n]{0,60}?)\s*[)）]|(?=\s*(?:[<＜〔\[]\s*)?(?:삭제|종전))|\s*$)")
+    r"^제\s*(\d+)\s*조(?:\s*의\s*(\d+))?\s*(?:[(（]\s*((?:[^()（）\n]|[(（][^()（）\n]{0,30}[)）]){0,60}?)\s*[)）]|(?=\s*(?:[<＜〔\[]\s*)?(?:삭제|종전))|\s*$)")
 _ADDENDA_LINE = re.compile(r"^[<＜【〔\[［]?\s*부\s*칙(?![가-힣])")          # 부칙 · 부 칙2023. 3. 15. · <부칙> · 【부칙】
 _APPX_LINE = re.compile(r"^[\[［〔【<＜]\s*(별표|별지)")
 _HANG_CH = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
@@ -578,13 +579,28 @@ def external_reg_refs(text: str, title: str):
 # ══════════════════════════════════════════════════════════════════════════
 # 3. 점검(lint)
 # ══════════════════════════════════════════════════════════════════════════
+def _bat(word: str) -> int:
+    """끝 글자 받침: 0 없음, 1 있음, 2 ㄹ(‘로’를 씀). 숫자·영문·한자는 읽는 소리로(JS raBat 과 같다)."""
+    t = re.sub(r"[”\"’'\]」』>〕］】]+$", "", (word or "").strip())
+    while t.endswith(")") and t.rfind("(") > 0:
+        t = t[:t.rfind("(")].rstrip()                 # “원장(부원장을 포함한다)” → “원장”
+    c = t[-1:] or " "
+    if "\u4e00" <= c <= "\u9fff":
+        return 1
+    if "가" <= c <= "힣":
+        j = (ord(c) - 0xAC00) % 28
+        return 0 if not j else 2 if j == 8 else 1
+    if c.isdigit():
+        return {"0": 1, "1": 2, "3": 1, "6": 1, "7": 2, "8": 2}.get(c, 0)   # 영·일·삼·육·칠·팔
+    if c.lower() in "lr":
+        return 2 if c.lower() == "l" else 0
+    return 1 if c.lower() in "mn" else 0
+
+
 def _josa(word: str, pair=("은", "는")) -> str:
-    if not word:
+    if not (word or "").strip():
         return pair[0]
-    ch = word.strip()[-1]
-    if "가" <= ch <= "힣":
-        return pair[0] if (ord(ch) - 0xAC00) % 28 else pair[1]
-    return pair[0]
+    return pair[0] if _bat(word) else pair[1]
 
 
 def _kind_of(title: str) -> str:
@@ -603,7 +619,7 @@ def _lref(key: str) -> str:
 
 
 # 용어 정의 — 정의 조항의 “X”란 …, 본문의 (이하 “X”라 한다)
-_DEF_LINE = re.compile(r"(?:^|\n)\s*(?:[①-⑳]\s*)?(?:\d{1,2}\.\s*)?[“\"‘']([^”\"’'\n(]{1,30})[”\"’']\s*(?:\([^)]{0,30}\)\s*)?(?:이)?란\s")
+_DEF_LINE = re.compile(r"(?:^|\n)\s*(?:[①-⑳]\s*)?(?:\d{1,2}\.\s*)?[“\"‘']([^”\"’'\n(]{1,30})[”\"’']\s*(?:\([^)]{0,30}\)\s*)?(?:(?:이)?란|(?:이)?라\s*함은)\s")
 _ABBR_DEF = re.compile(r"\(\s*이하\s*(?:이\s*조에서\s*|이\s*장에서\s*)?[“\"‘']([^”\"’']{1,20})[”\"’']\s*(?:이)?라\s*한다\s*\)")
 _TERM_GENERIC = {"위원회", "위원장", "심의회", "협의회", "위원", "기관", "규정", "규칙", "지침", "세칙", "요령", "기준", "법", "영"}
 
@@ -623,7 +639,10 @@ def term_check(arts: list, cap: int = 8) -> list:
     for i, a in enumerate(live):
         body = a.get("body", "")
         for m in _DEF_LINE.finditer(body):
-            defs.setdefault(re.sub(r"\s+", " ", m.group(1)).strip(), []).append((i, "def", m))
+            t = re.sub(r"\s+", " ", m.group(1)).strip()
+            if m.group(0).rstrip().endswith("함은"):          # 원문 오기 “발간등록번호라” 라 함은 → 발간등록번호
+                t = re.sub(r"(?<=[가-힣]{2})(?:이|라)$", "", t)
+            defs.setdefault(t, []).append((i, "def", m))
         for m in _ABBR_DEF.finditer(body):
             defs.setdefault(re.sub(r"\s+", " ", m.group(1)).strip(), []).append((i, "abbr", m))
     out = []
@@ -633,7 +652,7 @@ def term_check(arts: list, cap: int = 8) -> list:
         i, kind, m = occ[0]
         no = live[i]["no"]
         if len(occ) > 1:
-            where = sorted({art_label(live[o[0]]["no"]) for o in occ}, key=lambda x: art_key(x))
+            where = [art_label(n_) for n_ in sorted({live[o[0]]["no"] for o in occ}, key=art_key)]
             out.append(("warn", live[occ[1][0]]["no"],
                         f"“{term}”{_josa(term, ('을', '를'))} 두 번 정의합니다({', '.join(where)}). 한 곳에서만 정의하세요."))
         body = live[i].get("body", "")
@@ -650,8 +669,14 @@ def term_check(arts: list, cap: int = 8) -> list:
             out.append(("info", no, f"{art_label(no)}에서 {what} “{term}”{_josa(term, ('이', '가'))} 다른 곳에서 쓰이지 않습니다. 빼거나 본문에서 그 용어로 쓰세요."))
         if kind == "abbr" and len(re.sub(r"\s+", "", term)) >= 3 and term not in _TERM_GENERIC:
             tb = r"\s*".join(map(re.escape, re.sub(r"\s+", "", term)))
+            fp = re.search(r"([가-힣A-Za-z]+)\s*" + tb + r"\s*$", body[:m.start()])   # 정식 명칭 “치유농업사 자격시험”의 앞말
+            fp = fp.group(1) if fp else ""
+
+            def used(t):                               # 정식 명칭 안의 낱말(“치유농업사 자격시험을”)은 약칭 쓰임이 아니다
+                return any(not (fp and t[:u.start()].rstrip().endswith(fp))
+                           for u in re.finditer(r"(?<![가-힣])" + tb, t))
             pre = [x for x in live[:i]                 # 더 긴 낱말의 일부(“실증단지위탁자”의 “위탁자”)는 쓰임이 아니다
-                   if re.search(r"(?<![가-힣])" + tb, x.get("body", ""))]
+                   if used(x.get("body", ""))]
             if pre:
                 out.append(("info", pre[0]["no"],
                             f"약칭 “{term}”{_josa(term, ('을', '를'))} 정의한 {art_label(no)}보다 앞선 {art_label(pre[0]['no'])}에서 먼저 씁니다. "
@@ -660,7 +685,8 @@ def term_check(arts: list, cap: int = 8) -> list:
 
 
 def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str = "",
-                  full: bool = True) -> list:
+                  full: bool = True, draft_base=None) -> list:
+    """draft_base: 초안 점검일 때 — None 이 아니면 자리표시(○○) 점검을 하고, 원 내규 조문({조 번호: 본문})과 같은 조는 뺀다"""
     """조문 목록 점검 → [{level, code, no, msg, fix?}]. level: error|warn|info"""
     issues = []
     regnames = _reg_names()
@@ -712,6 +738,11 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                 add("info", "hang1", no, f"{lbl}에 항이 ①만 있습니다. 항이 하나면 번호를 붙이지 않습니다.")
         for seg in re.split(r"(?:^|\n)\s*[" + _HANG_CH + "]", body):
             hos = [int(x) for x in re.findall(r"(?:^|\n)\s*(\d{1,2})\.(?!\d)", seg)]   # “1.「병역법」”처럼 붙여 쓴 호도 센다
+            if hos and hos != list(range(1, len(hos) + 1)):
+                # 한 줄에 이어 쓴 호(“…같다. 1. 사업개요 2. …”)까지 세면 차례가 맞으면 오류로 보지 않는다
+                hos2 = [int(x) for x in re.findall(r"(?:^|\n|[.:：다]\s+|\s/\s|\s)(\d{1,2})\.(?!\d)\s*(?=\S)", seg)]
+                if hos2 == list(range(1, len(hos2) + 1)):
+                    hos = []
             if hos and hos != list(range(1, len(hos) + 1)):
                 add("warn", "ho", no, f"{lbl}의 호 번호가 1부터 차례대로가 아닙니다({', '.join(map(str, hos))}).")
             for hseg in re.split(r"(?:^|\n)\s*\d{1,2}\.(?!\d)", seg):          # 목은 호마다 “가”부터 다시
@@ -794,11 +825,20 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                 fix = "" if fnd["suggest"].startswith(("예)", "…")) else f"“{fnd['match']}” → “{fnd['suggest']}”"
                 add("info", "notation", no, f"{lbl}: {fnd['label']}, “{fnd['match']}”. {fnd['message']}", fix)
 
+    ph = [a["no"] for a in arts if draft_base is not None and not a.get("deleted")
+          and re.search(r"[○△□]{2}", (a.get("title") or "") + (a.get("body") or ""))
+          and draft_base.get(a["no"]) != a.get("body")]   # 등록된 내규의 예시(“○○ 연구소”)는 그대로 둔다
+    if ph or (draft_base == {} and re.search(r"[○△□]{2}", addenda or "")):         # 초안 골격의 자리표시(○○)가 남아 있으면 확정 전에 채워야 한다
+        where = ", ".join(art_label(n_) for n_ in ph[:6]) + (" 등" if len(ph) > 6 else "") or "부칙"
+        add("warn", "ph", ph[0] if ph else "", f"채우지 않은 자리표시(○○·△△)가 남아 있습니다: {where}. 실제 내용으로 바꾸세요.")
     if full:
         # (8) 약칭 정의 후 정식 명칭 재사용
         joined = "\n".join(a.get("body", "") for a in arts)
         for m in re.finditer(r"([가-힣A-Za-z]{2,30})\s*\(\s*이하\s*[“\"']([^”\"']{1,20})[”\"']\s*(?:이)?라\s*한다\s*\)", joined):
             full_nm, abbr = m.group(1), m.group(2)
+            pc, pc1 = joined[:m.start(1)].rstrip()[-1:], joined[max(0, m.start(1) - 1):m.start(1)]
+            if pc1 in ("”", "\"", "’") or pc in ("·", ",", "，", "ㆍ"):
+                continue                  # 이름 일부만 잡힘(“정”보관책임자, 단체표준·…·국제표준, …, 가감점평정)
             if len(full_nm) < 4 or full_nm in abbr or abbr in full_nm and len(abbr) >= len(full_nm):
                 continue                  # 앞 낱말 하나만 잡힌 경우(“위원(이하 ‘외부위원’)”)·조각은 판단하지 않는다
             later = re.sub(r"「[^」]*」", " ", joined[m.end():]).replace(abbr, " ")
@@ -829,7 +869,7 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                     continue
                 out.add(mm.group(1))
             return out
-        _OPEN = r"[\[［〔❲【<〈＜]\s*"
+        _OPEN = r"[\[［〔❲【<〈＜(（]\s*"                  # “(별지 제1호 서식)”도 서식 머리로 본다
         cited = own_cites(r"별표\s*(\d+)")
         exist = set(re.findall(_OPEN + r"별표\s*(\d+)", appendix or ""))
         for c in sorted(cited - exist, key=int):
@@ -1062,7 +1102,9 @@ def template_enact(b: dict) -> dict:
     if kind == "시행세칙":
         kind = "세칙"                                         # “이 세칙은 …” 이 표준 자기 지칭
     eun = _josa(kind)
-    purpose = (b.get("purpose") or "○○에 관한 사항").strip().rstrip(".")
+    purpose = (b.get("purpose") or "○○").strip().rstrip(".")
+    # “안전관리에 관한 사항을 정함” → “안전관리” (뒤에 “에 필요한 사항”을 붙이므로 겹치지 않게)
+    purpose = re.sub(r"\s*(?:에\s*관한|에\s*필요한)\s*사항(?:\s*을\s*정함|\s*을\s*정한다)?$|\s*을\s*정함$", "", purpose) or "○○"
     dels = b.get("delegations") or []
     basis = ""
     if dels:
@@ -1071,9 +1113,14 @@ def template_enact(b: dict) -> dict:
     head_ga = f"{ORG['head']}{_josa(ORG['head'], ('이', '가'))}"
     parent = re.sub(r"\s*시행세칙$", "", title) if title.endswith("시행세칙") else ""
     if parent and parent != title:                            # 시행세칙: 모 규정 위임 사항을 정하는 표준 문형
+        names = _reg_names()                                  # “보안업무 시행세칙” → 실제 모 규정명(「보안업무규정」)
+        parent = next((names[_nk(x)] for x in (parent, parent + "규정", parent + " 규정", parent + "규칙", parent + " 규칙")
+                       if _nk(x) in names), parent if parent.endswith(_REG_SUFFIX) else "○○규정")
         purpose_body = f"이 세칙은 「{parent}」에서 위임된 사항과 그 시행에 필요한 사항을 규정함을 목적으로 한다."
+    elif basis:                                               # 상위법 위임: “…에서 위임된 사항과 그 시행에 필요한 사항”
+        purpose_body = f"이 {kind}{eun} {basis[:-len('에 따라 ')]}에서 위임된 사항과 그 시행에 필요한 사항을 정함을 목적으로 한다."
     else:                                                     # 약칭은 조문에서 쓰지 않으므로 “(이하 …)” 정의를 두지 않는다
-        purpose_body = f"이 {kind}{eun} {basis}{ORG['org_name']}의 {purpose}에 필요한 사항을 정함을 목적으로 한다."
+        purpose_body = f"이 {kind}{eun} {ORG['org_name']}의 {purpose}에 필요한 사항을 정함을 목적으로 한다."
     arts = [
         {"no": "1", "title": "목적", "body": purpose_body},
         {"no": "2", "title": "정의",
@@ -1084,11 +1131,12 @@ def template_enact(b: dict) -> dict:
     n = 4
     for line in [x.strip(" -·•\t") for x in (b.get("contents") or "").split("\n") if x.strip()]:
         head = re.split(r"[:：]", line, 1)
-        t = head[0].strip()[:20] if len(head) > 1 else (line if len(line) <= 12 else re.sub(r"\s.*$", "", line)[:14])
+        t = head[0].strip()[:20] if len(head) > 1 else (line if len(line) <= 20 else re.sub(r"\s.*$", "", line)[:14])
         desc = (head[1].strip() if len(head) > 1 else line).rstrip(".")
         if re.search(r"(다|한다|된다|있다|없다)$", desc):          # 이미 완결된 문장
             body = desc + "."
         else:                                                 # “출장 신청” 같은 명사구 → 서술어를 갖춘 조문
+            desc = re.sub(r"(?<=[가-힣])(?:을|를)\s+([가-힣]{2,6})$", r"의 \1", desc)   # “운영책임자를 지정” → “운영책임자의 지정”
             body = (f"{desc}{_josa(desc, ('은', '는'))} 다음 각 호의 기준에 따라 {head_ga} 정한다."
                     f"\n1. ○○\n2. ○○")
         arts.append({"no": str(n), "title": t or "○○", "body": body})
@@ -1296,10 +1344,7 @@ def ra_similar():
     q = (b.get("query") or "").strip()
     if len(q) < 2:
         return jsonify({"success": False, "error": "검색할 내용을 입력하세요."}), 400
-    try:
-        lim = max(1, min(int(b.get("limit") or 8), 15))
-    except (TypeError, ValueError):
-        lim = 8
+    lim = _clamp_int(b.get("limit"), 1, 15, 8)
     res = similar_search(q[:600], b.get("exclude") or "", lim)
     return jsonify({"success": True, **res})
 
@@ -1430,6 +1475,8 @@ def ra_upper():
     law = re.sub(r"[「」]", "", (b.get("law") or "")).strip()
     if len(law) < 2:
         return jsonify({"success": False, "error": "상위법 명칭을 입력하세요."}), 400
+    if len(law) > 100:
+        return jsonify({"success": False, "error": "상위법 명칭이 너무 깁니다(100자 이내)."}), 400
     arts = [re.sub(r"[^0-9의]", "", str(x)) for x in (b.get("arts") or [])]
     arts = [x for x in arts if x]
     tset = {art_key(x) for x in arts}
@@ -1533,7 +1580,8 @@ def ra_lint():
     add = add if isinstance(add, str) else p["addenda"]
     base = find_reg(b.get("base_slug", ""), "") if b.get("base_slug") else None
     # 개정안 본문에는 별표·서식이 따라오지 않으므로 비교할 때는 원 내규의 것을 쓴다(“해결됨” 오표시 방지)
-    iss = lint_articles(p["articles"], add, p["appendix"] or (base["appendix"] if base else ""), b.get("title", ""))
+    iss = lint_articles(p["articles"], add, p["appendix"] or (base["appendix"] if base else ""), b.get("title", ""),
+                        draft_base={a["no"]: a["body"] for a in base["articles"]} if base else {})
     if not p["articles"]:
         iss.insert(0, {"level": "error", "code": "noart", "no": "",
                        "msg": "“제1조(목적)” 형식의 조문을 찾지 못했습니다.", "fix": ""})
@@ -1850,16 +1898,12 @@ _PARTICLES = [("으로", "로"), ("은", "는"), ("이", "가"), ("을", "를"),
 
 
 def _has_batchim(w: str) -> bool:
-    ch = (w or " ").strip()[-1:] or " "
-    if "가" <= ch <= "힣":
-        return (ord(ch) - 0xAC00) % 28 != 0
-    return bool(re.match(r"[0-9a-zA-Z]", ch)) and ch.lower() in "136780lmnr"
+    return _bat(w) > 0
 
 
 def _rjosa(word: str, part: str) -> str:
     """조사 하나를 새 단어 받침에 맞게."""
-    has = _has_batchim(word)
-    ends_rieul = has and (ord(word.strip()[-1]) - 0xAC00) % 28 == 8 if "가" <= word.strip()[-1:] <= "힣" else False
+    has, ends_rieul = _bat(word) > 0, _bat(word) == 2
     for a, b in _PARTICLES:
         if part in (a, b):
             if a == "으로":
@@ -1940,7 +1984,7 @@ _BULK_MAX_ARTS = 400
 
 
 def _ro(w: str) -> str:
-    return "로" if (not _has_batchim(w) or (("가" <= w[-1] <= "힣") and (ord(w[-1]) - 0xAC00) % 28 == 8)) else "으로"
+    return "으로" if _bat(w) == 1 else "로"
 
 
 def _split_loc(lb: str):
@@ -1958,6 +2002,11 @@ def _join_locs(locs: list) -> str:
     bare = {lb for lb in locs if re.fullmatch(r"제\d+조(?:의\d+)?", lb)}
     locs = [(f"{lb}(제목을 포함한다)" if lb in bare and f"{lb} 제목" in locs else lb)
             for lb in locs if not (lb.endswith(" 제목") and lb[:-3] in bare)]   # 제목과 본문을 함께 고치면 “제24조(제목을 포함한다)”
+    for u in [lb[:-3] for lb in locs if lb.endswith(" 본문") and lb[:-3] + " 단서" in locs]:
+        i = locs.index(u + " 본문")                # 한 단위의 본문과 단서를 모두 고치면 그 단위째(“제3조제1항”)
+        locs = [x for x in locs if x not in (u + " 본문", u + " 단서")]
+        locs.insert(i, u)
+    prest = ""
     for lb in locs:
         art, hang, rest = _split_loc(lb)
         if rest == "제목":
@@ -1967,12 +2016,15 @@ def _join_locs(locs: list) -> str:
             txt = "같은 조" + (f" {hang}{rest}".rstrip() if (hang or rest) else "")
         elif art == prev[0] and hang and hang == prev[1]:
             txt = "같은 항 " + rest.lstrip()
+        elif (art == prev[0] and prest and prev[1] != "제목"
+              and not (hang == prev[1] and re.match(r"제\d+호", rest) and re.match(r"제\d+호", prest))):   # 호·“각 호 외의 부분” 다음에 다른 항·호로 가면 “같은 조”
+            txt = "같은 조 " + (hang + (rest if rest.startswith("제") else (" " + rest if rest else ""))).strip()
         elif art == prev[0]:
             txt = (hang + (rest if rest.startswith("제") else (" " + rest if rest else ""))) or "같은 조"
         else:
             txt = lb
         out.append(txt.strip())
-        prev = (art, hang)
+        prev, prest = (art, hang), ("" if rest == "제목" else rest)
     return out[0] if len(out) < 2 else ", ".join(out[:-1]) + " 및 " + out[-1]
 
 
@@ -2049,7 +2101,7 @@ def ra_bulk():
         return jsonify({"success": False, "error": f"“{old}”{_josa(old, ('이', '가'))} {len(regs_out)}개 내규 {n_arts}개 조문에 있어 일괄 정비 범위를 넘습니다. "
                                                    f"더 구체적인 명칭(예: 부서명·직위명 전체)으로 찾으세요."}), 400
     for g in regs_out:
-        g["amend_text"] = f"「{g['reg']}」 일부를 다음과 같이 개정한다.\n" + _bulk_sentence(
+        g["amend_text"] = f"{g['reg']} 일부를 다음과 같이 개정한다.\n" + _bulk_sentence(
             [pr for a in g["articles"] for pr in a.pop("pairs")], old, new)
     return jsonify({"success": True, "old": old, "new": new, "total": total,
                     "reg_count": len(regs_out), "regs": regs_out})
@@ -2372,7 +2424,8 @@ def health_row(r: dict, law_info: dict, today: str) -> dict:
     laws = cited_laws(r)
     stale_laws = []
     for nm in laws:
-        info = law_info.get(nm) or {}
+        info = law_info.get(nm)
+        info = info if isinstance(info, dict) else {}
         ef = re.sub(r"\D", "", str(info.get("ef") or ""))[:8]
         if info.get("found") is False:
             continue
@@ -2725,6 +2778,8 @@ def citation_graph() -> dict:
 def _alio_err(e):
     kind = getattr(e, "kind", "")
     hint = {"SCHEMA": " 알리오 사이트가 바뀌었을 수 있습니다.", "NETWORK": " 잠시 뒤 다시 시도하세요."}.get(kind, "")
+    if hint.strip() and hint.strip() in str(e):
+        hint = ""                                  # 알리오 오류 문구에 이미 있으면 되풀이하지 않는다
     return jsonify({"success": False, "error": f"{e}{hint}", "kind": kind}), 502 if kind in ("NETWORK", "SCHEMA", "HTTP") else 400
 
 
