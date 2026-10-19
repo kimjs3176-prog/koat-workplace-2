@@ -306,6 +306,9 @@ function raCmpCell(oldA, newA, abbr){
         L.push(x+_e(sp)+'(생 략)'); R.push(y+_e(sp)+'(현행과 같음)'); LP.push(hd[0].trim()+sp+'(생 략)'); RP.push(hd[1].trim()+sp+'(현행과 같음)'); }
       else if(d!=null&&s!=null&&/^[<＜〔\[]?\s*삭\s*제\s*[>＞〕\]]?\s*$/.test(s.slice(raPrefix(s).length))){   // 입안자가 “삭제”로 고친 항·호 → “③ <삭 제>”
         const pf=raPrefix(s).trim(); L.push(`<u class="ra-d">${_e(d)}</u>`); LP.push(d); R.push(`${pf?_e(pf)+' ':''}&lt;삭 제&gt;`); RP.push(`${pf?pf+' ':''}<삭 제>`); }
+      else if(abbr&&d!=null&&s!=null&&raPrefix(d)!==raPrefix(s)&&d.slice(raPrefix(d).length).trim()===s.slice(raPrefix(s).length).trim()){   // 번호만 밀린 항·호
+        const pd=raPrefix(d).trim(), ps=raPrefix(s).trim(), hi=RA_HANG.indexOf(pd[0]), ref=hi>=0?`제${hi+1}항과`:(/^\d+/.test(pd)?`제${parseInt(pd)}호와`:`${pd.replace('.','')}목과`);
+        L.push(_e(`${pd} (생 략)`)); LP.push(`${pd} (생 략)`); R.push(`<u class="ra-i">${_e(ps)}</u> (현행 ${_e(ref)} 같음)`); RP.push(`${ps} (현행 ${ref} 같음)`); }
       else if(d!=null&&s!=null){ const [x,y]=raWordDiff(d,s); L.push(x); R.push(y); LP.push(d); RP.push(s); }
       else if(d!=null){ const pf=raPrefix(d).replace(/^제\s*\d+\s*조(?:의\s*\d+)?\s*(?:\([^)]*\))?\s*/,'').trim();   // 항·호 번호는 남긴다(“3. <삭 제>”)
         L.push(`<u class="ra-d">${_e(d)}</u>`); LP.push(d); R.push(`${pf?_e(pf)+' ':''}&lt;삭 제&gt;`); RP.push(`${pf?pf+' ':''}<삭 제>`); }
@@ -1198,6 +1201,30 @@ function raSubst(o, n){
   if(a.trim()===o.trim()||(o.length>=12&&!/^[「〔\[［【].*[」〕\]］】]$/.test(a.trim())&&a.trim().length>=o.trim().length*0.7)) return null;   // 거의 다 바뀌면 단위째 고쳐 쓴다
   return {a, b:b.trim()};
 }
+// 항·호를 중간에 끼워 넣어 뒤 번호가 밀린 경우(다른 내용은 그대로) → 법제 문형
+// “제5조제4항을 제5항으로, 제3항을 제4항으로 하고, 같은 조에 제3항을 다음과 같이 신설한다.” 못 다루면 null
+function raShiftInsert(L, O, N){
+  const strip=t=>t.replace(/^(?:[①-⑳]\s*|\d{1,2}\.\s+)/,'');
+  const blocks=(us,lv,h)=>{ const out=[], rest=[]; let cur=null;      // 같은 부모의 lv 단위 묶음(아래 단위 포함)과 그 밖의 줄
+    us.forEach(u=>{ if(u.lv===lv&&(lv==='h'||u.h===h)){ cur={n:lv==='h'?u.h:u.ho, us:[u]}; out.push(cur); }
+      else if(cur&&(lv==='h'?u.lv!=='b':(u.lv==='mk'&&u.h===h&&u.ho===cur.n))) cur.us.push(u);
+      else { cur=null; rest.push(u.text); } });
+    out.forEach(b=>{ b.txt=[strip(b.us[0].text),...b.us.slice(1).map(u=>u.text)].join('\n'); b.text=b.us.map(u=>u.text).join('\n'); });
+    return {out, rest:rest.join('\n')}; };
+  const tries=[['h',0],...[...new Set(N.filter(u=>u.lv==='ho').map(u=>u.h))].map(h=>['ho',h])];
+  for(const [lv,h] of tries){
+    const a=blocks(O,lv,h), b=blocks(N,lv,h);
+    if(a.rest!==b.rest||b.out.length<=a.out.length||!a.out.length) continue;
+    const map=[], ins=[]; let j=0;
+    b.out.forEach(x=>{ if(j<a.out.length&&x.txt===a.out[j].txt){ map.push([a.out[j].n,x.n]); j++; } else ins.push(x); });
+    if(j<a.out.length||!map.some(([o,n])=>o!==n)) continue;
+    const own=n=>lv==='h'?`제${n}항`:`제${n}호`, par=lv==='h'||!h?L:`${L}제${h}항`, same=lv==='h'||!h?'같은 조':'같은 항';
+    const sh=map.filter(([o,n])=>o!==n).sort((x,y)=>y[0]-x[0]).map(([o,n],i)=>`${i?'':par}${own(o)}${raEul(own(o))} ${own(n)}${raRo(own(n))}`);
+    const nm=ins.map(x=>own(x.n)), nms=nm.length<2?nm[0]:nm.slice(0,-1).join('·')+' 및 '+nm[nm.length-1];
+    return {head:`${sh.join(', ')} 하고, ${same}에 ${nms}${raEul(nms)} ${ins.length>1?'각각 ':''}다음과 같이 신설한다.`, lines:ins.flatMap(x=>x.text.split('\n'))};
+  }
+  return null;
+}
 // 한 조의 개정 → {head:문장, lines:뒤에 붙일 조문 줄}
 function raAmendSentences(oldA, ch){
   const L=raLbl(ch.no), LE=L+raEul(L), full=t=>({head:`${LE} 다음과 같이 ${t}.`, lines:raArtText(ch).split('\n')});
@@ -1217,7 +1244,9 @@ function raAmendSentences(oldA, ch){
   if(removed.some(u=>u.lv==='b'||!tailOf(O,u,sibOf,rmSet))) return whole();
   if(added.some(u=>u.lv==='b'||!tailOf(N,u,sibOf,adSet))) return whole();
   if(O.length===1&&O[0].lv==='b'&&N.length>1&&N[0].lv==='h') return whole();
-  if(added.some(u=>O.some(o=>raUBody(o)===raUBody(u)))) return whole();   // 중간에 끼워 넣어 번호가 밀림(현행 내용이 새 번호로 옮겨 감)
+  if(added.some(u=>O.some(o=>raUBody(o)===raUBody(u)))){              // 중간에 끼워 넣어 번호가 밀림(현행 내용이 새 번호로 옮겨 감)
+    const r=raShiftInsert(L,O,N); if(r&&!S.length) return r; if(r){ const t=r.head.replace(new RegExp('^'+L),'같은 조 '); return {head:S[0].s.replace(/한다\.$/,'하며, ')+t, lines:[...S[0].lines,...r.lines]}; }
+    return whole(); }
   const DEL=/^[<＜〔\[]?\s*삭\s*제\s*(?:[<＜(（][^>＞)）]{0,30}[>＞)）])?\s*[>＞〕\]]?\s*$/;
   const subs=[];                              // [{lbl, a, b, ord}] 같은 a→b는 “각각”으로 묶는다
   O.forEach((u,i)=>{ const v=nk.get(raUKey(u)); if(!v||v.text===u.text) return;
