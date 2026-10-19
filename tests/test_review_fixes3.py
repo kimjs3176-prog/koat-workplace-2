@@ -217,3 +217,7 @@ def test_xref_checks_own_gangryeong_and_branch_delegation():
 def test_stale_skips_quoted_law_article_title():
     arts = ra.parse_text("제1조(목적) 「농촌진흥법」 부칙 제2조(실용화재단 직원의 임용등에 관한 특례)에 따른다.")["articles"]
     assert not [i for i in ra.lint_articles(arts, "", "", "인사규정") if i["code"] == "stale"]
+
+
+def test_ref_after_quoted_definition_is_external():
+    assert ra.internal_refs("이 세칙은 “치유농업사 자격시험 규칙(이하”규칙“이라 한다)” 제44조제1항에 의하여") == []
