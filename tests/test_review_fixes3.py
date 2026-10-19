@@ -257,3 +257,38 @@ def test_template_purpose_forms():
     t = ra.template_enact({"title": "안전관리규정", "purpose": "안전관리에 관한 사항을 정함"})
     assert "사항을 정함에 필요한" not in t["articles"][0]["body"] and "안전관리에 필요한 사항" in t["articles"][0]["body"]
     assert "에 관한 사항에 필요한" not in ra.template_enact({"title": "X 지침"})["articles"][0]["body"]
+
+
+# ── 내규 자문 ─────────────────────────────────────────────────────────────
+def test_advise_rule_based_with_appendix(client):
+    d = client.post("/api/regagent/advise", json={"question": "국내 출장 숙박비 상한액은 얼마인가요?", "slug": "여비규정"}).get_json()
+    assert d["success"] and not d["ai"] and d["conclusion"] == "해당 규정"
+    roles = {(s["no"] or s.get("appx")): s["role"] for s in d["sources"]}
+    assert roles.get("15") == "main" and roles.get("별표 2") == "appx"
+    assert any("100,000" in b["point"] for b in d["basis"])            # 금액은 별표에서 짚는다
+
+
+def test_advise_expands_child_and_validates(client):
+    d = client.post("/api/regagent/advise", json={"question": "직원이 다른 직무를 겸하려면 허가를 받아야 하나요?"}).get_json()
+    assert any(s["role"] == "child" for s in d["sources"]) and d["sources"][0]["reg"] == "복무규정"
+    assert client.post("/api/regagent/advise", json={"question": "가"}).status_code == 400
+    assert client.post("/api/regagent/advise", json={"question": "숙박비는?", "slug": "없는내규"}).status_code == 404
+
+
+def test_advise_ai_citations_filtered(client, monkeypatch):
+    import json as _j
+    monkeypatch.setitem(ra._CTX, "ai_generate", lambda *a, **k: (_j.dumps({
+        "conclusion": "해당 규정", "answer": "상한은 10만원입니다 [2]. 없는 근거 [99].",
+        "basis": [{"src": 99, "point": "x"}, {"src": 1, "point": "〔별표 2〕"}], "conditions": [], "caveats": [], "followups": ["국외는?"]},
+        ensure_ascii=False), ""))
+    monkeypatch.setitem(ra._CTX, "default_model_for", lambda p, k: "m")
+    d = client.post("/api/regagent/advise", json={"question": "국내 출장 숙박비 상한액은?", "slug": "여비규정",
+                                                  "provider": "gemini", "api_key": "k"}).get_json()
+    assert d["ai"] and "[99]" not in d["answer"] and "[2]" in d["answer"]
+    assert [b["src"] for b in d["basis"]] == [1]
+
+
+def test_plan_routes_questions_to_advise():
+    assert ra.heuristic_plan("국내 출장 숙박비 상한액은 얼마인가요?")["mode"] == "advise"
+    assert ra.heuristic_plan("여비규정 제15조의 일비를 3만원으로 올려줘")["mode"] == "amend"
+    assert ra.heuristic_plan("다른 기관은 재택근무를 어떻게 정했어?")["mode"] == "compare"
