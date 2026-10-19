@@ -197,8 +197,10 @@ test('raAmendSentences: 바뀐 곳만 짚는 일부개정 문형', () => {
   assert.equal(S({ no: '8', title: '대상', body: '다음 사람에게 지급한다.\n1. 임원\n2. 직원' }, { no: '8', title: '대상', body: '다음 사람에게 준다.\n1. 임원\n2. 직원\n3. 계약직' }),
     '제8조 각 호 외의 부분 중 “지급한다”를 “준다”로 하고, 같은 조에 제3호를 다음과 같이 신설한다. | 3. 계약직');
   assert.equal(S({ no: '9', title: 'a', body: '① aa\n② bb\n③ cc' }, { no: '9', title: 'a', body: '① aa\n② bb' }), '제9조제3항을 삭제한다.');
-  // 중간에 항을 끼우면(번호가 밀림) 조 전체를 다시 쓴다
-  assert.match(S({ no: '4', title: 'a', body: '① 가.\n② 나.' }, { no: '4', title: 'a', body: '① 가.\n② 새 항.\n③ 나.' }), /^제4조를 다음과 같이 한다\./);
+  // 중간에 항을 끼우면(번호가 밀림) 밀린 번호를 고치고 신설한다
+  assert.equal(S({ no: '4', title: 'a', body: '① 가.\n② 나.' }, { no: '4', title: 'a', body: '① 가.\n② 새 항.\n③ 나.' }), '제4조제2항을 제3항으로 하고, 같은 조에 제2항을 다음과 같이 신설한다. | ② 새 항.');
+  // 밀림과 내용 수정이 섞이면 조 전체를 다시 쓴다
+  assert.match(S({ no: '4', title: 'a', body: '① 가.\n② 나.' }, { no: '4', title: 'a', body: '① 가가.\n② 새 항.\n③ 나.' }), /^제4조를 다음과 같이 한다\./);
   assert.equal(S({ no: '3', title: 'a', body: 'x' }, { type: 'delete', no: '3' }), '제3조를 삭제한다.');
   assert.match(S(null, { type: 'insert', no: '3의2', title: '특례', body: '내용' }), /^제3조의2를 다음과 같이 신설한다\. \| 제3조의2\(특례\) 내용$/);
 });
@@ -435,4 +437,19 @@ test('개정문 문형: 어미를 조사로 떼지 않음·낱말 삭제·안쪽
   const r = c.raCmpCell({ no: '5', title: '위원회', body: B }, { no: '5', title: '위원회의 구성', body: B }, true);
   assert.equal(r[3], '제5조(위원회의 구성) ① (현행과 같음)\n② (현행과 같음)');
   assert.equal(r[2], '제5조(위원회) ① (생 략)\n② (생 략)');
+});
+
+test('항·호 중간 신설: 번호 밀림 문형과 대비표 “(현행 제N항과 같음)”', () => {
+  const c = load();
+  const S = (no, ob, nb) => c.raAmendSentences({ no, title: 't', body: ob }, { no, title: 't', body: nb, type: 'modify' });
+  const O = '① 위원회는 7명으로 구성한다.\n② 위원장은 원장이 된다.\n③ 위원은 원장이 임명한다.';
+  const N = '① 위원회는 7명으로 구성한다.\n② 간사 1명을 둔다.\n③ 위원장은 원장이 된다.\n④ 위원은 원장이 임명한다.';
+  const r = S('5', O, N);
+  assert.equal(r.head, '제5조제3항을 제4항으로, 제2항을 제3항으로 하고, 같은 조에 제2항을 다음과 같이 신설한다.');
+  assert.deepEqual([...r.lines], ['② 간사 1명을 둔다.']);
+  assert.equal(S('8', '① 가.\n② 다음 각 호와 같다.\n1. 갑\n2. 을\n3. 병', '① 가.\n② 다음 각 호와 같다.\n1. 갑\n2. 새\n3. 을\n4. 병').head,
+    '제8조제2항제3호를 제4호로, 제2호를 제3호로 하고, 같은 항에 제2호를 다음과 같이 신설한다.');
+  const t = c.raCmpCell({ no: '5', title: 't', body: O }, { no: '5', title: 't', body: N }, true);
+  assert.match(t[3], /③ \(현행 제2항과 같음\)\n④ \(현행 제3항과 같음\)$/);
+  assert.match(t[2], /<신 설>/);
 });
