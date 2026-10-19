@@ -847,3 +847,26 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 .ra-lr{margin:6px 0 2px;padding:8px 10px;border-radius:8px;background:var(--sf2);display:flex;flex-direction:column;gap:6px;font-size:12.5px;}
 .ra-lr-g{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;}
 .ra-uplaw{margin:4px 0 6px;align-items:center;}
+
+/* ── 내규 자문 ── */
+.ra-adv-h{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px;}
+.ra-adv-c{display:inline-flex;align-items:center;font-size:13px;font-weight:800;border-radius:8px;padding:3px 10px;background:var(--sf2);color:var(--tx);border:1px solid var(--bd);}
+.ra-adv-c.ok{color:var(--ok);background:var(--ok-l);border-color:transparent;}
+.ra-adv-c.bad{color:var(--bad);background:var(--bad-l);border-color:transparent;}
+.ra-adv-c.warn{color:var(--warn);background:var(--warn-l);border-color:transparent;}
+.ra-chip.ok{color:var(--ok);} .ra-chip.bad{color:var(--bad);} .ra-chip.warn{color:var(--warn);}
+.ra-adv-q{display:flex;gap:6px;align-items:flex-start;font-size:13px;color:var(--tx2);margin:4px 0 8px;}
+.ra-adv-q svg.ic{width:16px;height:16px;flex:none;margin-top:2px;}
+.ra-adv-a{font-size:14.5px;line-height:1.85;color:var(--tx);margin:6px 0 12px;white-space:pre-wrap;word-break:keep-all;overflow-wrap:anywhere;}
+.ra-adv-l{margin:10px 0;font-size:13.5px;line-height:1.75;}
+.ra-adv-l>b{display:block;font-size:12.5px;color:var(--tx2);margin-bottom:2px;}
+.ra-adv-l ul{margin:0;padding-left:18px;}
+.ra-cite{font-size:11.5px;font-weight:800;color:var(--gd);text-decoration:none;vertical-align:1px;}
+.ra-cite:hover,.ra-cite:focus{text-decoration:underline;}
+.ra-adv-s{scroll-margin:80px;transition:box-shadow .3s;}
+.ra-adv-s.flash{box-shadow:0 0 0 3px var(--gd);}
+.ra-adv-b{font-size:13.5px;line-height:1.8;color:var(--tx);padding:6px 2px;overflow-wrap:anywhere;}
+.ra-adv-b mark{background:#fff1a8;color:inherit;border-radius:2px;padding:0 1px;}
+@media (prefers-color-scheme:dark){ .ra-adv-b mark{background:#5c4d00;} }
+.ra-adv-hist{list-style:none;margin:0;padding:0;font-size:13px;}
+.ra-adv-hist li{padding:3px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}

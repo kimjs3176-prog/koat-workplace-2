@@ -36,9 +36,9 @@ _CTX: dict = {}
 # ── 요청 본문 정리: 잘못된 형식(배열·숫자 본문, 필드 타입 오류)은 기본값으로 바꿔 500 대신 400/정상 처리 ──
 _STR_KEYS = {"text", "title", "reg", "slug", "query", "exclude", "law", "old", "new", "mode", "purpose", "intent",
              "effective", "contents", "filename", "request", "category", "dept", "provider", "api_key", "model",
-             "q", "kw", "idx"}
+             "q", "kw", "idx", "question"}
 _STRLIST_KEYS = {"nos", "arts", "slugs", "names", "main", "focus", "orgs"}
-_DICTLIST_KEYS = {"delegations", "targets", "refs", "blocks", "alio_refs"}
+_DICTLIST_KEYS = {"delegations", "targets", "refs", "blocks", "alio_refs", "history"}
 _DICT_KEYS = {"moves", "ans", "law_info", "texts", "kinds"}
 _MAX_LIST = 2000
 
@@ -2911,9 +2911,17 @@ def compare_keyword(t: str) -> str:
     return best[:20]
 
 
+_ASK_RE = re.compile(r"(\?|？|나요|인가요|있나요|되나요|까요|습니까|ㄴ가요|는지|궁금|어떻게\s*(?:되|하)|얼마|누가|누구|언제|어디|무엇|뭐야|뭔가요|맞나요|해도\s*되)")
+_EDIT_RE = re.compile(r"(개정|고쳐|고치|바꿔|바꾸|신설|삭제|만들어|제정|정비|반영|올려|내려|늘려|줄여|추가해|빼\s*줘|작성해)")
+
+
 def heuristic_plan(req: str) -> dict:
     t = (req or "").strip()
     plan = {"mode": "amend", "intent": t, "reasoning": []}
+    if _ASK_RE.search(t) and not _EDIT_RE.search(t) and not _COMPARE_RE.search(t):
+        plan.update(mode="advise", question=t)
+        plan["reasoning"].append("내규 해석·적용을 묻는 질의로 판단 — 근거 조문을 찾아 회신")
+        return plan
     if (_COMPARE_RE.search(t) and not _ENACT_RE.search(t) and not re.search(r"(개정|고쳐|고치|바꿔|바꾸|정비|수정|신설|삭제|반영)", t)
             and not re.search(r"제\s*\d+\s*조", t)):
         kw = compare_keyword(t)
@@ -3016,7 +3024,7 @@ def ra_plan():
         mdl = model or _CTX["default_model_for"](provider, key)
         system = f"""당신은 {ORG['org_name']} {ORG['reg_word']} 제·개정 에이전트의 작업 계획 담당입니다.
 사용자의 한 문장 요청을 분석해 JSON만 반환하세요.
-{{"mode": "enact|amend|bulk|upper|compare",
+{{"mode": "enact|amend|bulk|upper|compare|advise",
   "intent": "개정·제정 의도를 실무 문장으로 1~2문장",
   "reg_hint": "개정 대상 내규명(알 수 있으면, 없으면 빈 문자열)",
   "title": "제정 시 내규명(없으면 제안)", "purpose": "제정 목적", "contents": "제정 시 주요 내용(줄바꿈 구분, '제목: 내용')",
@@ -3024,12 +3032,12 @@ def ra_plan():
   "law": "상위법 영향 분석 시 법령명", "arts": ["제N조"],
   "keyword": "compare 일 때 알리오에서 찾을 규정명 핵심어(예: 여비, 재택근무)",
   "why": "이렇게 판단한 이유 1문장"}}
-- enact: 새 내규를 만듦 / amend: 특정 내규 조문을 고침 / bulk: 기관명·부서명·직위·내규명 등 용어를 모든 내규에서 바꿈 / upper: 상위 법령이 바뀌어 영향받는 내규를 찾음 / compare: 다른 공공기관(알리오)은 어떻게 정했는지 사례를 찾음"""
+- enact: 새 내규를 만듦 / amend: 특정 내규 조문을 고침 / bulk: 기관명·부서명·직위·내규명 등 용어를 모든 내규에서 바꿈 / upper: 상위 법령이 바뀌어 영향받는 내규를 찾음 / compare: 다른 공공기관(알리오)은 어떻게 정했는지 사례를 찾음 / advise: 내규를 고치지 않고 해석·적용(가능 여부, 금액, 절차 등)을 물음"""
         text, err = _CTX["ai_generate"](provider, key, mdl, system, f"요청: {req}", max_tokens=1200, temperature=0.1, json_mode=True)
         if not err:
             try:
                 d = _json_from(text)
-                if d.get("mode") in ("enact", "amend", "bulk", "upper", "compare"):
+                if d.get("mode") in ("enact", "amend", "bulk", "upper", "compare", "advise"):
                     keep = plan.get("reasoning", [])
                     plan = {"mode": d["mode"]}
                     for k in ("intent", "reg_hint", "title", "purpose", "contents", "old", "new", "law", "keyword"):
@@ -3046,6 +3054,8 @@ def ra_plan():
                 plan["reasoning"].append("AI 계획을 해석하지 못해 규칙 기반 판단을 사용")
         else:
             plan["reasoning"].append(f"AI 호출 실패로 규칙 기반 판단 사용({err[:60]})")
+    if plan["mode"] == "advise":
+        plan["question"] = req
     if plan["mode"] == "amend":
         plan.setdefault("intent", req)
         _resolve_targets(plan, req)
@@ -3063,3 +3073,199 @@ def ra_plan():
         _resolve_targets(plan, req)
     plan["request"] = req
     return jsonify({"success": True, "plan": plan})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 내규 자문 — 질의에 근거 조문을 찾아 답한다(AI 가 있으면 근거 번호를 단 회신, 없으면 관련 문장 안내)
+# ══════════════════════════════════════════════════════════════════════════
+_ADV_CONCL = ("가능", "불가", "조건부 가능", "해당 규정", "규정 없음", "확인 필요")
+
+
+def _key_sents(body: str, toks: list, n: int = 2) -> list:
+    """조문에서 질의 낱말이 가장 많이 나오는 문장(항·호 단위) — 숫자·금액·기간이 있으면 가산."""
+    units = [u.strip() for u in re.split(r"\n|(?<=다\.)\s+", body or "") if len(u.strip()) >= 6]
+    scored = []
+    for i, u in enumerate(units):
+        sc = sum(2 if t in u else 0 for t in toks) + (1 if re.search(r"\d+\s*(?:원|일|개월|년|시간|%|명|회|배|호봉|점)", u) else 0)
+        if sc:
+            scored.append((sc, i, u))
+    pick = sorted(sorted(scored, key=lambda x: (-x[0], x[1]))[:n], key=lambda x: x[1])
+    return [u[:260] for _, _, u in pick]
+
+
+def advise_sources(q: str, slug: str = "", cap: int = 10) -> dict:
+    """질의 → 근거 후보 조문(주 조문 + 그 조문이 인용·준용하는 조문 + 시행세칙의 관련 조문)."""
+    toks = _tokens(q)
+    res = similar_search(q, "", 40 if slug else 8)
+    regs = {r["slug"]: r for r in all_regs()}
+    flat = []
+    for g in res["regs"]:
+        if slug and g["slug"] != slug:
+            continue
+        for a in g["articles"][:3]:
+            flat.append((a["score"], g["slug"], a["no"]))
+    if slug and not flat and slug in regs:                    # 범위를 정했는데 검색어가 안 맞으면 낱말이 나오는 조문이라도
+        for a in regs[slug]["articles"]:
+            if not a["deleted"] and any(t in a["title"] + a["body"] for t in toks):
+                flat.append((0.1, slug, a["no"]))
+    flat.sort(key=lambda x: -x[0])
+    out, seen = [], set()
+
+    def add(sl, no, role, why=""):
+        r = regs.get(sl)
+        a = next((x for x in r["articles"] if x["no"] == str(no)), None) if r else None
+        if not a or a["deleted"] or (sl, a["no"]) in seen or len(out) >= cap:
+            return None
+        seen.add((sl, a["no"]))
+        src = {"id": len(out) + 1, "slug": sl, "reg": r["title"], "no": a["no"], "title": a["title"],
+               "body": a["body"][:1500], "role": role, "why": why, "revision": r.get("revision", ""),
+               "rev_date": rev_date(r.get("revision", "")), "keys": _key_sents(a["body"], toks),
+               "appendix": bool(re.search(r"별표|별지", a["body"]) and r.get("appendix"))}
+        out.append(src)
+        return src
+    mains = [add(sl, no, "main") for _, sl, no in flat[:5]]
+    names = _reg_names()
+    for m in [x for x in mains if x]:
+        r = regs[m["slug"]]
+        for rno, raw, _ in internal_refs(m["body"])[:3]:          # 같은 내규에서 인용한 조문(“제12조에 따른 …”)
+            add(m["slug"], rno, "ref", f"{art_label(m['no'])}에서 인용")
+        jr = [j for j in jun_relations(r, names) if j["no"] == m["no"]]
+        for j in jr:                                              # 준용하는 다른 내규 조문
+            for t in j["targets"]:
+                if t["kind"] == "reg":
+                    tr = next((x for x in regs.values() if x["title"] == t["name"]), None)
+                    for an in t["arts"][:2]:
+                        no = re.sub(r"[^0-9의]", "", an.split("제", 2)[1] if an.count("제") else an).split("조")[0] if an else ""
+                        mm = re.match(r"제(\d+)조(?:의(\d+))?", an)
+                        if tr and mm:
+                            add(tr["slug"], mm.group(1) + (("의" + mm.group(2)) if mm.group(2) else ""), "jun",
+                                f"「{m['reg']}」 {art_label(m['no'])}에서 준용")
+        child = next((x for x in regs.values() if _nk(x["title"]) == _nk(r["title"] + " 시행세칙")), None)
+        if child:                                                 # 시행세칙이 이 조를 받아 정한 세부 기준
+            pat = re.compile(r"(?:규정|규칙|정관|「[^」]*」)\s*제\s*" + re.escape(m["no"].split("의")[0]) + r"\s*조(?!\s*의)"
+                             if "의" not in m["no"] else r"제\s*" + m["no"].replace("의", r"\s*조\s*의\s*") + r"(?!\d)")
+            for ca in child["articles"]:
+                if not ca["deleted"] and re.search(pat, ca["body"]):
+                    add(child["slug"], ca["no"], "child", f"「{r['title']}」 {art_label(m['no'])}의 세부 기준")
+                    break
+    for m in [x for x in mains if x]:                             # 금액·기준표가 별표에 있으면 그 별표도 근거로(“〔별표 2〕에서 정하는 바에 따라”)
+        ap = regs[m["slug"]].get("appendix") or ""
+        for bn in (list(dict.fromkeys(re.findall(r"별표\s*(\d+)", m["body"])))[:2] if ap else []):
+            hs = [(mm.start(), mm.group(1)) for mm in re.finditer(r"^[\[［〔【<＜]\s*별표\s*(\d+)", ap, re.M)]
+            for i, (st, num) in enumerate(hs):
+                if num == bn and len(out) < cap and (m["slug"], "별표" + bn) not in seen:
+                    seen.add((m["slug"], "별표" + bn))
+                    blk = ap[st:hs[i + 1][0] if i + 1 < len(hs) else len(ap)].strip()
+                    head = blk.split("\n", 2)
+                    out.append({"id": len(out) + 1, "slug": m["slug"], "reg": m["reg"], "no": "", "appx": f"별표 {bn}",
+                                "title": head[1].strip()[:40] if len(head) > 1 else "", "body": blk[:1800], "role": "appx",
+                                "why": f"{art_label(m['no'])}에서 인용", "revision": m["revision"], "rev_date": m["rev_date"],
+                                "keys": _key_sents(blk, toks), "appendix": False})
+    laws = []
+    for sc in out:                                                # 근거 조문이 인용한 법령(국가법령정보센터 링크용)
+        for mm in _QUOTED_NAME.finditer(sc["body"]):
+            nm = re.sub(r"\s+", " ", mm.group(1)).strip()
+            if _LAW_NAME_OK.search(nm) and _nk(nm) not in names:
+                nm = _law_aliases(nm)[-1]
+                ma = _ART_AFTER.match(sc["body"][mm.end():mm.end() + 60])
+                art = re.sub(r"\s+", "", ma.group(1)) if ma else ""
+                if not any(x["name"] == nm and x["art"] == art for x in laws):
+                    laws.append({"name": nm, "art": art, "from": sc["id"]})
+    return {"tokens": toks, "semantic": res.get("semantic", False), "sources": out, "laws": laws[:8]}
+
+
+def _adv_rule_answer(q: str, S: dict) -> dict:
+    src = S["sources"]
+    if not src:
+        return {"conclusion": "규정 없음", "answer": "질의와 관련된 조문을 찾지 못했습니다. 낱말을 바꾸거나(예: 출장비 → 여비) 대상 내규를 지정해 다시 물어보세요.",
+                "basis": [], "conditions": [], "caveats": ["내규에 정함이 없으면 상위 법령이나 소관 부서의 해석을 확인하세요."], "followups": []}
+    mains = [x for x in src if x["role"] == "main"][:3]
+    ap = [x for x in src if x["role"] == "appx"]
+    lst = ", ".join(f"「{x['reg']}」 {art_label(x['no'])}" + (f"({x['title']})" if x["title"] else "") for x in mains)
+    basis = [{"src": x["id"], "point": " / ".join(x["keys"]) or (x["body"][:160] + "…")} for x in mains]
+    extra = [x for x in src if x["role"] not in ("main", "appx")]
+    basis += [{"src": x["id"], "point": " / ".join(x["keys"]) or f"{x['appx']} {x['title']}"} for x in ap[:2]]
+    ans = f"질의와 관련된 조문은 {lst}입니다. 아래 근거 조문의 해당 문장을 확인하세요."
+    if ap:
+        ans += f" 금액·기준은 {', '.join('「' + x['reg'] + '」 ' + x['appx'] for x in ap[:2])}에 있습니다."
+    if extra:
+        ans += f" 이 조문이 인용·준용하는 조문과 세부 기준 {len(extra)}건도 함께 보세요."
+    return {"conclusion": "해당 규정", "answer": ans, "basis": basis, "conditions": [],
+            "caveats": ["규칙 기반 안내입니다. AI 키를 넣으면 질의에 맞춘 회신(결론·조건·유의사항)을 받을 수 있습니다."],
+            "followups": []}
+
+
+def ai_advise(b: dict, S: dict):
+    """AI 회신 → (dict, notice). 근거 번호는 실제 제시한 조문 안에서만 남긴다."""
+    provider, key, model = _ai_conf(b)
+    if not key and provider != "ollama":
+        return None, ""
+    if not S["sources"]:
+        return None, ""
+    mdl = model or _CTX["default_model_for"](provider, key)
+    blocks = "\n\n".join(f"[{x['id']}] 「{x['reg']}」 {x.get('appx') or art_label(x['no'])}({x['title']})"
+                          + (f" ※{x['why']}" if x["why"] else "") + f"\n{x['body']}" for x in S["sources"])
+    hist = "".join(f"이전 질의: {str(h.get('q', ''))[:300]}\n이전 회신 요지: {str(h.get('a', ''))[:500]}\n"
+                   for h in (b.get("history") or [])[-3:])
+    system = f"""당신은 {ORG['org_name']}({ORG['org_short']}) {ORG['reg_word']} 자문 담당입니다. 직원의 질의에 아래 [근거 조문]만으로 답하세요.
+- 조문에 없는 사실·숫자·절차를 지어내지 말 것. 근거가 부족하면 conclusion 을 "규정 없음" 또는 "확인 필요"로 하고 무엇을 확인해야 하는지 쓸 것.
+- 답의 문장마다 근거 번호를 [1], [2]처럼 붙일 것. 제시되지 않은 번호는 쓰지 말 것.
+- 결론을 먼저, 공문서 문체(“…할 수 있습니다”, “…에 해당합니다”)로 간결하게.
+- 해석이 갈릴 수 있는 부분, 상위 법령 확인이 필요한 부분은 caveats 에.
+반드시 아래 JSON만 반환(설명·코드블록 금지):
+{{"conclusion": "{'|'.join(_ADV_CONCL)} 중 하나",
+  "answer": "회신 본문(3~6문장, 근거 번호 포함)",
+  "basis": [{{"src": 1, "point": "그 조문에서 답의 근거가 되는 부분(원문 그대로 짧게 인용)"}}],
+  "conditions": ["가능하다면 그 조건·절차·서류(조문에 있는 것만)"],
+  "caveats": ["유의사항·확인 필요 사항"],
+  "followups": ["직원이 이어서 물어볼 만한 질문 2~3개"]}}"""
+    user = f"{hist}질의: {b.get('question', '')}\n\n[근거 조문]\n{blocks}"
+    text, err = _CTX["ai_generate"](provider, key, mdl, system, user, max_tokens=2500, temperature=0.1, json_mode=True)
+    if err:
+        return None, f"AI 오류({err})로 관련 조문 안내만 드립니다."
+    try:
+        d = _json_from(text)
+    except Exception:
+        return None, "AI 응답을 해석하지 못해 관련 조문 안내만 드립니다."
+    ids = {x["id"] for x in S["sources"]}
+    clean = lambda t: re.sub(r"\[(\d+)\]", lambda m: m.group(0) if int(m.group(1)) in ids else "", str(t or "")).strip()
+    basis = []
+    for x in d.get("basis") if isinstance(d.get("basis"), list) else []:
+        if isinstance(x, dict):
+            try:
+                i = int(x.get("src"))
+            except (TypeError, ValueError):
+                continue
+            if i in ids and str(x.get("point") or "").strip():
+                basis.append({"src": i, "point": str(x["point"]).strip()[:400]})
+    concl = str(d.get("conclusion") or "").strip()
+    out = {"conclusion": concl if concl in _ADV_CONCL else "확인 필요", "answer": clean(d.get("answer"))[:3000],
+           "basis": basis[:8], "conditions": [clean(x)[:300] for x in _strs(d.get("conditions"))][:6],
+           "caveats": [clean(x)[:300] for x in _strs(d.get("caveats"))][:6],
+           "followups": [str(x).strip()[:120] for x in _strs(d.get("followups"))][:3],
+           "model": f"{provider}:{mdl}"}
+    if not out["answer"]:
+        return None, "AI 회신이 비어 관련 조문 안내만 드립니다."
+    if not out["basis"] and out["conclusion"] not in ("규정 없음", "확인 필요"):
+        out["caveats"].insert(0, "AI 회신이 근거 조문을 짚지 못했습니다. 아래 근거 조문을 직접 확인하세요.")
+    return out, ""
+
+
+@bp.route("/api/regagent/advise", methods=["POST"])
+def ra_advise():
+    """내규 자문. body: {question, slug?(대상 내규), history?:[{q,a}], provider/api_key/model}"""
+    b = _body()
+    q = (b.get("question") or "").strip()
+    if len(q) < 4:
+        return jsonify({"success": False, "error": "질의 내용을 한 문장 이상 적어 주세요."}), 400
+    if len(q) > 1000:
+        return jsonify({"success": False, "error": "질의가 너무 깁니다(1,000자 이내)."}), 400
+    slug = (b.get("slug") or "").strip()
+    if slug and not find_reg(slug, ""):
+        return jsonify({"success": False, "error": "지정한 내규를 찾을 수 없습니다."}), 404
+    S = advise_sources(q, slug)
+    ans, notice = ai_advise(b, S)
+    if not ans:
+        ans = _adv_rule_answer(q, S)
+    return jsonify({"success": True, "question": q, "scope": slug, "ai": "model" in ans, "notice": notice,
+                    "semantic": S["semantic"], "tokens": S["tokens"], "sources": S["sources"], "laws": S["laws"], **ans})
