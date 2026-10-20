@@ -870,3 +870,7 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 @media (prefers-color-scheme:dark){ .ra-adv-b mark{background:#5c4d00;} }
 .ra-adv-hist{list-style:none;margin:0;padding:0;font-size:13px;}
 .ra-adv-hist li{padding:3px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+
+.ra-keynote{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;}
+.ra-keynote>svg.ic{width:16px;height:16px;flex:none;color:var(--gd);}
+.ra-keynote>span:first-of-type{flex:1 1 260px;}
