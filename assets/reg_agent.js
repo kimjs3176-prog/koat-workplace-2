@@ -67,6 +67,10 @@ async function raLoadOrg(){
   const sub=document.getElementById('orgSub'); if(sub){ sub.textContent=RA_ORG.org_name; sub.title=`${RA_ORG.org_name} ${RA_ORG.reg_word} 제정·개정 실무 지원`; }
   document.title=`규정 제·개정 에이전트 · ${RA_ORG.org_short}`;
 }
+// Gemini API 키 발급 페이지(Google AI Studio) — 키가 없을 때 화면 곳곳에서 바로 연다
+const RA_KEY_URL='https://aistudio.google.com/apikey';
+function raAiKeyNote(what){ return raHasAi()?'':`<div class="ra-note ra-keynote">${raIc('spark')}<span>${_e(what||'AI 키가 없으면 규칙 기반으로 처리합니다.')} <b>Google AI Studio</b>에서 Gemini API 키를 무료로 발급받아 [AI 설정]에 붙여 넣으세요.</span>`+
+  `<span class="ra-row" style="margin:0"><a class="svc-btn sm" href="${RA_KEY_URL}" target="_blank" rel="noopener">키 발급(Google)↗</a><button class="svc-btn sm yes" onclick="openAiModal()">AI 설정</button></span></div>`; }
 function raRules(){ return (RA_ORG&&RA_ORG.rules_name)||'내규관리규칙'; }
 function _raBlank(){
   return {tab:'agent',
@@ -339,7 +343,7 @@ function openRegAgent(tab){
   if(nav) nav.innerHTML=tabs;
   let [pt,pf]=RA_PAGE[RA.tab]||['',[]]; if(RA.tab==='enact'||RA.tab==='amend') pf=[];
   const ph=(RA_TABS.find(x=>x[0]===RA.tab)||[])[2]||'';
-  const ai=raHasAi()?`<span class="ra-pill ok">${raIc('spark')}AI 연결됨</span>`:`<button class="ra-pill" onclick="openAiModal()" title="AI 키를 넣으면 초안·수정안·검토의견을 AI가 씁니다">${raIc('spark')}AI 미설정</button>`;
+  const ai=raHasAi()?`<span class="ra-pill ok">${raIc('spark')}AI 연결됨</span>`:`<button class="ra-pill" onclick="openAiModal()" title="AI 키를 넣으면 초안·수정안·검토의견을 AI가 씁니다">${raIc('spark')}AI 미설정</button><a class="ra-pill subtle" href="${RA_KEY_URL}" target="_blank" rel="noopener" title="Google AI Studio에서 Gemini API 키를 무료로 발급받습니다">키 발급(Google)↗</a>`;
   p.innerHTML=(nav?'':`<nav class="ra-tabs" aria-label="에이전트 기능">${tabs}</nav>`)+
     `<header class="ra-page"><div class="ra-page-ic">${raIc(RA.tab)}</div><div class="ra-page-t"><h1 title="${_e(ph)}">${_e(pt)}</h1>${raFlow(pf)}</div><div class="ra-page-a">${ai}<span class="ra-pill subtle" title="절차·심의기준의 근거">「${_e(raRules())}」</span></div></header>`+
     `<div id="raBody" class="ra-body"></div>`;
@@ -354,7 +358,7 @@ function raOrgCard(){
   const c=document.getElementById('orgCard'); if(!c||!RA_ORG) return;
   const srv=(typeof _srvOk==='undefined'||_srvOk===null)?'<span class="badge">서버 확인 중</span>':_srvOk?'<span class="badge ok">서버 연결됨</span>':'<span class="badge no">서버 연결 실패</span>';
   c.innerHTML=`<div class="oc-n">${_e(RA_ORG.org_name)}</div><div class="oc-m">등록 ${_e(RA_ORG.reg_word)} ${RA_ORG._count!=null?RA_ORG._count+'건':'—'} · 「${_e(raRules())}」</div>`+
-    `<div class="oc-row">${srv}</div><div class="oc-row">${raHasAi()?'<span class="badge ok">AI 연결됨</span>':'<span class="badge">AI 미설정</span>'}</div>`+
+    `<div class="oc-row">${srv}</div><div class="oc-row">${raHasAi()?'<span class="badge ok">AI 연결됨</span>':`<span class="badge">AI 미설정</span> <a class="ra-link" href="${RA_KEY_URL}" target="_blank" rel="noopener">키 발급↗</a>`}</div>`+
     `<div class="oc-row oc-bk"><button class="ra-link" onclick="raBackup()" title="제정·개정·절차 작업 내용을 파일로 저장(이 브라우저에만 저장되어 있음)">작업 백업</button><span>·</span><button class="ra-link" onclick="raRestore()" title="백업 파일에서 작업 내용을 되살림">복원</button></div>`;
 }
 // 작업 내용은 이 브라우저(localStorage)에만 있으므로 파일로 백업·복원할 수 있게 한다
@@ -1570,7 +1574,7 @@ function raAgentView(){
     `<section class="ra-ag-hero"><div class="ra-ag-label"><label for="raAgIn">무엇을 하고 싶으세요?</label>${raTip(tip)}</div>`+
     `<div class="ra-ag-box"><textarea id="raAgIn" class="ra-ag-in" rows="2" placeholder="예) 여비규정 제15조의 일비를 3만원으로 올려줘" oninput="raSet('agent.req',this.value)" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();raAgentRun();}">${_e(G.req)}</textarea>`+
     `<button class="svc-btn yes ra-ag-go" onclick="raAgentRun()" ${G.running?'disabled':''}>${raIc('spark')}${G.running?'진행 중…':'에이전트 실행'}</button></div>`+
-    `<div class="ra-ag-exs">${ex}</div></section>`+
+    `<div class="ra-ag-exs">${ex}</div>${raAiKeyNote('AI 키가 없으면 규칙 기반으로 계획하고 조문 문장은 직접 고칩니다. 키를 넣으면 AI가 계획·초안·검토의견을 씁니다.')}</section>`+
     `<div id="raAgOut" aria-live="polite">${raAgentOut()}</div></div>`;
 }
 function raAgentEx(t){ RA.agent.req=t; _raSave(); const el=document.getElementById('raAgIn'); if(el){ el.value=t; el.focus(); } }
@@ -2131,7 +2135,7 @@ function raAdviseView(){
     `<div class="ra-grid2"><label class="ra-f"><span>대상 ${_e(RA_ORG.reg_word)}(선택) ${raTip('비워 두면 모든 '+RA_ORG.reg_word+'에서 찾습니다.')}</span>${raIn('advise.scope',V.scope,'예) 여비규정','list="raRegList"')}<datalist id="raRegList"></datalist></label><div></div></div>`+
     `<div class="ra-row"><button class="svc-btn yes" onclick="raAdvRun()">${raIc('advise')}자문 받기</button>`+
     (V.thread.length?`<button class="svc-btn ghost" onclick="raAdvNew()">새 질의</button><span class="ra-hint">이어서 물으면 앞 질의를 참고합니다(${V.thread.length}건)</span>`:'')+
-    `<span class="ra-hint">${raHasAi()?'AI가 근거 조문만으로 회신을 씁니다.':'AI 키가 없으면 관련 조문과 해당 문장을 안내합니다.'}</span></div>`+
+    `<span class="ra-hint">${raHasAi()?'AI가 근거 조문만으로 회신을 씁니다.':''}</span></div>`+raAiKeyNote('AI 키가 없으면 관련 조문과 해당 문장만 안내합니다. 키를 넣으면 결론·조건·유의사항까지 회신합니다.')+
     `<div class="ra-regs-cats" aria-label="질의 예시">${ex}</div>`;
   const hist=V.hist.length?raSub('최근 질의',`<ul class="ra-adv-hist">${V.hist.map((h,i)=>`<li><button class="ra-link" onclick="raAdvHist(${i})">${_e(h.q)}</button> <span class="ra-chip ${RA_ADV_TONE[h.c]||'n'}">${_e(h.c||'')}</span></li>`).join('')}</ul>`):'';
   return `<div class="ra-wide">${raSec(1,'질의',raTip('직원이 내규 해석을 물을 때 근거 조문을 바로 찾아 회신 초안을 만듭니다. 최종 판단은 소관 부서가 합니다.'),form+hist)}`+

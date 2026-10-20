@@ -96,6 +96,8 @@ body.dark .svc-btn.yes:hover{background:#3b7bf5;}
 .prov-tab{flex:1;font:700 13px var(--font);padding:8px;border:none;border-radius:8px;background:transparent;color:var(--mu);cursor:pointer;}
 .prov-tab.on{background:var(--sf);color:var(--g);box-shadow:var(--shadow);}
 .mf{display:flex;flex-direction:column;gap:6px;margin-bottom:12px;font-size:12.5px;font-weight:700;color:var(--tx2);}
+.key-steps{margin:2px 0 0;padding-left:18px;font-weight:500;line-height:1.7;color:var(--tx2);}
+#aiKeyHelp .svc-btn{align-self:flex-start;text-decoration:none;}
 .mf input,.mf select{font:13px var(--font);color:var(--tx);background:var(--sf);border:1px solid var(--bd2);border-radius:10px;padding:0 12px;height:40px;}
 .mf input:focus,.mf select:focus{outline:none;border-color:var(--g);box-shadow:0 0 0 3px var(--g-ring);}
 .mf a{font-weight:600;color:var(--g);text-decoration:none;}
@@ -192,7 +194,8 @@ function setProv(p){
   const sel=document.getElementById('aiModel');
   sel.innerHTML=AI_MODELS[p].map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
   if(s['model_'+p]) sel.value=s['model_'+p]; if(!sel.value) sel.selectedIndex=0;
-  document.getElementById('aiKeyHelp').innerHTML=`<a href="${AI_HELP[p]}" target="_blank" rel="noopener">${p==='gpt'?'OpenAI':p==='claude'?'Anthropic':'Google AI Studio'}에서 키 발급 ↗</a>`;
+  document.getElementById('aiKeyHelp').innerHTML=`<a class="svc-btn sm" href="${AI_HELP[p]}" target="_blank" rel="noopener">${p==='gpt'?'OpenAI':p==='claude'?'Anthropic':'Google AI Studio'}에서 키 발급 ↗</a>`+
+    (p==='gemini'?`<ol class="key-steps"><li>위 링크에서 Google 계정으로 로그인</li><li>“API 키 만들기(Create API key)”를 눌러 키 복사</li><li>위 API 키 칸에 붙여 넣고 저장 — 무료 사용량 안에서 쓸 수 있습니다</li></ol>`:'');
 }
 let _modalRet=null;
 function openAiModal(){ _modalRet=document.activeElement; const p=_readAiPrefs().provider; setProv(AI_MODELS[p]?p:'gemini'); document.getElementById('aiModalBg').classList.add('show'); setTimeout(()=>document.getElementById('aiKey').focus(),50); }
