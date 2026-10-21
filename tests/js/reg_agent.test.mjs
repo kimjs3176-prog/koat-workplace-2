@@ -453,3 +453,24 @@ test('항·호 중간 신설: 번호 밀림 문형과 대비표 “(현행 제N�
   assert.match(t[3], /③ \(현행 제2항과 같음\)\n④ \(현행 제3항과 같음\)$/);
   assert.match(t[2], /<신 설>/);
 });
+
+test('심의 제출: 심의안건서·규제심사서·부패영향평가 기초자료·점검표', () => {
+  const c = load();
+  vm.runInContext(`_raArts={articles:[{no:'15',title:'숙박비',body:'① 숙박비는 실비로 지급한다.\\n② 추가 지급은 10분의 3 범위에서 한다.\\n③ 받으려는 자는 증빙을 제출하여야 한다.'}]};
+    RA.amend.title='여비규정'; RA.amend.slug='여비규정'; RA.amend.purpose='추가 지급 한도를 현실화하려는 것임.';
+    RA.amend.changes=[{type:'modify',no:'15',title:'숙박비',body:'① 숙박비는 실비로 지급한다.\\n② 추가 지급은 10분의 5 범위에서 한다.\\n③ 받으려는 자는 증빙을 제출하여야 한다.\\n④ 원장의 승인을 받아야 한다.'}];
+    RA.proc.ans={level:'rule',minor:'n',public:'n',multi:'y',impact:'y',burden:'y'};
+    Object.assign(raSub_('amend'),{dept:'경영지원팀',proposer:'팀장 홍길동',meet:'2026-11-30'});`, c);
+  const B = c.raDocsBuild('amend');
+  assert.match(B.agenda, /「여비규정」 일부개정\(안\)을 별지와 같이 의결한다\./);
+  assert.match(B.agenda, /한국농업기술진흥원 경영지원팀 팀장 홍길동/);
+  assert.match(B.agenda, /숙박비 조정\(10분의3 → 10분의5\)\(안 제15조\)/);
+  assert.match(B.regul, /제15조\(숙박비\): ④ 원장의 승인을 받아야 한다\./);   // 바뀐 항만(그대로 둔 ③ 제출 의무는 빼고)
+  assert.ok(!/증빙을 제출/.test(B.regul));
+  assert.match(B.corrupt, /■ 개정/);
+  const ck = c.raSubmitCheck('amend', B).map(x => x.st + ':' + x.t).join('\n');
+  assert.match(ck, /warn:여러 부서 소관/);
+  assert.match(ck, /제출 기한: 2026\. 11\. 23\./);
+  const blocks = c.raDocBlocks(B, ['agenda', 'law', 'cmp', 'regul']);
+  assert.ok(blocks.filter(b => b.t === 'table').length >= 3 && blocks.some(b => b.t === 'break'));
+});
