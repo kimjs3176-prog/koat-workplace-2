@@ -1093,20 +1093,20 @@ function raDocReview(c, mode){
 // 문서 세트
 // ══════════════════════════════════════════════════════════════════════════
 const RA_DOCS={
-  enact:[['law','내규안'],['reason','제정 이유서'],['cmp','신구조문대비표'],['notice','대국민 사전예고문'],['staff','직원 의견수렴 공고'],['review','사전검토 의견서']],
-  amend:[['law','개정문'],['reason','개정 이유서'],['cmp','신구조문대비표'],['notice','대국민 사전예고문'],['staff','직원 의견수렴 공고'],['review','사전검토 의견서']],
+  enact:[['agenda','심의안건서'],['law','내규안'],['reason','제정 이유서'],['cmp','신구조문대비표'],['notice','대국민 사전예고문'],['staff','직원 의견수렴 공고'],['opinion','의견수렴 결과'],['regul','자체 규제심사서'],['corrupt','부패영향평가 기초자료'],['review','사전검토 의견서']],
+  amend:[['agenda','심의안건서'],['law','개정문'],['reason','개정 이유서'],['cmp','신구조문대비표'],['notice','대국민 사전예고문'],['staff','직원 의견수렴 공고'],['opinion','의견수렴 결과'],['regul','자체 규제심사서'],['corrupt','부패영향평가 기초자료'],['review','사전검토 의견서']],
 };
-const RA_DOC_IC={law:'doc',reason:'tip',cmp:'amend',notice:'info',staff:'proc',review:'check',amend:'doc',addenda:'bulk'};
+const RA_DOC_IC={law:'doc',reason:'tip',cmp:'amend',notice:'info',staff:'proc',review:'check',amend:'doc',addenda:'bulk',agenda:'doc',opinion:'proc',regul:'check',corrupt:'alert'};
 function raDocCtx(mode){
   if(mode==='enact'){
     const E=RA.enact, D=E.draft||{}; const p=raParse(D.text||'');
     const title=E.title||'○○규칙'; const kind=raKind(title);
     const pAdd=p.addenda.replace(/^[<＜【〔\[［]?\s*부\s*칙\s*[>＞】〕\]］]?\s*/,'').trim();   // 조문 칸에 직접 쓴 부칙
-    return {mode, title, kind, word:'제정', dept:E.dept||'○○팀', purpose:D.purpose||'', main:String(D.main||'').split('\n').map(s=>s.trim()).filter(Boolean),
+    return {mode, title, kind, word:'제정', dept:raSub_(mode).dept||E.dept||'○○팀', purpose:D.purpose||'', main:String(D.main||'').split('\n').map(s=>s.trim()).filter(Boolean),
       addenda:(D.addenda||'').trim()||pAdd||`이 ${kind}${raJosa(kind)} ${E.effective||'발령한 날'}부터 시행한다.`, appendix:p.appendix, arts:p.articles, dels:E.dels||[]};
   }
   const A=RA.amend; const title=A.title||'○○규정'; const kind=raKind(title);
-  return {mode, title, kind, word:'개정', dept:'○○팀', purpose:A.purpose||'', main:(A.main||[]).map(s=>String(s).trim()).filter(Boolean),
+  return {mode, title, kind, word:'개정', dept:raSub_(mode).dept||'○○팀', purpose:A.purpose||'', main:(A.main||[]).map(s=>String(s).trim()).filter(Boolean),
     addenda:(A.addenda||'').trim()||`이 ${kind}${raJosa(kind)} ${A.effective||'발령한 날'}부터 시행한다.`, changes:raEffChanges().sort((x,y)=>raCmp(x.no,y.no)), dels:[], fine:A.lawStyle!=='art', full:!!A.fullRev&&!!_raArts};
 }
 function raAddendaLines(t){ const s=String(t||'').trim(); return s.split('\n').map(x=>x.trim()).filter(Boolean); }
@@ -1429,7 +1429,9 @@ function raOutReason(c){
 // 주요 내용: 입력한 것이 없으면 조문·수정안에서 만든다(이유서·예고문·공고가 같은 목록을 쓴다)
 function raMainItems(c){ return c.main.length?c.main:(c.mode==='enact'?c.arts.slice(2).map(a=>`${a.title}에 관한 사항을 정함(안 ${raLbl(a.no)})`):c.changes.map(ch=>{ const nn=c.full?((raFullRenumber(raAmendFullText())||{map:{}}).map[raNormNo(ch.no)]):ch.no;   // 전부개정은 새 조 번호로
       if(ch.type==='delete'){ const ot=(ch.title||(raOld(ch.no)||{}).title||'').trim(); return `${ot?ot+' 조항':raLbl(ch.no)} 삭제(현행 ${raLbl(ch.no)})`; }   // “파견근무 조항 삭제(현행 제11조)”
-      return `${ch.title||raLbl(ch.no)} ${ch.type==='insert'?'신설':'정비'}(안 ${raLbl(nn||ch.no)})`; })); }
+      const o=ch.type==='insert'?null:raOld(ch.no), q=o?raQtyDiff(o.body,ch.body):null;     // 금액·기간·비율이 바뀌면 “(3만원 → 5만원)”
+      const qd=q&&q.from.length&&q.to.length&&q.from.length<=3?`(${q.from.join('·')} → ${q.to.join('·')})`:'';
+      return `${ch.title||raLbl(ch.no)} ${ch.type==='insert'?'신설':qd?'조정'+qd:'정비'}(안 ${raLbl(nn||ch.no)})`; })); }
 function raOutNotice(c, staff){
   const days=staff?(+RA_ORG.staff_days||7):(+RA_ORG.notice_days||20);
   return {title:staff?`「${c.title}」 ${c.word}(안) 직원 의견수렴 공고`:`「${c.title}」 ${c.word}(안) 사전예고`,
@@ -1460,9 +1462,12 @@ function raDocCmpRows(c){
 function raDocsBuild(mode){
   const c=raDocCtx(mode);
   const cmp=raDocCmpRows(c);
-  return {c, law:raDocLaw(c), reason:raDocReason(c), notice:raDocNotice(c,false), staff:raDocNotice(c,true), review:raDocReview(c,mode), cmp};
+  const B={c, law:raDocLaw(c), reason:raDocReason(c), notice:raDocNotice(c,false), staff:raDocNotice(c,true), review:raDocReview(c,mode), cmp, blk:{}};
+  B.blk.agenda=raAgendaBlocks(c,mode); B.blk.opinion=raOpinionBlocks(c,mode); B.blk.regul=raRegulBlocks(c,mode); B.blk.corrupt=raCorruptBlocks(c,mode);
+  Object.keys(B.blk).forEach(k=>{ B[k]=raBlocksText(B.blk[k]); });     // 복사·표기 점검용 글
+  return B;
 }
-function raPicks(mode){ const S=RA[mode]; if(!Array.isArray(S.picks)) S.picks=RA_DOCS[mode].map(x=>x[0]).filter(k=>!(mode==='enact'&&k==='cmp')); return S.picks; }
+function raPicks(mode){ const S=RA[mode]; if(!Array.isArray(S.picks)||!S.picksV2){ S.picks=raSubmitDefaults(mode); S.picksV2=1; } return S.picks; }
 function raPickSet(mode,k,on){ const P=raPicks(mode).filter(x=>x!==k); if(on) P.push(k); RA[mode].picks=RA_DOCS[mode].map(x=>x[0]).filter(x=>P.includes(x)); _raSave(); }
 function raDocsView(mode){
   const S=RA[mode]; const tab=S.docTab||'law';
@@ -1470,18 +1475,19 @@ function raDocsView(mode){
   const tabs=RA_DOCS[mode].map(([k,l])=>`<button class="ra-dtab${tab===k?' on':''}" onclick="raSet('${mode}.docTab','${k}');raRerender('${mode}')">${raIc(RA_DOC_IC[k]||'doc')}${l}</button>`).join('');
   let body;
   if(tab==='cmp') body=`<div class="ra-doc-t">「${_e(B.c.title)}」 ${B.c.word}안 신구조문대비표</div><table class="ra-cmp"><thead><tr><th>현 행</th><th>${B.c.word} 안</th></tr></thead><tbody>${B.cmp.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')||'<tr><td colspan="2">조문이 없습니다.</td></tr>'}</tbody></table>`;
+  else if(B.blk[tab]) body=raBlocksHtml(B.blk[tab])+raSubEditor(mode,tab);
   else body=`<pre class="ra-doc">${_e(B[tab])}</pre>`;
   const picks=raPicks(mode);
   const all=`<span class="ra-picks" title="저장할 문서">`+RA_DOCS[mode].map(([k,l])=>{ const off=k==='review'&&!S.review;
     return `<label class="ra-pk-c${off?' dis':''}"${off?' title="심의 사전검토를 실행하면 넣을 수 있습니다"':''}><input type="checkbox" class="ra-docpick" value="${k}" ${picks.includes(k)&&!off?'checked':''} ${off?'disabled':''} onchange="raPickSet('${mode}','${k}',this.checked)"><span>${raIc(RA_DOC_IC[k]||'doc')}${l}</span></label>`; }).join('')+`</span>`;
-  return `<div class="ra-dtabs">${tabs}</div><div class="ra-docbox">${body}</div>`+
+  return raSubmitPanel(mode,B)+`<div class="ra-dtabs">${tabs}</div><div class="ra-docbox">${body}</div>`+
     `<div id="raNota">${raNotaView(mode)}</div>`+
     `<div class="ra-save">${all}<div class="ra-row"><button class="svc-btn ghost" onclick="raCopyDoc('${mode}')">복사</button><button class="svc-btn ghost" onclick="raPrintDoc('${mode}')">인쇄</button>`+
     `<span class="ra-sep"></span><button class="svc-btn yes" onclick="raExport('${mode}','hwpx')">한글(.hwpx)</button><button class="svc-btn" onclick="raExport('${mode}','docx')">Word(.docx)</button></div></div>`+
     `<div class="ra-meta"><span class="ra-days">사전예고 ${RA_ORG.notice_days}일↑</span><span class="ra-days">직원 의견수렴 ${RA_ORG.staff_days}일↑</span>${raTip(`사전예고는 국민 권리·의무 관련 ${RA_ORG.reg_word}(「${raRules()}」 제15조의3제2항)일 때, 직원 의견수렴은 제15조의4 — 절차 안내를 확인하세요.`)}</div>`;
 }
 // ── 공문서 표기 점검(행정업무운영편람) — 서버 notation.py 규칙: 날짜·기간·시각·금액·쌍점·붙임·끝·낫표·줄표·외래어 ──
-const RA_NOTA_DOCS=['law','reason','notice','staff','review'];
+const RA_NOTA_DOCS=['agenda','law','reason','notice','staff','opinion','review'];
 async function raNotaLint(mode){
   const B=raDocsBuild(mode), texts={}, kinds={};
   RA_NOTA_DOCS.forEach(k=>{ if(k==='review'&&!RA[mode].review) return; texts[k]=B[k]; if(k==='law') kinds[k]='law'; });
@@ -1509,7 +1515,7 @@ function raCopyDoc(mode){
 }
 function raPrintDoc(mode){
   const B=raDocsBuild(mode), tab=RA[mode].docTab||'law';
-  const inner=tab==='cmp'?`<h3>「${_e(B.c.title)}」 ${B.c.word}안 신구조문대비표</h3><table><tr><th>현 행</th><th>${B.c.word} 안</th></tr>${B.cmp.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</table>`:`<pre>${_e(B[tab])}</pre>`;
+  const inner=tab==='cmp'?`<h3>「${_e(B.c.title)}」 ${B.c.word}안 신구조문대비표</h3><table><tr><th>현 행</th><th>${B.c.word} 안</th></tr>${B.cmp.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('')}</table>`:B.blk[tab]?raBlocksHtml(B.blk[tab]):`<pre>${_e(B[tab])}</pre>`;
   const w=window.open('','_blank'); if(!w){ _toast('팝업이 차단되었습니다.'); return; }
   w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${_e(B.c.title)}</title><style>body{font-family:'Malgun Gothic',sans-serif;font-size:13px;line-height:1.7;padding:24px;}pre{white-space:pre-wrap;font-family:inherit;}table{width:100%;border-collapse:collapse;}td,th{border:1px solid #444;padding:8px;vertical-align:top;width:50%;}th{background:#eee;}u.ra-d{text-decoration:underline;color:#b91c1c;}u.ra-i{text-decoration:underline;color:#1d4ed8;font-weight:600;}</style></head><body>${inner}</body></html>`);
   w.document.close(); w.focus(); setTimeout(()=>w.print(),300);
@@ -1529,7 +1535,8 @@ function raDocBlocks(B, picks){
     if(k==='cmp'){
       blocks.push({t:'p',text:`「${B.c.title}」 ${B.c.word}안 신구조문대비표`,titleBold:1},{t:'p',text:''});
       blocks.push({t:'table',colWidths:[23814,23814],rows:[[{t:'현 행',hd:1},{t:`${B.c.word} 안`,hd:1}],...B.cmp.map(r=>[{t:r[2],r:raHtmlRuns(r[0])},{t:r[3],r:raHtmlRuns(r[1])}])]});
-    } else blocks.push({t:'p',text:B[k],titleBold:1});
+    } else if(B.blk&&B.blk[k]) blocks.push(...B.blk[k]);
+    else blocks.push({t:'p',text:B[k],titleBold:1});
   });
   return blocks;
 }
@@ -1549,6 +1556,201 @@ function raExport(mode, fmt){
   if(!picks.length){ _toast('저장할 문서를 고르세요.'); return; }
   const B=raDocsBuild(mode), names=Object.fromEntries(RA_DOCS[mode]);
   raSaveFile(fmt, `${B.c.title}_${B.c.word}안`, raDocBlocks(B,picks), picks.map(k=>names[k]).join('·'));
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 심의 제출 — 「내규관리규칙」 서식: [별지 제3호] 심의안건서, [별지 제5호] 자체 규제심사서,
+// [별지 제8호] 부패영향평가 기초자료, 의견수렴 결과서 + 제출 전 점검표 + 한 번에 받는 제출 패키지
+// ══════════════════════════════════════════════════════════════════════════
+function raSub_(mode){ const S=RA[mode]; S.sub=Object.assign({dept:'',proposer:'',meet:'',agree:'',contact:'',noticeDone:'',staffDone:'',opinions:[],regul:{content:'',basis:'',marks:{},opinion:''},corrupt:''},S.sub||{}); return S.sub; }
+function raSubSet(mode,k,v){ raSub_(mode)[k]=v; _raSave(); raSubRedraw(mode); }
+function raSubRedraw(mode){ clearTimeout(raSubRedraw._t); raSubRedraw._t=setTimeout(()=>{ const B=raDocsBuild(mode), tab=RA[mode].docTab||'law';
+  const ck=document.getElementById('raSubCk'); if(ck) ck.innerHTML=raSubmitCheckView(mode,B);
+  const bx=document.querySelector('.ra-docbox .ra-fblk'); if(bx&&B.blk[tab]) bx.outerHTML=raBlocksHtml(B.blk[tab]); },250); }
+// 절차 답(절차 안내 탭)으로 이번 안건에 필요한 서식을 정한다
+function raSubNeeds(){ const a=(RA.proc&&RA.proc.ans)||{}; const y=k=>a[k]==='y';
+  return {answered:['minor','public','multi','impact','burden'].some(k=>a[k]), minor:y('minor'), notice:y('public')&&!y('minor'), staff:!y('minor'), agree:y('multi'), corrupt:y('impact'), regul:y('burden'), level:a.level||''}; }
+function raSubmitDefaults(mode){ const n=raSubNeeds(); return ['agenda','law','cmp','reason','opinion',...(n.regul?['regul']:[]),...(n.corrupt?['corrupt']:[]),'review'].filter(k=>RA_DOCS[mode].some(x=>x[0]===k)); }
+// 부칙 첫 문장에서 시행일만(“2027. 1. 1.”·“발령한 날”·“발령 후 3개월이 경과한 날”)
+function raEffOf(c){ const t=(raAddendaLines(c.addenda)[0]||'').replace(/^제\d+조\([^)]*\)\s*/,''); const m=t.match(/(?:은|는)\s+(.+?)부터\s*시행/); return m?m[1].trim():(t||'발령한 날'); }
+function raDateStr(v){ const m=String(v||'').match(/(\d{4})-(\d{2})-(\d{2})/); return m?`${+m[1]}. ${+m[2]}. ${+m[3]}.`:''; }
+function raDateAdd(v,d){ const m=String(v||'').match(/(\d{4})-(\d{2})-(\d{2})/); if(!m) return ''; const t=new Date(+m[1],+m[2]-1,+m[3]+d); return `${t.getFullYear()}. ${t.getMonth()+1}. ${t.getDate()}.`; }
+// 블록(문단·표) → 화면 HTML / 평문
+function raBlocksHtml(bl){ return `<div class="ra-fblk">`+bl.map(b=>b.t==='table'?`<table class="ra-form">${b.rows.map(r=>`<tr>${r.map(c=>`<${c.hd?'th':'td'}${c.cs>1?` colspan="${c.cs}"`:''}>${_e(c.t).replace(/\n/g,'<br>')}</${c.hd?'th':'td'}>`).join('')}</tr>`).join('')}</table>`
+  :b.t==='break'?'<hr class="ra-pgbr">':`<pre class="ra-doc${b.titleBold?' tb':''}">${_e(b.text)}</pre>`).join('')+`</div>`; }
+function raBlocksText(bl){ return bl.map(b=>b.t==='table'?b.rows.map(r=>r.map(c=>c.t).join(' | ')).join('\n'):b.t==='break'?'':b.text).filter(x=>x!=='').join('\n\n'); }
+const RA_CELL=(t,o)=>Object.assign({t:String(t==null?'':t)},o||{});
+// [별지 제3호 서식] 심의안건서: 앞면(표) + 다음 면(의결주문·제안이유·주요골자·관련근거 및 기타사항)
+function raAgendaBlocks(c, mode){
+  const S=raSub_(mode), n=raSubNeeds(), main=raMainItems(c), H=RA_CELL;
+  const what=`「${c.title}」 ${c.mode==='enact'?'제정':c.full?'전부개정':'일부개정'}(안)`;
+  const cover={t:'table',colWidths:[11907,35721],rows:[
+    [H('심 의 번 호',{hd:1}),H('제        호')],
+    [H('심 의 년 월 일',{hd:1}),H(`${raDateStr(S.meet)||'20    .    .    .'}  (제    차)`)],
+    [H('안        건',{hd:1}),H(what)],
+    [H('제  안  자',{hd:1}),H(`${RA_ORG.org_name} ${S.dept||c.dept}${S.proposer?' '+S.proposer:' ○○○'}`)],
+    [H('제 안 년 월 일',{hd:1}),H(raToday(0))]]};
+  const law=c.dels&&c.dels.length?c.dels.map(d=>`「${d.law}」 ${raDelArt(d)}`.trim()):[];
+  const eff=raEffOf(c);
+  const ops=raArr(S.opinions), acc=ops.filter(o=>/^반영|일부/.test(o.res||'')).length;
+  const opTxt=ops.length?`제출 의견 ${ops.length}건(반영 ${acc}건, 미반영 ${ops.length-acc}건), 붙임 의견수렴 결과 참조`:'제출된 의견 없음';
+  const etc=[
+    `관련 근거: 「${raRules()}」 제14조(입안)·제16조(내규심의)`+(law.length?`, ${law.join(', ')}`:''),
+    `관련 부서 협의: ${S.agree||(n.agree?'○○팀 협의(완료/예정)':'해당 없음')}`,
+    `대국민 사전예고: ${n.notice?(S.noticeDone||`${RA_ORG.notice_days}일 이상 실시(기간: ○○. ○. ○.∼○○. ○. ○.)`):n.minor?'경미한 변경으로 생략':'해당 없음(국민 권리·의무와 직접 관련 없음)'}`,
+    `직원 의견수렴: ${n.staff?(S.staffDone||`${RA_ORG.staff_days}일 이상 실시(기간: ○○. ○. ○.∼○○. ○. ○.)`):'경미한 변경으로 생략'}, ${opTxt}`,
+    `부패영향평가: ${n.corrupt?(S.corrupt||'평가 요청(결과: ○○)'):'해당 없음'}`,
+    `자체 규제심사: ${n.regul?'실시(붙임 자체 규제심사서)':raRegulAuto(c).length?`검토 필요(의무·허가·신고 등 규제성 조문 ${raRegulAuto(c).length}건, 유사 행정규제 해당 여부 확인)`:'해당 없음(신설·강화되는 규제 없음)'}`,
+    `시행일: ${eff}`];
+  const body=[`1. 의결주문`,`  ${what}을 별지와 같이 의결한다.`,'',`2. 제안이유`,`  ${c.purpose||`○○에 필요한 사항을 정하기 위하여 「${c.title}」${raEul(c.title)} ${c.word}하려는 것임.`}`,'',
+    `3. 주요골자`,...(main.length?main:['○○']).map((x,i)=>`  ${RA_GANA(i)}. ${x}`),'',`4. 관련근거 및 기타사항`,...etc.map((x,i)=>`  ${RA_GANA(i)}. ${x}`),'',
+    ...[c.mode==='enact'?'제정안 1부.':'개정안 1부.',...(c.mode==='enact'?[]:['신구조문대비표 1부.']),...(ops.length?['의견수렴 결과 1부.']:[])].map((x,i,a)=>`${i?'      ':'붙임  '}${i+1}. ${x}${i===a.length-1?'  끝.':''}`)].join('\n');
+  return [{t:'p',text:`${RA_ORG.reg_word}심의 안건`,titleBold:1},cover,{t:'break'},{t:'p',text:`${what}\n\n${body}`,titleBold:1}];
+}
+// 의견수렴 결과(사전예고·직원 의견수렴): 제출 의견과 반영 여부·사유
+function raOpinionBlocks(c, mode){
+  const S=raSub_(mode), ops=raArr(S.opinions), n=raSubNeeds(), H=RA_CELL;
+  const lead=[`「${c.title}」 ${c.word}(안) 의견수렴 결과`,'',
+    `1. 의견수렴 개요`,`  가. 대국민 사전예고: ${n.notice?(S.noticeDone||`${RA_ORG.notice_days}일 이상(기간: ○○. ○. ○.∼○○. ○. ○.)`):'해당 없음'}`,
+    `  나. 직원 의견수렴: ${n.staff?(S.staffDone||`${RA_ORG.staff_days}일 이상(기간: ○○. ○. ○.∼○○. ○. ○.)`):'생략(경미한 변경)'}`,'',
+    `2. 제출 의견 및 반영 여부`+(ops.length?'':`\n  제출된 의견 없음`)].join('\n');
+  const out=[{t:'p',text:lead,titleBold:1}];
+  if(ops.length) out.push({t:'table',colWidths:[3500,8000,18128,7000,11000],rows:[[H('연번',{hd:1}),H('제출자',{hd:1}),H('의견 요지',{hd:1}),H('반영 여부',{hd:1}),H('사유',{hd:1})],
+    ...ops.map((o,i)=>[H(i+1),H(o.who||''),H(o.what||''),H(o.res||'검토 중'),H(o.why||'')])]});
+  out.push({t:'p',text:`※ 제출 의견의 반영 여부는 의견 제출자에게 통지함(「${raRules()}」 제15조의3).  끝.`});
+  return out;
+}
+// 규제성 조문 후보: 의무·허가·제출·제한·금지 표현이 있는 새·바뀐 조문
+const RA_REGUL_RE=/(하여야\s*한다|제출하여야|받아야\s*한다|허가|승인|신고|등록하여야|제한|금지|할\s*수\s*없다|아니\s*된다|의무|부담|수수료|과태료|제재|불이익)/;
+function raRegulAuto(c){
+  // 개정은 새로 쓰거나 바뀐 항·호만 본다(그대로 둔 의무 조항은 신설·강화된 규제가 아니다)
+  const parts=c.mode==='enact'?c.arts.map(a=>({a, t:a.body||''})):raArr(c.changes).filter(x=>x.type!=='delete').map(ch=>{
+    const o=ch.type==='insert'?null:raOld(ch.no), old=new Set(o?raUnits(o.body).map(u=>u.text.trim()):[]);
+    return {a:ch, t:raUnits(ch.body).filter(u=>!old.has(u.text.trim())).map(u=>u.text).join('\n')}; });
+  return parts.filter(x=>RA_REGUL_RE.test(x.t)).slice(0,8).map(({a,t})=>{ const m=t.split(/\n|(?<=다\.)\s+/).find(x=>RA_REGUL_RE.test(x))||''; return `${raLbl(a.no)}(${a.title||''}): ${m.trim().slice(0,90)}`; });
+}
+const RA_REGUL_ITEMS=[['need','규제의 필요성·정당성','규제를 하지 않아 심각한 문제가 생기는지, 자율·다른 방법(규제 대안)은 없는지'],
+  ['scope','상위 법령·규정의 위임 범위 준수','상위 법령·규정의 위임 범위를 벗어나지 않는지'],['blanket','포괄 위임 여부','하위 규정·요령 등에 포괄적으로 위임하지 않는지'],
+  ['target','규제 대상 선정 기준의 명확성','규제 대상과 기준을 구체적으로 정했는지'],['proc','절차의 투명성','규제 절차가 투명한지'],
+  ['dup','중복 규제','이미 시행 중인 규제와 겹치지 않는지(겹치면 완화 방안)'],['comply','규제 순응의 실효성','회피 수단·과도한 제출 서류가 없는지, 이행을 확인할 수 있는지'],
+  ['sunset','규제 존속 필요성(일몰)','일정 기간 뒤 재검토(일몰) 필요성']];
+const RA_MARKS=[['○','적절'],['△','미흡'],['×','근거 없음'],['∨','확인필요'],['-','해당없음']];
+function raRegulBlocks(c, mode){
+  const S=raSub_(mode), R=S.regul, H=RA_CELL, auto=raRegulAuto(c);
+  const law=(c.dels||[]).map(d=>`「${d.law}」 ${raDelArt(d)}`.trim());
+  return [{t:'p',text:'자체 규제심사서',titleBold:1},{t:'table',colWidths:[10000,15000,9000,13628],rows:[
+    [H('심사일자',{hd:1}),H(raToday(0)),H('심사자',{hd:1}),H(`${S.dept||c.dept} ${S.proposer||'○○○'}`)],
+    [H('심사 내규명',{hd:1}),H(`「${c.title}」 ${c.word}(안)`,{cs:3})],
+    [H('규제 내용',{hd:1}),H(R.content||(auto.length?auto.join('\n'):'신설·강화되는 규제 없음'),{cs:3})],
+    [H('근거 및 관련 법령\n(법규 포함)',{hd:1}),H(R.basis||law.join(', ')||`「${raRules()}」 제17조`,{cs:3})],
+    [H('규제심사 사항 (○ 적절, △ 미흡, × 근거 없음, ∨ 확인필요, - 해당없음)',{hd:1,cs:4})],
+    ...RA_REGUL_ITEMS.map(([k,t,d])=>[H(`${t}\n  ${d}`,{cs:3}),H((R.marks||{})[k]||'∨')]),
+    [H('검토(심사) 의견',{hd:1}),H(R.opinion||'○○',{cs:3})]]}];
+}
+// [별지 제8호 서식] 부패영향평가 기초자료
+function raCorruptBlocks(c, mode){
+  const S=raSub_(mode), n=raSubNeeds(), H=RA_CELL;
+  const law=(c.dels||[]).map(d=>`「${d.law}」`).filter((x,i,a)=>a.indexOf(x)===i).join(', ');
+  const form=['정관','규정','규칙','시행세칙','예규(지침 등)'].map(f=>`${(f.startsWith(c.kind)||(f==='예규(지침 등)'&&/지침|요령|기준|예규|매뉴얼/.test(c.kind)))?'■':'□'} ${f}`).join('  ');
+  return [{t:'p',text:'부패영향평가 기초자료',titleBold:1},{t:'table',colWidths:[10000,12000,12000,13628],rows:[
+    [H('법령 등',{hd:1}),H(law||'해당 없음',{cs:3})],
+    [H('구 분',{hd:1}),H(`${c.mode==='enact'?'■':'□'} 제정   ${c.mode==='enact'?'□':'■'} 개정`,{cs:3})],
+    [H('형 식',{hd:1}),H(form,{cs:3})],
+    [H('내규명',{hd:1}),H(c.title,{cs:3})],
+    [H('입안부서\n(주무부서)',{hd:1}),H(S.dept||c.dept,{cs:3})],
+    [H('제·개정 일정\n(예정)',{hd:1}),H(`심의 ${raDateStr(S.meet)||'○○. ○. ○.'}, 시행 ${raEffOf(c)}`,{cs:3})],
+    [H('관련부서 협의',{hd:1}),H('대상부서',{hd:1}),H('협의기간',{hd:1}),H('완료예정일',{hd:1})],
+    [H(''),H(S.agree||(n.agree?'○○팀':'해당 없음')),H(n.agree?'○○. ○. ○.∼○○. ○. ○.':'-'),H(n.agree?'○○. ○. ○.':'-')],
+    [H('의견수렴 절차',{hd:1}),H(`대국민 사전예고: ${n.notice?`${RA_ORG.notice_days}일`:n.minor?'생략(경미한 변경)':'해당 없음'} / 직원 의견수렴: ${n.staff?`${RA_ORG.staff_days}일`:'생략(경미한 변경)'}`,{cs:3})],
+    [H('별도\n붙임자료',{hd:1}),H('1. 제·개정(안)(신·구 조문 비교표 포함)\n2. 필요 시 부패유발 문제점에 대한 검토의견 및 관련자료',{cs:3})],
+    [H('작성자',{hd:1}),H(`부서명: ${S.dept||c.dept}`),H(`직급·성명: ${S.proposer||'○○○'}`),H(`전화: ${S.contact||'○○○-○○○○'}`)]]}];
+}
+// 서식 편집(의견수렴 결과·자체 규제심사서) — 미리보기 아래
+function raSubEditor(mode, tab){
+  const S=raSub_(mode);
+  if(tab==='opinion'){
+    const rows=raArr(S.opinions).map((o,i)=>`<tr><td><input class="ra-in sm" value="${_e(o.who||'')}" placeholder="제출자" oninput="raOpSet('${mode}',${i},'who',this.value)"></td>`+
+      `<td><textarea class="ra-ta" rows="2" placeholder="의견 요지" oninput="raOpSet('${mode}',${i},'what',this.value)">${_e(o.what||'')}</textarea></td>`+
+      `<td><select class="ra-in sm" onchange="raOpSet('${mode}',${i},'res',this.value)">${['검토 중','반영','일부 반영','미반영'].map(v=>`<option ${o.res===v?'selected':''}>${v}</option>`).join('')}</select></td>`+
+      `<td><textarea class="ra-ta" rows="2" placeholder="반영·미반영 사유" oninput="raOpSet('${mode}',${i},'why',this.value)">${_e(o.why||'')}</textarea></td>`+
+      `<td><button class="ra-link" onclick="raOpDel('${mode}',${i})" aria-label="${i+1}번 의견 삭제">삭제</button></td></tr>`).join('');
+    return `<div class="ra-subed"><b>제출 의견 입력</b><table class="ra-form ed"><thead><tr><th>제출자</th><th>의견 요지</th><th>반영 여부</th><th>사유</th><th></th></tr></thead><tbody>${rows||'<tr><td colspan="5" class="ra-hint">아직 입력한 의견이 없습니다.</td></tr>'}</tbody></table>`+
+      `<button class="svc-btn sm" onclick="raOpAdd('${mode}')">＋ 의견 추가</button></div>`;
+  }
+  if(tab==='regul'){
+    const R=S.regul, c=raDocCtx(mode), auto=raRegulAuto(c);
+    return `<div class="ra-subed"><b>자체 규제심사 입력</b> ${raTip('규제 내용은 의무·허가·제출·제한·금지 표현이 있는 새·바뀐 조문에서 자동으로 뽑습니다. 고쳐 쓰면 그 내용을 씁니다.')}`+
+      `<label class="ra-f"><span>규제 내용</span><textarea class="ra-ta" rows="3" placeholder="${_e(auto.join(' / ')||'신설·강화되는 규제 없음')}" oninput="raRgSet('${mode}','content',this.value)">${_e(R.content)}</textarea></label>`+
+      `<label class="ra-f"><span>근거 및 관련 법령</span><input class="ra-in" value="${_e(R.basis)}" placeholder="예) 「○○법」 제○조" oninput="raRgSet('${mode}','basis',this.value)"></label>`+
+      `<table class="ra-form ed"><tbody>${RA_REGUL_ITEMS.map(([k,t,d])=>`<tr><td><b>${_e(t)}</b><div class="ra-hint">${_e(d)}</div></td><td><select class="ra-in sm" aria-label="${_e(t)} 판단" onchange="raRgMark('${mode}','${k}',this.value)">${RA_MARKS.map(([m,l])=>`<option value="${m}" ${(R.marks[k]||'∨')===m?'selected':''}>${m} ${l}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table>`+
+      `<label class="ra-f"><span>검토(심사) 의견</span><textarea class="ra-ta" rows="3" oninput="raRgSet('${mode}','opinion',this.value)">${_e(R.opinion)}</textarea></label></div>`;
+  }
+  return '';
+}
+function raOpAdd(mode){ raSub_(mode).opinions.push({who:'',what:'',res:'검토 중',why:''}); _raSave(); raRerender(mode); }
+function raOpDel(mode,i){ raSub_(mode).opinions.splice(i,1); _raSave(); raRerender(mode); }
+function raOpSet(mode,i,k,v){ const o=raSub_(mode).opinions[i]; if(!o) return; o[k]=v; _raSave(); raSubRedraw(mode); }
+function raRgSet(mode,k,v){ raSub_(mode).regul[k]=v; _raSave(); raSubRedraw(mode); }
+function raRgMark(mode,k,v){ raSub_(mode).regul.marks[k]=v; _raSave(); raSubRedraw(mode); }
+// 제출 전 점검표: 막는 문제(err)·보완 권장(warn)·확인(ok)
+function raSubmitCheck(mode, B){
+  const S=RA[mode], sub=raSub_(mode), n=raSubNeeds(), out=[], add=(st,t,act)=>out.push({st,t,act});
+  const lint=raArr(S.lint), le=lint.filter(i=>i.level==='error').length;
+  if(!S.lint) add('warn','조문 형식 점검을 아직 하지 않았습니다.',`raLint('${mode}')`);
+  else add(le?'err':'ok',le?`조문 형식 점검 오류 ${le}건이 남아 있습니다.`:'조문 형식 점검 — 오류 없음');
+  const ph=['agenda','law','reason'].filter(k=>/[○△]{2}/.test(B[k]||''));
+  add(ph.length?'warn':'ok',ph.length?`채우지 않은 ○○ 자리표시: ${ph.map(k=>Object.fromEntries(RA_DOCS[mode])[k]).join(', ')}`:'자리표시(○○) 없음');
+  const rv=S.review; if(!rv) add('warn','심의기준 사전검토를 아직 하지 않았습니다.');
+  else { const bad=raArr(rv.rows).filter(r=>r.status==='warn').length; add(bad?'err':'ok',bad?`사전검토 ‘보완 필요’ ${bad}개 항목이 남아 있습니다.`:'심의기준 사전검토 — 보완 필요 없음'); }
+  const nt=S.nota&&S.nota.res; const ne=nt?Object.values(nt).reduce((m,f)=>m+f.filter(x=>x.level==='error').length,0):0;
+  add(!nt?'warn':ne?'warn':'ok',!nt?'공문서 표기 점검을 아직 하지 않았습니다.':ne?`공문서 표기 오류 ${ne}건`:'공문서 표기 — 오류 없음');
+  add(String(B.c.addenda||'').trim()?'ok':'err',String(B.c.addenda||'').trim()?'부칙(시행일) 있음':'부칙(시행일)이 없습니다.');
+  if(mode==='amend'&&!raEffChanges().length) add('err','개정 내용(수정안)이 없습니다.');
+  if(mode==='amend'){ const sc=raAmendScale(); if(sc.full&&!RA.amend.fullRev) add('warn',`조문의 ${Math.round(sc.ratio*100)}%를 고칩니다 — 전부개정 방식을 검토하세요(「${raRules()}」 제6조).`); }
+  add(sub.dept&&sub.proposer?'ok':'warn',sub.dept&&sub.proposer?`제안: ${sub.dept} ${sub.proposer}`:'제안 부서·제안자(직위·성명)를 입력하세요.');
+  if(!n.answered) add('warn','절차 안내의 질문(경미한 변경·국민 권리·여러 부서·영향·규제)에 답하면 필요한 서식이 정해집니다.',"raTab('proc')");
+  else {
+    if(n.notice) add(sub.noticeDone?'ok':'warn',sub.noticeDone?`대국민 사전예고: ${sub.noticeDone}`:`대국민 사전예고(${RA_ORG.notice_days}일 이상) 실시 기간을 입력하세요.`);
+    if(n.staff) add(sub.staffDone?'ok':'warn',sub.staffDone?`직원 의견수렴: ${sub.staffDone}`:`직원 의견수렴(${RA_ORG.staff_days}일 이상) 실시 기간을 입력하세요.`);
+    if(n.agree) add(sub.agree?'ok':'warn',sub.agree?`관련 부서 협의: ${sub.agree}`:'여러 부서 소관 — 관련 부서 협의 결과를 입력하세요.');
+    if(n.regul) add(raPicks(mode).includes('regul')?'ok':'warn','유사 행정규제 — 자체 규제심사서[별지 제5호 서식]'+(raPicks(mode).includes('regul')?' 포함':'를 패키지에 넣으세요.'));
+    if(n.corrupt) add(raPicks(mode).includes('corrupt')?'ok':'warn','국민 생활 영향 — 부패영향평가 기초자료[별지 제8호 서식]'+(raPicks(mode).includes('corrupt')?' 포함':'를 패키지에 넣으세요.'));
+  }
+  const rg=raRegulAuto(B.c); if(rg.length&&!n.regul) add('warn',`의무·허가·신고 등 규제성 조문 ${rg.length}건 — 유사 행정규제면 자체 규제심사서[별지 제5호 서식]가 필요합니다(「${raRules()}」 제17조).`,"raTab('proc')");
+  const open=raArr(sub.opinions).filter(o=>!o.res||o.res==='검토 중').length;
+  if(open) add('warn',`반영 여부를 정하지 않은 의견 ${open}건`);
+  if(sub.meet){ const m=sub.meet.match(/(\d{4})-(\d{2})-(\d{2})/); if(m){ const due=new Date(+m[1],+m[2]-1,+m[3]-7), now=new Date(); now.setHours(0,0,0,0);
+    add(now>due?'warn':'ok',`제출 기한: ${raDateAdd(sub.meet,-7)}(위원회 개최 7일 전, 「${raRules()}」 제14조제1항)`+(now>due?' — 기한이 지났습니다. 긴급한 사유를 적어 제출하세요.':'')); } }
+  else add('warn','심의(위원회) 예정일을 입력하면 제출 기한(7일 전)을 알려 드립니다.');
+  return out;
+}
+function raSubmitCheckView(mode, B){
+  const L=raSubmitCheck(mode,B), e=L.filter(x=>x.st==='err').length, w=L.filter(x=>x.st==='warn').length;
+  const ic={ok:'check',warn:'alert',err:'bad'};
+  return `<div class="ra-subck-h ${e?'err':w?'warn':'ok'}">${raIc(e?'bad':w?'alert':'check')}<b>${e?`제출 전에 고칠 문제 ${e}건`:w?`보완 권장 ${w}건 — 제출은 가능합니다`:'제출 준비 완료'}</b></div>`+
+    `<ul class="ra-subck">${L.map(x=>`<li class="st-${x.st}">${raIc(ic[x.st])}<span>${_e(x.t)}</span>${x.act?` <button class="ra-link" onclick="${x.act}">바로 하기</button>`:''}</li>`).join('')}</ul>`;
+}
+function raSubmitPanel(mode, B){
+  const S=raSub_(mode), n=raSubNeeds();
+  const f=(k,l,ph,type)=>`<label class="ra-f"><span>${l}</span><input class="ra-in" ${type?`type="${type}"`:''} value="${_e(S[k]||'')}" placeholder="${_e(ph||'')}" oninput="raSubSet('${mode}','${k}',this.value)"></label>`;
+  const form=`<div class="ra-grid2">${f('dept','제안(주무) 부서','예) 경영기획팀')}${f('proposer','제안자 직위·성명','예) 팀장 홍길동')}</div>`+
+    `<div class="ra-grid2">${f('meet','심의(위원회) 예정일','', 'date')}${f('contact','작성자 전화번호','예) 063-919-0000')}</div>`+
+    `<div class="ra-grid2">${f('noticeDone','대국민 사전예고 실시',n.notice?`예) ${RA_ORG.notice_days}일간(○. ○.∼○. ○.) 홈페이지 게시, 의견 0건`:'해당 시 입력')}${f('staffDone','직원 의견수렴 실시',`예) ${RA_ORG.staff_days}일간(○. ○.∼○. ○.) 내부포털 게시`)}</div>`+
+    `<div class="ra-grid2">${f('agree','관련 부서 협의',n.agree?'예) 인사팀 협의 완료(○. ○.)':'해당 시 입력')}${f('corrupt','부패영향평가 결과',n.corrupt?'예) 원안 동의(○. ○.)':'해당 시 입력')}</div>`;
+  const need=n.answered?`<div class="ra-hint">절차 답변 기준 필요 서식: 심의안건서·${B.c.mode==='enact'?'내규안':'개정문'}·신구조문대비표·이유서·의견수렴 결과${n.regul?'·자체 규제심사서':''}${n.corrupt?'·부패영향평가 기초자료':''} <button class="ra-link" onclick="raSubPickReq('${mode}')">패키지에 필요한 서식만 담기</button></div>`:'';
+  return `<details class="ra-det ra-subp" open><summary><b>${raIc('doc')}심의 제출 준비</b> <span class="ra-sub">「${_e(raRules())}」 [별지 제3호 서식] 심의안건서 기준</span></summary>`+
+    form+need+`<div id="raSubCk">${raSubmitCheckView(mode,B)}</div>`+
+    `<div class="ra-row"><button class="svc-btn yes" onclick="raSubmitExport('${mode}','hwpx')">${raIc('doc')}심의 제출 패키지 한글(.hwpx)</button><button class="svc-btn" onclick="raSubmitExport('${mode}','docx')">Word(.docx)</button>${raTip('아래에서 체크한 문서를 심의안건서 → 내규안 → 신구조문대비표 → 이유서 → 의견수렴 결과 → (자체 규제심사서·부패영향평가 기초자료) → 사전검토 의견서 순서로 한 파일에 담습니다.')}</div></details>`;
+}
+function raSubPickReq(mode){ RA[mode].picks=raSubmitDefaults(mode); _raSave(); raRerender(mode); _toast('필요한 서식만 담았습니다.'); }
+const RA_SUBMIT_ORDER=['agenda','law','cmp','reason','notice','staff','opinion','regul','corrupt','review'];
+function raSubmitExport(mode, fmt){
+  const B=raDocsBuild(mode), L=raSubmitCheck(mode,B), e=L.filter(x=>x.st==='err');
+  if(e.length&&!confirm(`제출 전에 고칠 문제가 ${e.length}건 있습니다:\n- ${e.map(x=>x.t).join('\n- ')}\n\n그래도 패키지를 만들까요?`)) return;
+  const picks=RA_SUBMIT_ORDER.filter(k=>raPicks(mode).includes(k)&&(k!=='review'||RA[mode].review));
+  if(!picks.includes('agenda')) picks.unshift('agenda');
+  const names=Object.fromEntries(RA_DOCS[mode]);
+  raSaveFile(fmt, `${B.c.title}_${B.c.word}안_심의제출`, raDocBlocks(B,picks), `심의 제출 패키지(${picks.map(k=>names[k]).join('·')})`);
 }
 
 // ══════════════════════════════════════════════════════════════════════════

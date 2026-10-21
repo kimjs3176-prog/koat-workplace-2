@@ -874,3 +874,25 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 .ra-keynote{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;}
 .ra-keynote>svg.ic{width:16px;height:16px;flex:none;color:var(--gd);}
 .ra-keynote>span:first-of-type{flex:1 1 260px;}
+
+/* ── 심의 제출 준비 ── */
+.ra-subp{margin-bottom:14px;}
+.ra-subp>summary{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.ra-subp>summary svg.ic{width:16px;height:16px;margin-right:4px;vertical-align:-3px;}
+.ra-subck-h{display:flex;align-items:center;gap:8px;font-size:13.5px;border-radius:10px;padding:9px 12px;margin:10px 0 6px;}
+.ra-subck-h svg.ic{width:17px;height:17px;flex:none;}
+.ra-subck-h.ok{color:var(--ok);background:var(--ok-l);} .ra-subck-h.warn{color:var(--warn);background:var(--warn-l);} .ra-subck-h.err{color:var(--bad);background:var(--bad-l);}
+.ra-subck{list-style:none;margin:0 0 8px;padding:0;font-size:13px;line-height:1.6;}
+.ra-subck li{display:flex;align-items:flex-start;gap:6px;padding:3px 0;}
+.ra-subck li svg.ic{width:15px;height:15px;flex:none;margin-top:3px;}
+.ra-subck li.st-ok{color:var(--tx2);} .ra-subck li.st-ok svg{color:var(--ok);}
+.ra-subck li.st-warn svg{color:var(--warn);} .ra-subck li.st-err{color:var(--bad);font-weight:600;}
+.ra-fblk .ra-doc.tb{margin-bottom:8px;}
+.ra-form{width:100%;border-collapse:collapse;font-size:13px;line-height:1.6;margin:6px 0 10px;table-layout:fixed;}
+.ra-form th,.ra-form td{border:1px solid var(--bd2);padding:7px 9px;vertical-align:top;text-align:left;overflow-wrap:anywhere;}
+.ra-form th{background:var(--sf2);font-weight:700;text-align:center;vertical-align:middle;}
+.ra-form.ed td{padding:4px;} .ra-form.ed .ra-in,.ra-form.ed .ra-ta{width:100%;box-sizing:border-box;}
+.ra-pgbr{border:none;border-top:2px dashed var(--bd2);margin:14px 0;}
+.ra-subed{margin-top:12px;padding-top:10px;border-top:1px solid var(--bd);}
+.ra-subed>b{font-size:13px;}
+@media (max-width:640px){ .ra-form.ed thead{display:none;} .ra-form.ed tr,.ra-form.ed td{display:block;width:auto;border:none;} .ra-form.ed tr{border:1px solid var(--bd2);border-radius:8px;margin-bottom:6px;} }
