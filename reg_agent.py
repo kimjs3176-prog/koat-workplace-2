@@ -1667,7 +1667,7 @@ def _para(text, width=47628, page_break=False, style="", align=""):
             + _LS.format(w=width) + '</hp:p>')
 
 
-def _cell(c, col, row, cspan, width, bf):
+def _cell(c, col, row, cspan, width, bf, hdr=False):
     lines = _seg_lines(c)
     pa = _HS["para"].get("center" if c.get("hd") else "", "0")
     paras = "".join(
@@ -1680,7 +1680,7 @@ def _cell(c, col, row, cspan, width, bf):
     # 줄 수·폭으로 높이를 어림(한글이 열 때 다시 계산)
     est = sum(max(1, int(len(ln) * 1000 / max(1500, width - 1000)) + 1) for ln in lines)
     h = max(1848, est * 1600 + 600)
-    return (f'<hp:tc name="" header="{1 if c.get("hd") else 0}" hasMargin="1" protect="0" editable="0" dirty="0" borderFillIDRef="{bf}">'
+    return (f'<hp:tc name="" header="{1 if hdr else 0}" hasMargin="1" protect="0" editable="0" dirty="0" borderFillIDRef="{bf}">'
             f'<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" '
             f'linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
             f'{paras}</hp:subList><hp:cellAddr colAddr="{col}" rowAddr="{row}"/>'
@@ -1688,15 +1688,18 @@ def _cell(c, col, row, cspan, width, bf):
             f'<hp:cellMargin left="283" right="283" top="141" bottom="141"/></hp:tc>'), h
 
 
-def _table(rows, col_w, bf):
+def _table(rows, col_w, bf, bfh=None, page_break=False):
     total = sum(col_w)
     trs, heights = [], []
+    nhdr = 0                                   # 쪽이 바뀔 때 되풀이할 제목 행: 맨 위에서 이어지는, 모든 칸이 제목인 행만
+    while nhdr < len(rows) and all(c.get("hd") for c in rows[nhdr]):
+        nhdr += 1
     for r, cells in enumerate(rows):
         col, tcs, rh = 0, [], 0
         for c in cells:
             cs = int(c.get("cs") or 1)
             w = sum(col_w[col:col + cs])
-            x, h = _cell(c, col, r, cs, w, bf)
+            x, h = _cell(c, col, r, cs, w, (bfh or bf) if c.get("hd") else bf, hdr=r < nhdr)
             tcs.append(x)
             rh = max(rh, h)
             col += cs
@@ -1705,14 +1708,14 @@ def _table(rows, col_w, bf):
         heights.append(rh)
         trs.append("<hp:tr>" + "".join(tcs) + "</hp:tr>")
     tbl = (f'<hp:tbl id="0" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" '
-           f'lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="1" rowCnt="{len(rows)}" colCnt="{len(col_w)}" '
+           f'lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="{1 if nhdr else 0}" rowCnt="{len(rows)}" colCnt="{len(col_w)}" '
            f'cellSpacing="0" borderFillIDRef="{bf}" noAdjust="0">'
            f'<hp:sz width="{total}" widthRelTo="ABSOLUTE" height="{sum(heights)}" heightRelTo="ABSOLUTE" protect="0"/>'
            f'<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" '
            f'vertRelTo="PARA" horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
-           f'<hp:outMargin left="283" right="283" top="283" bottom="283"/>'
+           f'<hp:outMargin left="0" right="0" top="283" bottom="283"/>'
            f'<hp:inMargin left="510" right="510" top="141" bottom="141"/>' + "".join(trs) + '</hp:tbl>')
-    return ('<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
+    return (f'<hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="{1 if page_break else 0}" columnBreak="0" merged="0">'
             f'<hp:run charPrIDRef="0">{tbl}</hp:run>' + _LS.format(w=47628) + '</hp:p>')
 
 
@@ -1802,34 +1805,52 @@ def build_hwpx(blocks: list) -> bytes:
     header = zin.read("Contents/header.xml").decode("utf-8", "ignore")
     sec = zin.read("Contents/section0.xml").decode("utf-8", "ignore")
     bf = _CTX["hwpx_full_border"](header)
+    header, bfh = _hwpx_shaded(header, bf)
     with _HWPX_LOCK:
         header = _hwpx_styles(header)
-        return _build_hwpx(zin, header, sec, bf, blocks)
+        return _build_hwpx(zin, header, sec, bf, blocks, bfh)
+
+
+def _hwpx_shaded(header: str, bf: str):
+    """표 제목 칸 음영(#EAF2FE) borderFill 을 테두리 서식에서 복제해 추가 → (header, 새 id). Word 출력과 같은 색."""
+    m = re.search(r'<hh:borderFill id="' + re.escape(str(bf)) + r'"[^>]*>.*?</hh:borderFill>', header, re.S)
+    ids = [int(x) for x in re.findall(r'<hh:borderFill id="(\d+)"', header)]
+    if not m or not ids:
+        return header, None
+    nid = str(max(ids) + 1)
+    blk = re.sub(r'<hc:fillBrush>.*?</hc:fillBrush>', '', m.group(0), flags=re.S)
+    blk = blk.replace(f'id="{bf}"', f'id="{nid}"', 1).replace(
+        '</hh:borderFill>', '<hc:fillBrush><hc:winBrush faceColor="#EAF2FE" hatchColor="#999999" alpha="0"/></hc:fillBrush></hh:borderFill>')
+    header = header.replace('</hh:borderFills>', blk + '</hh:borderFills>', 1)
+    header = re.sub(r'(<hh:borderFills itemCnt=")(\d+)', lambda x: x.group(1) + str(int(x.group(2)) + 1), header, 1)
+    return header, nid
 
 
 _HWPX_LOCK = threading.Lock()
 
 
-def _build_hwpx(zin, header, sec, bf, blocks) -> bytes:
+def _build_hwpx(zin, header, sec, bf, blocks, bfh=None) -> bytes:
     m = re.search(r'<hs:sec\b[^>]*>', sec)
     prefix, body = sec[:m.end()], sec[m.end():]
     pi = body.find('<hp:p')
     pj = body.find('</hp:p>', pi) + len('</hp:p>')
     first = re.sub(r'<hp:t>.*?</hp:t>', '<hp:t></hp:t>', body[pi:pj], flags=re.S)
-    parts = []
+    parts, pb = [], False                      # 쪽 나눔은 빈 문단 대신 다음 문단(표)에 건다
     for i, blk in enumerate(_norm_blocks(blocks)):
         t = blk.get("t")
         if t == "table":
             ncol = blk["ncol"]
-            parts.append(_table(blk["rows"], blk["colWidths"] or [int(47628 / ncol)] * ncol, bf))
+            parts.append(_table(blk["rows"], blk["colWidths"] or [int(47628 / ncol)] * ncol, bf, bfh, page_break=pb))
+            pb = False
         elif t == "break":
-            parts.append(_para("", page_break=True))
+            pb = True
         else:
             txt = str(blk.get("text") or "")
             ttl = bool(blk.get("titleBold"))
             for j, ln in enumerate(txt.split("\n")):
-                parts.append(_para(ln, page_break=bool(blk.get("pageBreak")) and j == 0,
+                parts.append(_para(ln, page_break=(pb or bool(blk.get("pageBreak"))) and j == 0,
                                    style="title" if ttl and j == 0 else "", align="center" if ttl and j == 0 else ""))
+            pb = False
     new_sec = prefix + first + "".join(parts) + _para("") + "</hs:sec>"
     plain = "\n".join(str(b_.get("text") or "") for b_ in _norm_blocks(blocks) if b_.get("t") not in ("table", "break"))
     out = io.BytesIO()
@@ -2911,14 +2932,17 @@ def compare_keyword(t: str) -> str:
     return best[:20]
 
 
-_ASK_RE = re.compile(r"(\?|？|나요|인가요|있나요|되나요|까요|습니까|ㄴ가요|는지|궁금|어떻게\s*(?:되|하)|얼마|누가|누구|언제|어디|무엇|뭐야|뭔가요|맞나요|해도\s*되)")
-_EDIT_RE = re.compile(r"(개정|고쳐|고치|바꿔|바꾸|신설|삭제|만들어|제정|정비|반영|올려|내려|늘려|줄여|추가해|빼\s*줘|작성해)")
+_ASK_RE = re.compile(r"(\?|？|나요|인가요|있나요|되나요|까요|습니까|ㄴ가요|는지|궁금|어떻게\s*(?:되|하)|얼마|누가|누구|언제|어디|무엇|뭐야|뭔가요|맞나요|해도\s*되"
+                     r"|알려\s*(?:줘|주세요|줄래|주실|달라)|며칠|몇\s*(?:일|시간|명|회|번|개월|년)|이야\s*$|가능해|한도|기준은)")
+# 고치라는 요청 — “개정된·신설된·삭제된·반영되” 같은 수식어는 고치라는 뜻이 아니다
+_EDIT_RE = re.compile(r"(개정(?![된되])|고쳐|고치|바꿔|바꾸|신설(?![된되])|삭제(?![된되])|만들어|제정(?![된되])|정비(?![된되])|반영(?![된되])|올려|내려|늘려|줄여|추가해|빼\s*줘|작성해)")
+_ASK_FIRST = re.compile(r"((?<=[가-힣])도\s*되나|해야\s*하나|해야\s*되나|하면\s*되나|할\s*수\s*있나)")   # “올려도 되나요?”는 묻는 말
 
 
 def heuristic_plan(req: str) -> dict:
     t = (req or "").strip()
     plan = {"mode": "amend", "intent": t, "reasoning": []}
-    if _ASK_RE.search(t) and not _EDIT_RE.search(t) and not _COMPARE_RE.search(t):
+    if ((_ASK_RE.search(t) and not _EDIT_RE.search(t)) or _ASK_FIRST.search(t)) and not _COMPARE_RE.search(t):
         plan.update(mode="advise", question=t)
         plan["reasoning"].append("내규 해석·적용을 묻는 질의로 판단 — 근거 조문을 찾아 회신")
         return plan
@@ -3082,33 +3106,110 @@ _ADV_CONCL = ("가능", "불가", "조건부 가능", "해당 규정", "규정 �
 
 
 def _key_sents(body: str, toks: list, n: int = 2) -> list:
-    """조문에서 질의 낱말이 가장 많이 나오는 문장(항·호 단위) — 숫자·금액·기간이 있으면 가산."""
+    """조문에서 질의 낱말이 가장 많이 나오는 문장(항·호 단위) — 낱말이 있는 문장에 숫자·금액·기간이 있으면 가산.
+    PDF 에서 온 글의 끊긴 띄어쓰기(“숙박비 상 한액”)는 빈칸을 빼고 견준다."""
     units = [u.strip() for u in re.split(r"\n|(?<=다\.)\s+", body or "") if len(u.strip()) >= 6]
+    tk = [re.sub(r"\s+", "", t) for t in toks if t]
     scored = []
     for i, u in enumerate(units):
-        sc = sum(2 if t in u else 0 for t in toks) + (1 if re.search(r"\d+\s*(?:원|일|개월|년|시간|%|명|회|배|호봉|점)", u) else 0)
-        if sc:
-            scored.append((sc, i, u))
+        us = re.sub(r"\s+", "", u)
+        hit = sum(2 for t in tk if t in us)
+        if hit:
+            scored.append((hit + (1 if re.search(r"\d+\s*(?:원|일|개월|년|시간|%|명|회|배|호봉|점)", u) else 0), i, u))
     pick = sorted(sorted(scored, key=lambda x: (-x[0], x[1]))[:n], key=lambda x: x[1])
     return [u[:260] for _, _, u in pick]
 
 
+# 자문 질의에서 검색어가 되면 안 되는 말: 묻는 말·어미(“얼마인가요”, “받을”, “누구”)
+_ADV_QSTOP = {"얼마", "어떻게", "누가", "누구", "언제", "어디", "무엇", "무슨", "며칠", "몇", "어느", "어떤", "왜", "하나요", "되나요",
+              "있나요", "없나요", "받을", "받나요", "받아야", "하면", "되면", "되는", "하는", "다른", "해야", "해도", "되어", "인가요",
+              "알려", "알려줘", "알려주세요", "궁금", "궁금합니다", "경우에", "때", "가능", "가능한가요", "필요", "필요한가요", "내규",
+              "규정상", "규정에", "따르면", "기준", "연간", "서면", "이야", "뭐야", "뭔가요", "있어", "돼", "되나"}
+_ADV_TAIL = re.compile(r"(?:인가요|이에요|예요|인지요|인지|나요|ㄴ가요|습니까|ㅂ니까|까요|으려면|려면|으면|면서|해야|이야|야|이죠|죠|은지|는지)$")
+_CORPUS = {"key": None, "txt": ""}
+
+
+def _corpus_text() -> str:
+    regs = all_regs()
+    if _CORPUS["key"] != id(regs):
+        _CORPUS.update(key=id(regs), txt="\n".join(re.sub(r"\s+", "", a["title"] + a["body"])
+                                                    for r in regs for a in r["articles"] if not a["deleted"]))
+    return _CORPUS["txt"]
+
+
+def _adv_query(q: str):
+    """질의 → (검색 문장, 검색어, 어디에도 없는 검색어). 묻는 말을 빼고, 본문에 없는 4자 이상 복합어는 두 글자씩 나눠 본다
+    (“연차휴가” → 연차·휴가: 원문은 “연차유급휴가”)."""
+    corpus = _corpus_text()
+    words, miss = [], []
+    for w in re.findall(r"[가-힣A-Za-z0-9]+", q or ""):
+        w2 = _ADV_TAIL.sub("", w) if len(w) > 2 else w
+        w2 = _JOSA_TAIL.sub("", w2) if len(w2) > 2 else w2
+        if not w2 or w2 in _ADV_QSTOP or w in _ADV_QSTOP or w2 in _STOP or len(w2) < 2:
+            continue
+        if w2 not in words:
+            words.append(w2)
+    extra = []
+    for w in words:
+        parts = [w[i:i + 2] for i in range(0, len(w) - 1, 2)] if re.fullmatch(r"[가-힣]{4,}", w) else []
+        parts = [p for p in parts if p in corpus and p not in _ADV_QSTOP]
+        if w not in corpus:
+            miss.append(w)                                    # 원문에 그대로는 없는 말(“가족수당”) — 쪼갠 말로 찾아도 단정하지 않는다
+        if parts and (w not in corpus or len(w) >= 4):
+            extra += parts                                    # “연차휴가” → 연차·휴가(원문 “연차유급휴가”)
+    toks = words + [p for p in extra if p not in words]
+    return " ".join(toks), toks, miss
+
+
+_ADV_WEAK_TITLE = re.compile(r"^(?:목적|정의|용어의\s*정의|기타|적용\s*범위)$")
+
+
 def advise_sources(q: str, slug: str = "", cap: int = 10) -> dict:
-    """질의 → 근거 후보 조문(주 조문 + 그 조문이 인용·준용하는 조문 + 시행세칙의 관련 조문)."""
-    toks = _tokens(q)
-    res = similar_search(q, "", 40 if slug else 8)
+    """질의 → 근거 후보 조문(주 조문 + 그 조문이 인용·준용하는 조문 + 시행세칙의 관련 조문 + 인용한 별표)."""
+    query, toks, miss = _adv_query(q)
     regs = {r["slug"]: r for r in all_regs()}
+    names = _reg_names()
     flat = []
+    # “여비규정 제15조”처럼 조문을 짚어 물으면 그 조를 먼저
+    for mm in re.finditer(r"([가-힣A-Za-z·\s]{2,40}?(?:규정|규칙|지침|세칙|요령|기준|정관|매뉴얼))\s*제\s*(\d+)\s*조(?:\s*의\s*(\d+))?", q or ""):
+        r = next((x for x in regs.values() if _nk(x["title"]) == _nk(mm.group(1).strip())), None)
+        if r and (not slug or r["slug"] == slug):
+            flat.append((1e6, r["slug"], mm.group(2) + (("의" + mm.group(3)) if mm.group(3) else "")))
+    res = similar_search(query or q, "", 40 if slug else 10) if toks else {"regs": [], "semantic": False}
     for g in res["regs"]:
         if slug and g["slug"] != slug:
             continue
+        tboost = 1.5 if any(len(t) >= 3 and t in re.sub(r"\s+", "", g["title"]) for t in toks) else 1.0   # 질의 낱말이 내규명이면 그 내규 조문을 먼저
         for a in g["articles"][:3]:
-            flat.append((a["score"], g["slug"], a["no"]))
+            w = 0.4 if _ADV_WEAK_TITLE.match(str(a.get("title") or "").strip()) else 1.0                       # 목적·정의·기타 조는 뒤로
+            flat.append((a["score"] * w * tboost, g["slug"], a["no"]))
+    # 질의 낱말이 내규명이면(“공무국외출장 …”) 그 내규 안에서 나머지 낱말(쪼갠 말 포함)이 나오는 조문을 앞에
+    top0 = max([x[0] for x in flat if x[0] < 1e6] or [1.0])
+    for r in regs.values():
+        rt = re.sub(r"\s+", "", r["title"])
+        hit_t = [t for t in toks if len(t) >= 3 and t in rt]
+        if not hit_t or (slug and r["slug"] != slug):
+            continue
+        rest = [t for t in toks if t not in hit_t and not (t in rt)]
+        sc_a = []
+        for a in r["articles"]:
+            if a["deleted"] or _ADV_WEAK_TITLE.match(str(a.get("title") or "").strip()):
+                continue
+            tx = re.sub(r"\s+", "", a["title"] + a["body"])
+            k = sum(2 if t in a["title"] else 1 for t in rest if t in tx)
+            if k:
+                sc_a.append((k, a["no"]))
+        for k, no in sorted(sc_a, key=lambda x: -x[0])[:2]:
+            flat.append((top0 * (1.1 + 0.1 * k), r["slug"], no))
     if slug and not flat and slug in regs:                    # 범위를 정했는데 검색어가 안 맞으면 낱말이 나오는 조문이라도
         for a in regs[slug]["articles"]:
-            if not a["deleted"] and any(t in a["title"] + a["body"] for t in toks):
+            if not a["deleted"] and any(t in re.sub(r"\s+", "", a["title"] + a["body"]) for t in toks):
                 flat.append((0.1, slug, a["no"]))
-    flat.sort(key=lambda x: -x[0])
+    best = {}
+    for sc, sl, no in flat:
+        if sc > best.get((sl, no), -1):
+            best[(sl, no)] = sc
+    flat = sorted([(sc, sl, no) for (sl, no), sc in best.items()], key=lambda x: -x[0])
     out, seen = [], set()
 
     def add(sl, no, role, why=""):
@@ -3123,32 +3224,8 @@ def advise_sources(q: str, slug: str = "", cap: int = 10) -> dict:
                "appendix": bool(re.search(r"별표|별지", a["body"]) and r.get("appendix"))}
         out.append(src)
         return src
-    mains = [add(sl, no, "main") for _, sl, no in flat[:5]]
-    names = _reg_names()
-    for m in [x for x in mains if x]:
-        r = regs[m["slug"]]
-        for rno, raw, _ in internal_refs(m["body"])[:3]:          # 같은 내규에서 인용한 조문(“제12조에 따른 …”)
-            add(m["slug"], rno, "ref", f"{art_label(m['no'])}에서 인용")
-        jr = [j for j in jun_relations(r, names) if j["no"] == m["no"]]
-        for j in jr:                                              # 준용하는 다른 내규 조문
-            for t in j["targets"]:
-                if t["kind"] == "reg":
-                    tr = next((x for x in regs.values() if x["title"] == t["name"]), None)
-                    for an in t["arts"][:2]:
-                        no = re.sub(r"[^0-9의]", "", an.split("제", 2)[1] if an.count("제") else an).split("조")[0] if an else ""
-                        mm = re.match(r"제(\d+)조(?:의(\d+))?", an)
-                        if tr and mm:
-                            add(tr["slug"], mm.group(1) + (("의" + mm.group(2)) if mm.group(2) else ""), "jun",
-                                f"「{m['reg']}」 {art_label(m['no'])}에서 준용")
-        child = next((x for x in regs.values() if _nk(x["title"]) == _nk(r["title"] + " 시행세칙")), None)
-        if child:                                                 # 시행세칙이 이 조를 받아 정한 세부 기준
-            pat = re.compile(r"(?:규정|규칙|정관|「[^」]*」)\s*제\s*" + re.escape(m["no"].split("의")[0]) + r"\s*조(?!\s*의)"
-                             if "의" not in m["no"] else r"제\s*" + m["no"].replace("의", r"\s*조\s*의\s*") + r"(?!\d)")
-            for ca in child["articles"]:
-                if not ca["deleted"] and re.search(pat, ca["body"]):
-                    add(child["slug"], ca["no"], "child", f"「{r['title']}」 {art_label(m['no'])}의 세부 기준")
-                    break
-    for m in [x for x in mains if x]:                             # 금액·기준표가 별표에 있으면 그 별표도 근거로(“〔별표 2〕에서 정하는 바에 따라”)
+
+    def add_appx(m):                                          # 금액·기준표가 별표에 있으면 그 별표도 근거로(“〔별표 2〕에서 정하는 바에 따라”)
         ap = regs[m["slug"]].get("appendix") or ""
         for bn in (list(dict.fromkeys(re.findall(r"별표\s*(\d+)", m["body"])))[:2] if ap else []):
             hs = [(mm.start(), mm.group(1)) for mm in re.finditer(r"^[\[［〔【<＜]\s*별표\s*(\d+)", ap, re.M)]
@@ -3161,23 +3238,58 @@ def advise_sources(q: str, slug: str = "", cap: int = 10) -> dict:
                                 "title": head[1].strip()[:40] if len(head) > 1 else "", "body": blk[:1800], "role": "appx",
                                 "why": f"{art_label(m['no'])}에서 인용", "revision": m["revision"], "rev_date": m["rev_date"],
                                 "keys": _key_sents(blk, toks), "appendix": False})
-    laws = []
-    for sc in out:                                                # 근거 조문이 인용한 법령(국가법령정보센터 링크용)
+    top = flat[0][0] if flat else 0
+    picked = [(sc, add(sl, no, "main")) for sc, sl, no in flat[:5]]
+    strong = [m for sc, m in picked if m and (sc >= top * 0.5 or m["id"] <= 2)]   # 약한 주 조문까지 넓히면 잡음만 는다
+    for m in strong:
+        add_appx(m)
+    for m in strong:
+        r = regs[m["slug"]]
+        for rno, raw, _ in internal_refs(m["body"])[:3]:          # 같은 내규에서 인용한 조문(“제12조에 따른 …”)
+            add(m["slug"], rno, "ref", f"{art_label(m['no'])}에서 인용")
+        for j in [j for j in jun_relations(r, names) if j["no"] == m["no"]]:   # 준용하는 다른 내규 조문
+            for t in j["targets"]:
+                if t["kind"] == "reg":
+                    tr = next((x for x in regs.values() if x["title"] == t["name"]), None)
+                    for an in t["arts"][:2]:
+                        mm = re.match(r"제(\d+)조(?:의(\d+))?", an)
+                        if tr and mm:
+                            add(tr["slug"], mm.group(1) + (("의" + mm.group(2)) if mm.group(2) else ""), "jun",
+                                f"「{m['reg']}」 {art_label(m['no'])}에서 준용")
+        child = next((x for x in regs.values() if _nk(x["title"]) == _nk(r["title"] + " 시행세칙")), None)
+        if child:                                                 # 시행세칙이 이 조를 받아 정한 세부 기준(모 규정을 가리킨 인용만)
+            tp = r"\s*".join(map(re.escape, re.sub(r"\s+", "", r["title"])))
+            head = r"(?:「\s*" + tp + r"\s*」|(?<![가-힣」])(?:규정|규칙|정관))\s*"
+            n0, _, g0 = m["no"].partition("의")
+            pat = re.compile(head + r"제\s*" + n0 + (r"\s*조\s*의\s*" + g0 + r"(?!\d)" if g0 else r"\s*조(?!\s*의)"))
+            for ca in child["articles"]:
+                if not ca["deleted"] and pat.search(ca["body"]):
+                    add(child["slug"], ca["no"], "child", f"「{r['title']}」 {art_label(m['no'])}의 세부 기준")
+                    break
+    laws = {}
+    for sc in out:                                                # 근거가 되는 조문(질의 낱말이 나온 주 조문·별표)이 인용한 법령만
+        if sc["role"] not in ("main", "appx") or not sc["keys"]:
+            continue
         for mm in _QUOTED_NAME.finditer(sc["body"]):
             nm = re.sub(r"\s+", " ", mm.group(1)).strip()
             if _LAW_NAME_OK.search(nm) and _nk(nm) not in names:
                 nm = _law_aliases(nm)[-1]
                 ma = _ART_AFTER.match(sc["body"][mm.end():mm.end() + 60])
-                art = re.sub(r"\s+", "", ma.group(1)) if ma else ""
-                if not any(x["name"] == nm and x["art"] == art for x in laws):
-                    laws.append({"name": nm, "art": art, "from": sc["id"]})
-    return {"tokens": toks, "semantic": res.get("semantic", False), "sources": out, "laws": laws[:8]}
+                art = (re.match(r"제\d+조(?:의\d+)?", re.sub(r"\s+", "", ma.group(1))) or [""])[0] if ma else ""
+                x = laws.setdefault(nm, {"name": nm, "art": art, "from": sc["id"]})
+                if not x["art"] and art:
+                    x["art"] = art
+    return {"tokens": toks, "unmatched": miss, "semantic": res.get("semantic", False), "sources": out,
+            "laws": list(laws.values())[:6], "scoped": bool(slug)}
 
 
 def _adv_rule_answer(q: str, S: dict) -> dict:
     src = S["sources"]
+    miss = S.get("unmatched") or []
     if not src:
-        return {"conclusion": "규정 없음", "answer": "질의와 관련된 조문을 찾지 못했습니다. 낱말을 바꾸거나(예: 출장비 → 여비) 대상 내규를 지정해 다시 물어보세요.",
+        return {"conclusion": "규정 없음",
+                "answer": ("지정한 내규에는 질의와 관련된 조문이 없습니다. 대상을 비우고 모든 내규에서 다시 물어보세요." if S.get("scoped")
+                           else "질의와 관련된 조문을 찾지 못했습니다. 낱말을 바꾸거나(예: 출장비 → 여비) 대상 내규를 지정해 다시 물어보세요."),
                 "basis": [], "conditions": [], "caveats": ["내규에 정함이 없으면 상위 법령이나 소관 부서의 해석을 확인하세요."], "followups": []}
     mains = [x for x in src if x["role"] == "main"][:3]
     ap = [x for x in src if x["role"] == "appx"]
@@ -3185,14 +3297,35 @@ def _adv_rule_answer(q: str, S: dict) -> dict:
     basis = [{"src": x["id"], "point": " / ".join(x["keys"]) or (x["body"][:160] + "…")} for x in mains]
     extra = [x for x in src if x["role"] not in ("main", "appx")]
     basis += [{"src": x["id"], "point": " / ".join(x["keys"]) or f"{x['appx']} {x['title']}"} for x in ap[:2]]
-    ans = f"질의와 관련된 조문은 {lst}입니다. 아래 근거 조문의 해당 문장을 확인하세요."
-    if ap:
-        ans += f" 금액·기준은 {', '.join('「' + x['reg'] + '」 ' + x['appx'] for x in ap[:2])}에 있습니다."
-    if extra:
-        ans += f" 이 조문이 인용·준용하는 조문과 세부 기준 {len(extra)}건도 함께 보세요."
-    return {"conclusion": "해당 규정", "answer": ans, "basis": basis, "conditions": [],
-            "caveats": ["규칙 기반 안내입니다. AI 키를 넣으면 질의에 맞춘 회신(결론·조건·유의사항)을 받을 수 있습니다."],
-            "followups": []}
+    weak = bool(miss) or not any(x["keys"] for x in mains)
+    if weak:                                                      # 질의의 핵심 낱말이 어느 조문에도 없으면 단정하지 않는다
+        ans = (f"“{'”, “'.join(miss[:3])}”{_josa(miss[0], ('이', '가'))} 나오는 조문은 찾지 못했습니다. " if miss else "질의 낱말이 직접 나오는 조문은 찾지 못했습니다. ") + \
+              f"가까운 조문은 {lst}입니다. 해당 여부를 소관 부서에 확인하세요."
+    else:
+        ans = f"질의와 관련된 조문은 {lst}입니다. 아래 근거 조문의 해당 문장을 확인하세요."
+        if ap:
+            ans += f" 금액·기준은 {', '.join('「' + x['reg'] + '」 ' + x['appx'] for x in ap[:2])}에 있습니다."
+        if extra:
+            ans += f" 이 조문이 인용·준용하는 조문과 세부 기준 {len(extra)}건도 함께 보세요."
+    return {"conclusion": "확인 필요" if weak else "해당 규정", "answer": ans, "basis": basis, "conditions": [], "caveats": [], "followups": []}
+
+
+_ADV_CITE_GROUP = re.compile(r"\[\s*([0-9]+(?:\s*[,~\-–]\s*[0-9]+)+)\s*\]")
+
+
+def _adv_cites(t: str, ids: set) -> str:
+    """근거 번호 정리: [1,2]·[1-3] → [1][2][3], 제시하지 않은 번호·숫자 아닌 괄호 번호는 지운다."""
+    def grp(m):
+        out = []
+        for part in re.split(r"\s*,\s*", m.group(1)):
+            ab = re.split(r"\s*[~\-–]\s*", part)
+            if len(ab) == 2 and ab[0].isdigit() and ab[1].isdigit() and 0 < int(ab[1]) - int(ab[0]) < 10:
+                out += list(range(int(ab[0]), int(ab[1]) + 1))
+            elif part.isdigit():
+                out.append(int(part))
+        return "".join(f"[{i}]" for i in out)
+    t = _ADV_CITE_GROUP.sub(grp, str(t or ""))
+    return re.sub(r"\[\s*([^\]\s]{1,6})\s*\]", lambda m: m.group(0) if re.fullmatch(r"[0-9]+", m.group(1)) and int(m.group(1)) in ids else "", t).strip()
 
 
 def ai_advise(b: dict, S: dict):
@@ -3205,11 +3338,12 @@ def ai_advise(b: dict, S: dict):
     mdl = model or _CTX["default_model_for"](provider, key)
     blocks = "\n\n".join(f"[{x['id']}] 「{x['reg']}」 {x.get('appx') or art_label(x['no'])}({x['title']})"
                           + (f" ※{x['why']}" if x["why"] else "") + f"\n{x['body']}" for x in S["sources"])
-    hist = "".join(f"이전 질의: {str(h.get('q', ''))[:300]}\n이전 회신 요지: {str(h.get('a', ''))[:500]}\n"
-                   for h in (b.get("history") or [])[-3:])
+    _nocite = lambda t: re.sub(r"\[[0-9]+\]", "", str(t or ""))   # 앞 회신의 근거 번호는 이번 조문과 다르므로 뺀다
+    hist = "".join(f"이전 질의: {str(h.get('q', ''))[:300]}\n이전 회신 요지: {_nocite(h.get('a'))[:500]}\n"
+                   for h in (b.get("history") or [])[-3:] if isinstance(h, dict))
     system = f"""당신은 {ORG['org_name']}({ORG['org_short']}) {ORG['reg_word']} 자문 담당입니다. 직원의 질의에 아래 [근거 조문]만으로 답하세요.
 - 조문에 없는 사실·숫자·절차를 지어내지 말 것. 근거가 부족하면 conclusion 을 "규정 없음" 또는 "확인 필요"로 하고 무엇을 확인해야 하는지 쓸 것.
-- 답의 문장마다 근거 번호를 [1], [2]처럼 붙일 것. 제시되지 않은 번호는 쓰지 말 것.
+- 답의 문장마다 근거 번호를 [1], [2]처럼 하나씩 붙일 것([1,2]처럼 묶지 말 것). 제시되지 않은 번호는 쓰지 말 것.
 - 결론을 먼저, 공문서 문체(“…할 수 있습니다”, “…에 해당합니다”)로 간결하게.
 - 해석이 갈릴 수 있는 부분, 상위 법령 확인이 필요한 부분은 caveats 에.
 반드시 아래 JSON만 반환(설명·코드블록 금지):
@@ -3227,26 +3361,29 @@ def ai_advise(b: dict, S: dict):
         d = _json_from(text)
     except Exception:
         return None, "AI 응답을 해석하지 못해 관련 조문 안내만 드립니다."
+    if not isinstance(d, dict) or not isinstance(d.get("answer"), str):
+        return None, "AI 회신 형식이 맞지 않아 관련 조문 안내만 드립니다."
     ids = {x["id"] for x in S["sources"]}
-    clean = lambda t: re.sub(r"\[(\d+)\]", lambda m: m.group(0) if int(m.group(1)) in ids else "", str(t or "")).strip()
     basis = []
     for x in d.get("basis") if isinstance(d.get("basis"), list) else []:
-        if isinstance(x, dict):
-            try:
-                i = int(x.get("src"))
-            except (TypeError, ValueError):
-                continue
-            if i in ids and str(x.get("point") or "").strip():
-                basis.append({"src": i, "point": str(x["point"]).strip()[:400]})
+        if not isinstance(x, dict):
+            continue
+        v = x.get("src")
+        if isinstance(v, bool) or not (isinstance(v, int) or (isinstance(v, str) and v.strip().isdigit())):
+            continue                                              # 1.9·true 같은 값은 근거 번호로 보지 않는다
+        i = int(v)
+        if i in ids and str(x.get("point") or "").strip():
+            basis.append({"src": i, "point": str(x["point"]).strip()[:400]})
     concl = str(d.get("conclusion") or "").strip()
-    out = {"conclusion": concl if concl in _ADV_CONCL else "확인 필요", "answer": clean(d.get("answer"))[:3000],
-           "basis": basis[:8], "conditions": [clean(x)[:300] for x in _strs(d.get("conditions"))][:6],
-           "caveats": [clean(x)[:300] for x in _strs(d.get("caveats"))][:6],
+    out = {"conclusion": concl if concl in _ADV_CONCL else "확인 필요", "answer": _adv_cites(d["answer"], ids)[:3000],
+           "basis": basis[:8], "conditions": [_adv_cites(x, ids)[:300] for x in _strs(d.get("conditions"))][:6],
+           "caveats": [_adv_cites(x, ids)[:300] for x in _strs(d.get("caveats"))][:6],
            "followups": [str(x).strip()[:120] for x in _strs(d.get("followups"))][:3],
            "model": f"{provider}:{mdl}"}
     if not out["answer"]:
         return None, "AI 회신이 비어 관련 조문 안내만 드립니다."
     if not out["basis"] and out["conclusion"] not in ("규정 없음", "확인 필요"):
+        out["conclusion"] = "확인 필요"                            # 근거 없이 “가능·불가”를 단정하지 않는다
         out["caveats"].insert(0, "AI 회신이 근거 조문을 짚지 못했습니다. 아래 근거 조문을 직접 확인하세요.")
     return out, ""
 
@@ -3256,7 +3393,7 @@ def ra_advise():
     """내규 자문. body: {question, slug?(대상 내규), history?:[{q,a}], provider/api_key/model}"""
     b = _body()
     q = (b.get("question") or "").strip()
-    if len(q) < 4:
+    if len(re.sub(r"\s+", "", q)) < 4:
         return jsonify({"success": False, "error": "질의 내용을 한 문장 이상 적어 주세요."}), 400
     if len(q) > 1000:
         return jsonify({"success": False, "error": "질의가 너무 깁니다(1,000자 이내)."}), 400
@@ -3265,7 +3402,12 @@ def ra_advise():
         return jsonify({"success": False, "error": "지정한 내규를 찾을 수 없습니다."}), 404
     S = advise_sources(q, slug)
     ans, notice = ai_advise(b, S)
+    hint = ""
     if not ans:
         ans = _adv_rule_answer(q, S)
-    return jsonify({"success": True, "question": q, "scope": slug, "ai": "model" in ans, "notice": notice,
-                    "semantic": S["semantic"], "tokens": S["tokens"], "sources": S["sources"], "laws": S["laws"], **ans})
+        provider, key, _ = _ai_conf(b)
+        if not key and provider != "ollama":                      # 화면 안내(회신서에는 넣지 않는다)
+            hint = "규칙 기반 안내입니다. AI 키를 넣으면 질의에 맞춘 회신(결론·조건·유의사항)을 받을 수 있습니다."
+    return jsonify({"success": True, "question": q, "scope": slug, "ai": "model" in ans, "notice": notice or hint,
+                    "semantic": S["semantic"], "tokens": S["tokens"], "unmatched": S.get("unmatched", []),
+                    "sources": S["sources"], "laws": S["laws"], **ans})

@@ -462,7 +462,7 @@ test('심의 제출: 심의안건서·규제심사서·부패영향평가 기초
     RA.proc.ans={level:'rule',minor:'n',public:'n',multi:'y',impact:'y',burden:'y'};
     Object.assign(raSub_('amend'),{dept:'경영지원팀',proposer:'팀장 홍길동',meet:'2026-11-30'});`, c);
   const B = c.raDocsBuild('amend');
-  assert.match(B.agenda, /「여비규정」 일부개정\(안\)을 별지와 같이 의결한다\./);
+  assert.match(B.agenda, /「여비규정」 일부개정\(안\)을 붙임과 같이 의결한다\./);
   assert.match(B.agenda, /한국농업기술진흥원 경영지원팀 팀장 홍길동/);
   assert.match(B.agenda, /숙박비 조정\(10분의3 → 10분의5\)\(안 제15조\)/);
   assert.match(B.regul, /제15조\(숙박비\): ④ 원장의 승인을 받아야 한다\./);   // 바뀐 항만(그대로 둔 ③ 제출 의무는 빼고)
@@ -473,4 +473,21 @@ test('심의 제출: 심의안건서·규제심사서·부패영향평가 기초
   assert.match(ck, /제출 기한: 2026\. 11\. 23\./);
   const blocks = c.raDocBlocks(B, ['agenda', 'law', 'cmp', 'regul']);
   assert.ok(blocks.filter(b => b.t === 'table').length >= 3 && blocks.some(b => b.t === 'break'));
+});
+
+test('심의 제출: 절차 미답은 단정하지 않고, 의견 집계·붙임·규제 판단 기본값', () => {
+  const c = load();
+  vm.runInContext(`_raArts={articles:[{no:'17',title:'근무지내 출장',body:'① 4시간 이상인 자에게는 1만원을 지급한다.'}]};
+    RA.amend.title='여비규정'; RA.amend.changes=[{type:'modify',no:'17',title:'근무지내 출장',body:'① 4시간 이상인 자에게는 1만5천원을 지급한다.'}]; RA.proc.ans={};
+    Object.assign(raSub_('amend'),{opinions:[{who:'갑',what:'찬성',res:'일부 반영'},{who:'을',what:'반대',res:'검토 중'}]});`, c);
+  const B = c.raDocsBuild('amend');
+  assert.match(B.agenda, /대국민 사전예고: ○○\(해당 여부 확인\)/);
+  assert.match(B.agenda, /일부 반영 1건, 미반영 0건, 검토 중 1건/);
+  assert.match(B.agenda, /조정\(1만원 → 1만5천원\)/);
+  assert.match(B.agenda, /재정 소요: 연간 ○○원/);                     // 금액이 바뀌면 재정 소요 자리
+  assert.match(B.regul, /\| -$/m);                                    // 규제가 없으면 판단 기본값은 “-”
+  const ag = c.raAgendaBlocks(B.c, 'amend', ['agenda', 'law']);
+  assert.match(c.raBlocksText(ag), /붙임  개정안 1부\.  끝\./);       // 한 건이면 번호 없이
+  assert.ok(c.raSubmitCheck('amend', B).some(x => x.st === 'err' && /반영 여부를 정하지 않은 의견 1건/.test(x.t)));
+  assert.equal(c.raLawDate('2027. 1. 1.'), '2027년 1월 1일');
 });
