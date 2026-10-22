@@ -1,4 +1,5 @@
 """완성도 4차 점검(AI 응답 처리 등)에서 고친 부분의 회귀 테스트."""
+import re
 import pytest
 
 import reg_agent as ra
@@ -292,3 +293,50 @@ def test_plan_routes_questions_to_advise():
     assert ra.heuristic_plan("국내 출장 숙박비 상한액은 얼마인가요?")["mode"] == "advise"
     assert ra.heuristic_plan("여비규정 제15조의 일비를 3만원으로 올려줘")["mode"] == "amend"
     assert ra.heuristic_plan("다른 기관은 재택근무를 어떻게 정했어?")["mode"] == "compare"
+
+
+# ── 기능점검: 자문 검색 정밀도·AI 근거 정리·라우팅 ─────────────────────────────
+def test_advise_query_cleanup_and_compounds(client):
+    q, toks, miss = ra._adv_query("연차휴가는 몇 일 받을 수 있나요?")
+    assert "받을" not in toks and "있나요" not in toks and {"연차", "휴가"} <= set(toks)
+    d = client.post("/api/regagent/advise", json={"question": "연차휴가는 몇 일 받을 수 있나요?"}).get_json()
+    assert any(s["reg"] == "복무규정" and s["no"] == "27" for s in d["sources"])     # 원문 “연차유급휴가”
+    d = client.post("/api/regagent/advise", json={"question": "당직근무를 서면 당직비는 얼마인가요?"}).get_json()
+    assert d["sources"][0]["reg"].startswith("당직") and d["conclusion"] == "확인 필요" and "당직비" in d["unmatched"]
+    d = client.post("/api/regagent/advise", json={"question": "공무국외출장 결과보고서는 언제까지 내야 하나요?"}).get_json()
+    assert any(s["reg"] == "공무국외출장 관리규칙" and s["no"] == "13" for s in d["sources"] if s["role"] == "main")
+    d = client.post("/api/regagent/advise", json={"question": "숙박비 상한액은?", "slug": "보안업무규칙"}).get_json()
+    assert d["conclusion"] in ("규정 없음", "확인 필요")
+
+
+def test_advise_ai_citation_cleanup(client, monkeypatch):
+    import json as _j
+    monkeypatch.setitem(ra._CTX, "default_model_for", lambda p, k: "m")
+    replies = [{"conclusion": "가능", "answer": "가능합니다 [1,2] [１] [99].", "basis": [{"src": True, "point": "x"}, {"src": 1.9, "point": "y"}]},
+               {"conclusion": "해당 규정", "answer": {"text": "x"}}]
+    outs = []
+    for rep in replies:
+        monkeypatch.setitem(ra._CTX, "ai_generate", lambda *a, _r=rep, **k: (_j.dumps(_r, ensure_ascii=False), ""))
+        outs.append(client.post("/api/regagent/advise", json={"question": "국내 출장 숙박비 상한액은?", "slug": "여비규정",
+                                                              "provider": "gemini", "api_key": "k"}).get_json())
+    a = outs[0]
+    assert a["ai"] and "[1][2]" in a["answer"] and "[１]" not in a["answer"] and "[99]" not in a["answer"]
+    assert a["basis"] == [] and a["conclusion"] == "확인 필요"                  # 근거 없는 “가능”은 단정하지 않는다
+    assert not outs[1]["ai"]                                                    # 문자열이 아닌 회신은 받지 않는다
+
+
+def test_plan_question_routing_more():
+    for t in ["징계위원회 구성 알려줘", "연차휴가 며칠이야", "개정된 여비규정 제15조 내용이 뭐야?", "숙박비 상한액을 올려도 되나요?"]:
+        assert ra.heuristic_plan(t)["mode"] == "advise", t
+    for t, m in [("여비규정 제15조의 일비를 3만원으로 올려줘", "amend"), ("드론 운영지침을 새로 만들어줘", "enact")]:
+        assert ra.heuristic_plan(t)["mode"] == m, t
+
+
+def test_hwpx_table_header_shading_and_pagebreak(client):
+    import zipfile as _z, io as _io
+    blocks = [{"t": "table", "colWidths": [1, 3], "rows": [[{"t": "구분", "hd": 1}, {"t": "내용", "hd": 1}], [{"t": "안건", "hd": 1}, {"t": "x"}]]},
+              {"t": "break"}, {"t": "p", "text": "둘째 쪽"}]
+    z = _z.ZipFile(_io.BytesIO(client.post("/api/regagent/hwpx", json={"filename": "t", "blocks": blocks}).data))
+    sec, head = z.read("Contents/section0.xml").decode(), z.read("Contents/header.xml").decode()
+    assert "EAF2FE" in head and re.findall(r'header="(\d)"', sec) == ["1", "1", "0", "0"]
+    assert sec.count('pageBreak="1"') == 1
