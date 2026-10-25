@@ -3476,7 +3476,13 @@ def _quote_ok(point: str, body: str) -> bool:
     b = norm(body)
     segs = [norm(x) for x in re.split(r"…|\.\.\.|/", point or "")]
     segs = [x for x in segs if len(x) >= 4]
-    return bool(segs) and all(x in b for x in segs)
+    pos = 0
+    for x in segs:                                             # 줄인 인용의 조각은 원문에 그 차례대로 나와야 한다
+        k = b.find(x, pos)
+        if k < 0:
+            return False
+        pos = k + len(x)
+    return bool(segs)
 
 
 def ai_advise(b: dict, S: dict):
@@ -3623,6 +3629,16 @@ def _ledger_branch() -> str:
     return (os.environ.get("LEDGER_BRANCH") or "ledger-data").strip() or "ledger-data"
 
 
+def _ledger_gh_read(gh, path: str, ref: str):
+    """(내용 bytes, sha). 1MB 가 넘는 파일은 Contents API 가 content 를 비워 주므로 blob 으로 받는다."""
+    import base64
+    d = gh._gh("GET", f"/contents/{path}", params={"ref": ref})
+    raw = d.get("content") or ""
+    if not raw and d.get("sha") and d.get("size", 1):
+        raw = (gh._gh("GET", f"/git/blobs/{d['sha']}") or {}).get("content") or ""
+    return base64.b64decode(raw), d.get("sha")
+
+
 def _ledger_gh_append(gh, rec: dict) -> None:
     """읽기 전용 배포: 실적을 별도 브랜치(LEDGER_BRANCH, 기본 ledger-data)의 월별 파일에 덧붙여 커밋한다.
     배포 브랜치가 아니므로 재배포가 일어나지 않는다(vercel.json 에서 이 브랜치 배포를 끈다)."""
@@ -3638,8 +3654,7 @@ def _ledger_gh_append(gh, rec: dict) -> None:
     for attempt in range(2):                                   # 동시에 저장하면 sha 가 어긋난다 — 한 번 다시 읽어 붙인다
         old, sha = b"", None
         try:
-            d = gh._gh("GET", f"/contents/{path}", params={"ref": br})
-            old, sha = base64.b64decode(d.get("content", "") or ""), d.get("sha")
+            old, sha = _ledger_gh_read(gh, path, br)
         except Exception as e:
             if getattr(e, "status", None) != 404:
                 raise
@@ -3720,7 +3735,6 @@ def _ledger_lines() -> tuple:
                 continue
     gh = _ledger_gh()
     if gh:
-        import base64
         try:
             files = gh._gh("GET", "/contents/ledger", params={"ref": _ledger_branch()})
         except Exception as e:
@@ -3728,8 +3742,7 @@ def _ledger_lines() -> tuple:
         for f in sorted([x for x in files if isinstance(x, dict) and str(x.get("name", "")).endswith(".jsonl")],
                         key=lambda x: x["name"])[-24:]:
             try:
-                d = gh._gh("GET", f"/contents/ledger/{f['name']}", params={"ref": _ledger_branch()})
-                take(base64.b64decode(d.get("content", "") or "").decode("utf-8", "replace"))
+                take(_ledger_gh_read(gh, f"ledger/{f['name']}", _ledger_branch())[0].decode("utf-8", "replace"))
             except Exception:
                 continue
         return True, recs

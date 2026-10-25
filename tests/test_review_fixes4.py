@@ -117,6 +117,7 @@ def test_quote_ok():
     assert ra._quote_ok("국내여행자의 일비·숙박비 및 식비는 〔별표 2〕", body)
     assert ra._quote_ok("국내여행자의 일비 … 정하는 바에 따라 지급한다", body)           # 줄인 인용은 조각마다
     assert not ra._quote_ok("일비는 3만원으로 한다", body)
+    assert not ra._quote_ok("정하는 바에 따라 지급한다 … 국내여행자의 일비", body)        # 조각의 차례가 바뀌면 원문 일치가 아니다
     assert not ra._quote_ok("", body)
 
 
@@ -184,7 +185,9 @@ def test_ledger_github_branch(client, monkeypatch):
             p = path[len("/contents/"):]
             if p not in files:
                 raise E(404)
-            return {"content": base64.b64encode(files[p]).decode(), "sha": "s"}
+            return {"content": "", "sha": "big", "size": len(files[p])}       # 1MB 넘는 파일처럼 content 를 비워 준다
+        if method == "GET" and path == "/git/blobs/big":
+            return {"content": base64.b64encode(list(files.values())[0]).decode()}
         if method == "PUT":
             assert kw["json"]["branch"] == "ledger-data"
             files[path[len("/contents/"):]] = base64.b64decode(kw["json"]["content"])
