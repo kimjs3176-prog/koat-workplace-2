@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import base64  # noqa: F401
+import difflib
 import io as _io  # noqa: F401
 import json
 import os
@@ -25,6 +26,7 @@ from flask import Blueprint, Response, jsonify, request
 import hmac
 from urllib.parse import quote as _q
 
+import reg_chunks
 import reg_import as ri
 from reg_import import (REG_DIR, REG_MANIFEST_PATH, _KST, now_kst as _now_kst,  # noqa: F401
                         reg_slug as _reg_slug, guess_category as _guess_reg_category,
@@ -163,6 +165,46 @@ def _upsert_manifest(entry: dict, backup_name: str = "") -> dict:
     global _REG_MANIFEST
     _REG_MANIFEST = man
     return entry
+
+
+def _doc_title(text: str) -> str:
+    """변환한 본문 첫머리의 규정명(“직원창업규칙” / “제정 | …” 앞 줄). 없으면 ''."""
+    for line in (text or "").splitlines()[:6]:
+        t = line.strip()
+        if not t:
+            continue
+        if len(t) <= 40 and re.search(r"(규정|규칙|지침|세칙|요령|기준|정관|매뉴얼|강령|헌장)$", t) and not t.startswith("제"):
+            return t
+        return ""
+    return ""
+
+
+def _similar_reg_title(title: str, text: str, man: list):
+    """새 규정명이 등록된 규정과 사실상 같은지 → (등록된 규정명, 이유) 또는 None.
+    본문 제목이 등록된 규정명과 같거나, 이름 길이가 같고 한 글자만 다르면 같은 규정으로 의심한다."""
+    key = _norm_key(title)
+    doc = _doc_title(text)
+    names = [m.get("title", "") for m in man if m.get("title")]
+    if doc and _norm_key(doc) != key:
+        hit = next((n for n in names if _norm_key(n) == _norm_key(doc)), None)
+        if hit:
+            return hit, f"본문 제목(「{doc}」)이 같습니다"
+    body = re.sub(r"\s+", "", text or "")[:3000]
+    for m in man:
+        k = _norm_key(m.get("title", ""))
+        if not (len(k) == len(key) >= 4 and k != key and sum(a != b for a, b in zip(k, key)) == 1):
+            continue
+        old = _local_reg_text(m.get("slug", ""))
+        if not old:                                            # 일괄 등록분은 text.txt 없이 index.html 만 있다
+            try:
+                with open(os.path.join(REG_DIR, m.get("slug", ""), "index.html"), encoding="utf-8", errors="replace") as f:
+                    old = reg_chunks.html_to_text(f.read())
+            except OSError:
+                old = ""
+        old = re.sub(r"\s+", "", old)[:3000]
+        if body and old and difflib.SequenceMatcher(None, body, old, autojunk=False).ratio() >= 0.85:
+            return m["title"], "이름이 한 글자만 다르고 본문이 거의 같습니다"      # “인사규정”·“감사규정”처럼 본문이 다르면 묻지 않는다
+    return None
 
 
 def _upload_authorized() -> tuple[bool, str]:
@@ -537,6 +579,15 @@ def reg_upload():
     if conv.get("failed") and prev and prev.get("searchable", True):
         return jsonify({"error": f"「{prev.get('title')}」의 개정판인데 본문을 읽지 못했습니다({conv.get('error') or '변환 실패'}). "
                                  "지금 본문을 지우지 않도록 등록을 멈췄습니다. HWPX로 저장해 다시 올려 주세요."}), 400
+
+    # 새 규정으로 들어오는데 본문 제목이나 이름이 이미 등록된 규정과 같거나 한 글자만 다르면(“직업창업규칙” ↔ 「직원창업규칙」)
+    # 파일명 오타로 같은 규정이 두 벌 생기지 않도록 확인을 받는다. 새 규정이 맞으면 new_ok=1 로 다시 보낸다.
+    if not prev and (request.form.get("new_ok") or "") != "1":
+        sim = _similar_reg_title(title, conv.get("text") or "", _load_reg_manifest() or [])
+        if sim:
+            nm, why = sim
+            return jsonify({"error": f"「{nm}」과(와) {why}. 같은 규정의 개정판이면 「{nm}」(으)로 올리고, 다른 규정이면 새 규정으로 올리세요.",
+                            "similar": nm}), 409
 
     slug = (prev or {}).get("slug") or _reg_slug(title)
     if not slug:

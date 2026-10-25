@@ -2066,7 +2066,7 @@ function raHealthView(){
   const table=`<div class="ra-row"><input class="ra-in sm" style="max-width:220px" aria-label="${_e(RA_ORG.reg_word)}명으로 진단표 거르기" placeholder="${_e(RA_ORG.reg_word)}명 검색" value="${_e(f.q||'')}" oninput="raHealthF('q',this.value)">`+
     (f.g?`<button class="ra-chip btn" onclick="raHealthF('g','')">${f.g}등급만 보는 중 ✕</button>`:'')+`<span class="ra-hint" id="raHealthN" aria-live="polite">${rows.length}건</span></div>`+
     `<div class="ra-tbl-w"><table class="ra-tbl"><thead><tr><th>${_e(RA_ORG.reg_word)}</th><th>등급</th><th>점수</th><th>최종 개정</th><th>진단</th></tr></thead><tbody id="raHealthTb">${raHealthTbody(rows)}</tbody></table></div>`;
-  const rule=d.rules?`<details class="ra-det"><summary>점수 기준</summary><div class="ra-hint">100점에서 감점: 없는 조문 인용 건당 -10(최대 -30) · 다른 내규의 없는·삭제된 조문 인용 -8 · 조 번호 중복·순서 오류 -8 · 현행 목록에 없는 내규명 인용 -6 · 옛 기관명·직위 -5 · 개정 경과 ${_e(d.rules.age)} · ${_e(d.rules.law)}<br>등급: A 95점 이상(양호) · B 85(관심) · C 75(주의) · D 60(경고) · E 60점 미만(위험)</div></details>`:'';
+  const rule=d.rules?`<details class="ra-det"><summary>점수 기준</summary><div class="ra-hint">100점에서 감점: 없는 조문 인용 건당 -10(최대 -30) · 다른 내규의 없는·삭제된 조문 인용 -8 · 조 번호 중복·순서 오류 -8 · 현행 목록에 없는 내규명 인용 -6 · 옛 기관명·직위 -5 · 중복 등록 의심 -10 · 개정 경과 ${_e(d.rules.age)} · ${_e(d.rules.law)}<br>등급: A 95점 이상(양호) · B 85(관심) · C 75(주의) · D 60(경고) · E 60점 미만(위험)</div></details>`:'';
   const lawSec=`<div class="ra-row"><button class="svc-btn" onclick="raHealthLaws()">${raIc('upper')}상위법 최신성 확인</button>${raTip(`${_e(RA_ORG.reg_word)}가 인용한 법령 ${d.laws.length}개의 현행 시행일을 법제처에서 조회해, ${_e(RA_ORG.reg_word)} 개정일보다 나중에 시행된 법령을 찾습니다.${lawN?` (확인 ${lawN}개)`:''}`)}</div><div id="raLawProg"></div>`+
     raStats([{v:d.laws.length,l:'인용 법령',ic:'upper',tone:'acc'},{v:lawN,l:'시행일 확인',ic:'check',tone:lawN?'ok':'n'},{v:lawN?d.stale_regs:'—',l:'미반영 의심 내규',ic:'alert',tone:lawN&&d.stale_regs?'warn':'n'}])+
     raMeter(lawN/Math.max(1,d.laws.length),'acc')+`<div class="ra-meta" style="margin-top:6px">법제처 확인 ${Math.round(lawN/Math.max(1,d.laws.length)*100)}%</div>`;
@@ -2226,7 +2226,7 @@ function raRegsAmendArt(slug,title,no){
 }
 function raRegsGraph(slug){ RA.graph=RA.graph||{}; RA.graph.sel=slug; _raSave(); raTab('graph'); }
 // ── 건강검진 문제 펼쳐 보기 → 고른 문제로 개정 작업 ──
-const RA_HCODE={ref:'없는 조문 인용',xref:'다른 내규의 없는·삭제된 조문 인용',deleg:'시행세칙 위임 확인',dup:'조 번호 중복',order:'조 번호 순서 오류',regname:'현행 목록에 없는 내규명 인용',stale:'옛 기관명·직위'};
+const RA_HCODE={ref:'없는 조문 인용',xref:'다른 내규의 없는·삭제된 조문 인용',deleg:'시행세칙 위임 확인',dup:'조 번호 중복',order:'조 번호 순서 오류',regname:'현행 목록에 없는 내규명 인용',stale:'옛 기관명·직위',dupreg:'중복 등록 의심'};
 function raHealthChips(r){
   const on=(RA.health.open||{})[r.slug];
   const chip=(code,label,tone)=>`<button class="ra-chip btn${tone?' '+tone:''}${on===code?' on':''}" aria-expanded="${on===code}" onclick="raHealthOpen('${_a(r.slug)}','${code}')">${_e(label)}</button>`;
@@ -2245,25 +2245,26 @@ function raHealthOpen(slug, code){
 function raHealthPick(slug, i, on){ const H=RA.health; H.pick=H.pick||{}; H.pick[slug]=H.pick[slug]||{}; H.pick[slug][i]=on; _raSave(); const r=raHealthRow(slug); if(!r) return; const code=(H.open||{})[slug]||'all'; const n=raHealthPicked(r).filter(x=>code==='all'||x.code===code).length;
   document.querySelectorAll('[data-hgo]').forEach(b=>{ if(b.dataset.hgo===slug) b.lastChild.textContent=`고른 ${n}건으로 개정 작업`; });
   document.querySelectorAll('.ra-hdet input[type=checkbox]').forEach(c=>{ const m=(c.getAttribute('onchange')||'').match(/raHealthPick\('([^']*)',(\d+)/); if(m&&m[1]===slug&&+m[2]===i) c.checked=on; }); }
-function raHealthPicked(r){ const p=((RA.health.pick||{})[r.slug])||{}; return raArr(r.issues).filter((x,i)=>p[i]!==false); }
+function raHealthPicked(r){ const p=((RA.health.pick||{})[r.slug])||{}; return raArr(r.issues).filter((x,i)=>p[i]!==false&&x.code!=='dupreg'); }   // 중복 등록은 조문 개정 대상이 아니다
 function raHealthDetail(r){
   const code=(RA.health.open||{})[r.slug]; if(!code) return '';
   const iss=raArr(r.issues), p=((RA.health.pick||{})[r.slug])||{};
   const mark=(t,term)=>{ const s=_e(t||''); return term?s.split(_e(term)).join(`<mark>${_e(term)}</mark>`):s; };
   const rows=iss.map((x,i)=>({x,i})).filter(({x})=>code==='all'||x.code===code);
   let h='';
-  if(rows.length) h+=`<ul class="ra-hlist">`+rows.map(({x,i})=>`<li><label class="ra-hpick"><input type="checkbox" ${p[i]!==false?'checked':''} onchange="raHealthPick('${_a(r.slug)}',${i},this.checked)" aria-label="${_e(raLbl(x.no))} 문제를 개정 작업에 넣기"></label><div>`+
-      `<div class="ra-hl-h"><span class="ra-chip ${['ref','xref','dup','order'].includes(x.code)?'hi':'warn'}">${_e(RA_HCODE[x.code]||x.code)}</span><b>${_e(raLbl(x.no))}${x.art_title?`(${_e(x.art_title)})`:''}</b></div>`+
+  if(rows.length) h+=`<ul class="ra-hlist">`+rows.map(({x,i})=>`<li>${x.code==='dupreg'?'':`<label class="ra-hpick"><input type="checkbox" ${p[i]!==false?'checked':''} onchange="raHealthPick('${_a(r.slug)}',${i},this.checked)" aria-label="${_e(raLbl(x.no))} 문제를 개정 작업에 넣기"></label>`}<div>`+
+      `<div class="ra-hl-h"><span class="ra-chip ${['ref','xref','dup','order'].includes(x.code)?'hi':'warn'}">${_e(RA_HCODE[x.code]||x.code)}</span>${x.no?`<b>${_e(raLbl(x.no))}${x.art_title?`(${_e(x.art_title)})`:''}</b>`:''}</div>`+
       `<div class="ra-hl-m">${_e(String(x.msg||'').replace(/^제\d+조(?:의\d+)?(?:의|에서|에)\s+/,'').replace(x.new?/\s*\(유사: [^)]*\)$/:/$^/,''))}</div>`+
       (x.snip?`<div class="ra-snip">${mark(x.snip,x.term)}</div>`:'')+
+      (x.code==='dupreg'&&x.other?`<div class="ra-hl-fix"><a class="ra-link" href="${raRegUrl(x.other)}" target="_blank" rel="noopener">겹치는 ${_e(RA_ORG.reg_word)} 원문↗</a> <a class="ra-link" href="/upload" target="_blank" rel="noopener">내규 등록에서 정리↗</a></div>`:'')+
       (x.new?`<div class="ra-hl-fix">${raIc('amend')}고칠 말: <s>${_e(x.term)}</s> → <b>${_e(x.new)}</b></div>`:raArr(x.cands).length?`<div class="ra-hl-fix">비슷한 현행 ${_e(RA_ORG.reg_word)}: ${x.cands.map(c=>'「'+_e(c)+'」').join(', ')}</div>`:'')+
       `</div></li>`).join('')+`</ul>`;
   if(code==='all'||code==='age') if(r.age>=2) h+=`<div class="ra-hl-x">${raIc('info')}<span>마지막 개정(${_e(r.revision)}) 뒤 ${r.age}년이 지났습니다. 조직·직위·상위법 변경이 반영됐는지 전체를 점검하세요.</span><button class="ra-link" onclick="raHealthCheckOne('${_a(r.title)}')">이 ${_e(RA_ORG.reg_word)} 전체 점검</button></div>`;
   if(code==='all'||code==='law') raArr(r.stale_laws).forEach(l=>{ h+=`<div class="ra-hl-x">${raIc('upper')}<span>「${_e(l.law)}」 ${l.ef.slice(0,4)}. ${+l.ef.slice(4,6)}. ${+l.ef.slice(6)}. 시행 — 이 ${_e(RA_ORG.reg_word)}보다 나중입니다.</span><button class="ra-link" onclick="raHealthUpper('${_a(l.law)}')">영향 조문 찾기</button></div>`; });
   if(!h) h=`<div class="ra-meta">이 항목은 따로 볼 세부 내용이 없습니다.</div>`;
   const n=raHealthPicked(r).filter(x=>code==='all'||x.code===code).length;
-  return h+`<div class="ra-row ra-hgo">`+(rows.length?`<button class="svc-btn yes sm" data-hgo="${_a(r.slug)}" onclick="raHealthToAmend('${_a(r.slug)}')">${raIc('amend')}고른 ${n}건으로 개정 작업</button>`+
-    (rows.some(({x})=>x.new)?`<span class="ra-hint">고칠 말이 정해진 곳은 수정안에 미리 바꿔 넣습니다.</span>`:''):`<button class="svc-btn sm" onclick="raCheckToAmend('${_a(r.slug)}','${_a(r.title)}')">${raIc('amend')}개정 작업</button>`)+
+  return h+`<div class="ra-row ra-hgo">`+(rows.some(({x})=>x.code!=='dupreg')?`<button class="svc-btn yes sm" data-hgo="${_a(r.slug)}" onclick="raHealthToAmend('${_a(r.slug)}')">${raIc('amend')}고른 ${n}건으로 개정 작업</button>`+
+    (rows.some(({x})=>x.new)?`<span class="ra-hint">고칠 말이 정해진 곳은 수정안에 미리 바꿔 넣습니다.</span>`:''):code==='dupreg'?'':`<button class="svc-btn sm" onclick="raCheckToAmend('${_a(r.slug)}','${_a(r.title)}')">${raIc('amend')}개정 작업</button>`)+
     `<button class="ra-link" onclick="raHealthOpen('${_a(r.slug)}','${code}')">닫기</button></div>`;
 }
 function raHealthToAmend(slug){
@@ -2376,7 +2377,7 @@ function raAdviseView(){
   const V=RA.advise;
   const ex=RA_ADV_EX.map(t=>`<button class="ra-chip btn" onclick="raAdvEx('${_a(t)}')">${_e(t)}</button>`).join('');
   const form=`<label class="ra-f"><span>질의 내용 ${raTip('상황과 궁금한 점을 한두 문장으로 적으세요. 내규 조문에서 근거를 찾아 답합니다. (Ctrl+Enter로 실행)')}</span>`+
-    `<textarea id="raAdvQ" class="ra-ta" rows="3" maxlength="1000" placeholder=""예) 출장 중 숙박비가 상한액을 넘으면 얼마까지 더 받을 수 있나요?" oninput="raSet('advise.q',this.value)" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();raAdvRun();}">${_e(V.q)}</textarea></label>`+
+    `<textarea id="raAdvQ" class="ra-ta" rows="3" maxlength="1000" placeholder="예) 출장 중 숙박비가 상한액을 넘으면 얼마까지 더 받을 수 있나요?" oninput="raSet('advise.q',this.value)" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();raAdvRun();}">${_e(V.q)}</textarea></label>`+
     `<div class="ra-grid2"><label class="ra-f"><span>대상 ${_e(RA_ORG.reg_word)}(선택) ${raTip('비워 두면 모든 '+RA_ORG.reg_word+'에서 찾습니다.')}</span>${raIn('advise.scope',V.scope,'예) 여비규정','list="raRegList"')}<datalist id="raRegList"></datalist></label><div></div></div>`+
     `<div class="ra-row"><button class="svc-btn yes" onclick="raAdvRun()">${raIc('advise')}자문 받기</button>`+
     (V.thread.length?`<button class="svc-btn ghost" onclick="raAdvNew()">새 질의</button><span class="ra-hint">이어서 물으면 앞 질의를 참고합니다(${V.thread.length}건)</span>`:'')+
@@ -2417,7 +2418,8 @@ function raAdvResView(d){
   const src=raArr(d.sources);
   const head=`<div class="ra-adv-h"><span class="ra-adv-c ${RA_ADV_TONE[d.conclusion]||'n'}">${_e(d.conclusion)}</span><span class="ra-pill subtle">${d.ai?'AI 회신':'규칙 기반 안내'}</span>${d.scope?`<span class="ra-pill">「${_e((src[0]||{}).reg||d.scope)}」에서</span>`:''}</div>`+
     `<div class="ra-adv-q">${raIc('advise')}${_e(d.question)}</div>`+(d.notice?`<div class="ra-note">${raIc('info')}${_e(d.notice)}</div>`:'')+
-    (raArr(d.unmatched).length?`<div class="ra-hint">원문에 그대로 나오지 않는 말: ${d.unmatched.map(w=>`<span class="ra-chip">${_e(w)}</span>`).join('')} — 다른 표현(예: 출장비 → 여비)으로도 물어보세요.</div>`:'');
+    (raArr(d.unmatched).length?`<div class="ra-hint">원문에 그대로 나오지 않는 말: ${d.unmatched.map(w=>`<span class="ra-chip">${_e(w)}</span>`).join('')} — 다른 표현(예: 출장비 → 여비)으로도 물어보세요.</div>`:'')+
+    (Object.keys(d.mapped||{}).length?`<div class="ra-hint">${_e(RA_ORG.reg_word)} 용어로도 찾았습니다: ${Object.entries(d.mapped).map(([w,ws])=>`${_e(w)} → ${raArr(ws).map(x=>`<span class="ra-chip">${_e(x)}</span>`).join('')}`).join(' · ')}</div>`:'');
   const ans=`<p class="ra-adv-a">${raAdvCite(d.answer,src)}</p>`;
   const li=(t,arr)=>raArr(arr).length?`<div class="ra-adv-l"><b>${t}</b><ul>${arr.map(x=>`<li>${raAdvCite(x,src)}</li>`).join('')}</ul></div>`:'';
   const basis=raArr(d.basis).length?`<div class="ra-adv-l"><b>근거</b><ul>${d.basis.map(b=>{ const x=src.find(y=>y.id===b.src); return x?`<li><a class="ra-cite" href="#raAdvS-${x.id}" onclick="return raAdvFocus(${x.id})">[${x.id}]</a> ${_e(raAdvLbl(x))}${x.title?`(${_e(x.title)})`:''} — “${_e(b.point)}”</li>`:''; }).join('')}</ul></div>`:'';
@@ -2550,7 +2552,7 @@ function raCheckToAmend(slug, title){
   if(!iss.length&&RA.check.one&&RA.check.one.reg===title) iss=RA.check.one.issues||[];
   iss=iss.filter(i=>i.level!=='info');
   const nos=[...new Set(iss.map(i=>raNormNo(i.no)).filter(Boolean))].slice(0,12);
-  const kinds=[...new Set(iss.map(i=>({ref:'없는 조문 인용',xref:'다른 내규 조문 인용',deleg:'시행세칙 위임',dup:'조 번호 중복',order:'조 번호 순서',regname:'내규 명칭',stale:'구 명칭',gap:'결번',title:'조 제목',hang:'항 번호',ho:'호 번호',addenda:'부칙'})[i.code]).filter(Boolean))];
+  const kinds=[...new Set(iss.map(i=>({ref:'없는 조문 인용',xref:'다른 내규 조문 인용',deleg:'시행세칙 위임',dup:'조 번호 중복',order:'조 번호 순서',regname:'내규 명칭',lawname:'법령 명칭',stale:'구 명칭',gap:'결번',title:'조 제목',hang:'항 번호',ho:'호 번호',addenda:'부칙'})[i.code]).filter(Boolean))];
   raAmendStart(slug, title, {sel:nos, intent:kinds.length?`점검 결과 정비: ${kinds.slice(0,4).join('·')}`:''});
 }
 
