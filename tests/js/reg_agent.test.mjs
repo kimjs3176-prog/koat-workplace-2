@@ -550,3 +550,15 @@ test('AI 검토 보완: 사전검토 AI 의견·이유 수정 시 확인 해제�
   assert.equal(`${d.cite_check.n}/${d.cite_check.ok}`, '1/1');
   assert.match(c.raAdvText(d), /담당자 수정 · 검토: 주임 홍길동\(검토 확인 전\)/);
 });
+
+test('자문 회신: 근거를 빼면 인용 안내도 남은 근거에 맞춘다', () => {
+  const c = load();
+  const RA = c.__RA();
+  RA.advise.res = { question: 'q', conclusion: '해당 규정', answer: 'a [1]', ai: true, model: 'm', sources: [{ id: 1, reg: '여비규정', no: '15', title: '여비' }],
+    basis: [{ src: 1, point: 'x', verified: false }, { src: 1, point: 'y', verified: false }, { src: 1, point: 'z', verified: true }],
+    cite_check: { n: 3, ok: 1 }, caveats: ['AI가 인용한 문장 2건은 근거 조문에서 그대로 확인하지 못했습니다. 해당 조문 원문과 대조하세요.', '기타'] };
+  c.raAdvBasisDel(0);
+  assert.match(RA.advise.res.caveats[0], /^AI가 인용한 문장 1건은/);
+  c.raAdvBasisDel(0);
+  assert.equal(JSON.stringify(RA.advise.res.caveats), JSON.stringify(['기타']));
+});

@@ -244,10 +244,13 @@ def test_ledger_retry_and_client_address(client, tmp_path, monkeypatch):
     d = post("3.3.3.3")                                                   # X-Forwarded-For 를 바꿔도 같은 접속으로 센다
     assert not d["stored"] and d["retry"]                                 # 버리지 않고 화면이 다시 보내게 한다
     import datetime as _dt
-    now = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=9)
-    old = (now - _dt.timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
-    assert ra.ledger_record({"kind": "advise", "at": old})["at"] == old  # 다시 보낸 기록은 저장한 때로
-    assert ra.ledger_record({"kind": "advise", "at": "2001-01-01 00:00"})["at"] != "2001-01-01 00:00"
+    import time as _t
+    ts = (_t.time() - 2 * 86400) * 1000
+    kst = (_dt.datetime.fromtimestamp(ts / 1000, _dt.timezone.utc) + _dt.timedelta(hours=9)).strftime("%Y-%m-%d %H:%M")
+    assert ra.ledger_record({"kind": "advise", "ts": ts, "resend": True})["at"] == kst   # 다시 보낸 기록은 처음 저장한 때(KST)로
+    assert ra.ledger_record({"kind": "advise", "ts": ts})["at"] != kst                  # 처음 보내는 기록은 서버 시각
+    assert ra.ledger_record({"kind": "advise", "at": "2026-10-20 09:00"})["at"] != "2026-10-20 09:00"   # 화면이 정한 시각은 받지 않는다
+    assert ra.ledger_record({"kind": "advise", "ts": 0, "resend": True})["at"] != "1970-01-01 09:00"
 
 
 
@@ -263,3 +266,15 @@ def test_ledger_off_by_default(client, tmp_path, monkeypatch):
     assert client.get("/api/regagent/config").get_json()["ledger"] is False
     monkeypatch.setenv("LEDGER_ENABLED", "1")
     assert client.get("/api/regagent/config").get_json()["ledger"] is True
+
+
+
+def test_advise_abridged_quote_not_verified(client, monkeypatch):
+    monkeypatch.setitem(ra._CTX, "default_model_for", lambda p, k: "m")
+    q = "국내여행의 경우에는 … 2분의 1을 넘지 아니하는 범위에서 여비를 추가로 지급할 수 있다"   # 뜻을 바꾼 줄인 인용
+    monkeypatch.setitem(ra._CTX, "ai_generate", lambda *a, **k: (json.dumps({
+        "conclusion": "해당 규정", "answer": "추가 지급할 수 있습니다 [1].", "basis": [{"src": 1, "point": q}]}), ""))
+    d = client.post("/api/regagent/advise", json={"question": "국내 출장 숙박비 상한액을 넘으면?", "slug": "여비규정",
+                                                  "provider": "gemini", "api_key": "k"}).get_json()
+    b = d["basis"][0]
+    assert b["abridged"] and b["verified"] is False and d["cite_check"]["ok"] == 0

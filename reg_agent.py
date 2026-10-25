@@ -3541,7 +3541,8 @@ def ai_advise(b: dict, S: dict):
         if i in ids and str(x.get("point") or "").strip():
             pt = str(x["point"]).strip()[:400]
             src_body = next((y["body"] for y in S["sources"] if y["id"] == i), "")
-            basis.append({"src": i, "point": pt, "verified": _quote_ok(pt, src_body)})
+            short = bool(re.search(r"…|\.\.\.", pt))               # 줄인 인용은 조각이 맞아도 뜻이 바뀔 수 있어 ✔를 주지 않는다
+            basis.append({"src": i, "point": pt, "verified": _quote_ok(pt, src_body) and not short, **({"abridged": True} if short else {})})
     concl = str(d.get("conclusion") or "").strip()
     out = {"conclusion": concl if concl in _ADV_CONCL else "확인 필요", "answer": _adv_cites(d["answer"], ids)[:3000],
            "basis": basis[:8], "conditions": [_adv_cites(x, ids)[:300] for x in _strs(d.get("conditions"))][:6],
@@ -3619,13 +3620,12 @@ def ledger_record(b: dict) -> dict:
     n = lambda k: _clamp_int(b.get(k), 0, 9999, 0)
     now = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=9)
     at = now.strftime("%Y-%m-%d %H:%M")
-    sent = str(b.get("at") or "")                              # 나중에 다시 보낸 기록은 저장한 때(최근 7일 안)로 남긴다
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", sent):
+    if b.get("resend"):                                        # 다시 보낸 기록만 처음 저장한 때(ts, 최근 7일 안)로 — 서버 시간대(KST)로 바꿔 적는다
         try:
-            t = _dt.datetime.strptime(sent, "%Y-%m-%d %H:%M").replace(tzinfo=now.tzinfo)
-            if now - _dt.timedelta(days=7) <= t <= now + _dt.timedelta(hours=1):
-                at = sent
-        except ValueError:
+            t = _dt.datetime.fromtimestamp(float(b.get("ts")) / 1000, _dt.timezone.utc) + _dt.timedelta(hours=9)
+            if now - _dt.timedelta(days=7) <= t <= now:
+                at = t.strftime("%Y-%m-%d %H:%M")
+        except (TypeError, ValueError, OverflowError, OSError):
             pass
     rec = {"at": at, "kind": kind,
            "reg": re.sub(r"\s+", " ", str(b.get("reg") or ""))[:80], "ai": re.sub(r"[^\w:.\-]", "", str(b.get("ai") or ""))[:60],
