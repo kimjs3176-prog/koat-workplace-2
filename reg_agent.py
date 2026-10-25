@@ -1974,7 +1974,7 @@ def _deep_fmt(o):
 def ra_config():
     regs = all_regs()
     return jsonify({"success": True, "org": _deep_fmt(ORG), "reg_count": len(regs),
-                    "semantic": bool(_CTX.get("vec_ready") and _CTX["vec_ready"]())})
+                    "semantic": bool(_CTX.get("vec_ready") and _CTX["vec_ready"]()), "ledger": ledger_enabled()})
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -3601,6 +3601,11 @@ _LEDGER_KINDS = {"advise": "자문 회신", "enact": "제정안 문서", "amend"
 _LEDGER_LOCK = threading.Lock()
 
 
+def ledger_enabled() -> bool:
+    """기관 전체 실적 대장은 기본으로 끈다. LEDGER_ENABLED=1 일 때만 서버에 모은다(브라우저 대장은 늘 동작)."""
+    return (os.environ.get("LEDGER_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _ledger_dir() -> str:
     return os.environ.get("LEDGER_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "ledger")
 
@@ -3691,6 +3696,8 @@ def _ledger_gh_append(gh, rec: dict) -> None:
 
 @bp.route("/api/regagent/ledger", methods=["POST"])
 def ra_ledger_add():
+    if not ledger_enabled():
+        return jsonify({"success": True, "stored": False, "disabled": True})
     try:
         rec = ledger_record(_body())
     except ValueError as e:
@@ -3784,6 +3791,8 @@ def _ledger_lines() -> tuple:
 @bp.route("/api/regagent/ledger", methods=["GET"])
 def ra_ledger_sum():
     """기관 전체 실적(월별 집계만 — 개별 기록은 내주지 않는다)."""
+    if not ledger_enabled():
+        return jsonify({"success": True, "kinds": _LEDGER_KINDS, "available": False, "disabled": True, "months": []})
     if _LEDGER_SUM["v"] is None or time.time() - _LEDGER_SUM["at"] > 120:
         ok, recs = _ledger_lines()
         _LEDGER_SUM.update(at=time.time(), v={"available": ok, "months": ledger_summary(recs) if ok else []})
