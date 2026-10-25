@@ -111,7 +111,7 @@ function _raLoad(){
   return _raBlank();
 }
 let RA=_raLoad(); RA.agent=Object.assign({req:'',steps:[],plan:null,done:null},RA.agent||{},{running:false}); (RA.agent.steps||[]).forEach(s=>{ if(s.st==='run') s.st='err'; }); RA.health=Object.assign({law:{},f:{q:'',g:''}},RA.health||{}); RA.advise=Object.assign({q:'',scope:'',res:null,hist:[],thread:[]},RA.advise||{}); RA.ledger.srv=null;   // 기관 대장 집계는 열 때마다 새로 받는다
-setTimeout(()=>{ if(raArr((RA.ledger||{}).items).some(x=>x.pending)) raLedgerFlush(); },3000);   // 지난번에 못 보낸 실적
+setTimeout(()=>{ if(raArr((RA.ledger||{}).items).some(x=>x.pending)) raLedgerFlush(true); },3000);   // 지난번에 못 보낸 실적
 let _raArtsErr='', _raArts=null, _raCatalog=null, _raSaveT=null, _raBusy={};
 function _raSave(){ clearTimeout(_raSaveT); _raSaveT=setTimeout(()=>{ try{ localStorage.setItem(RA_KEY, raStateJson()); }catch(e){ if(typeof _toast==='function') _toast('작업 내용을 저장하지 못했습니다(브라우저 저장 공간 부족).'); } },300); }
 // 저장본: 일괄 정비 결과가 크면(수백 KB) 빼고 저장한다 — 입력·선택은 남기고, 새로고침 뒤에는 다시 찾게 한다
@@ -1756,7 +1756,7 @@ function raSubmitCheck(mode, B){
   const aok=raAiOk(mode), stale=sub.aiOk&&!aok;
   if(pv) add(aok&&raMe()?'ok':'err',aok&&raMe()?`AI 작성분 검토 확인 — ${raMe()}(${raAiParts(pv)})`
     :stale?`검토 확인 뒤 조문·이유·사전검토가 바뀌었습니다 — 바뀐 내용을 다시 검토하고 “AI 작성분 검토 확인”에 다시 체크하세요.`
-    :`${raAiParts(pv)}을 현행·근거와 대조해 검토한 뒤 “AI 작성분 검토 확인”에 체크하세요.`);
+    :`AI 작성분(${raAiParts(pv)}) — 현행·근거와 대조해 검토한 뒤 “AI 작성분 검토 확인”에 체크하세요.`);
   if(mode==='amend'){ const sc=raAmendScale(); if(sc.full&&!RA.amend.fullRev) add('warn',`조문의 ${Math.round(sc.ratio*100)}%를 고칩니다 — 3분의 2 이상이면 전부개정 방식입니다(「${raRules()}」 제6조).`); }
   const rel=raRelRegs(mode); if(rel.length&&!/다른\s*\S*\s*개정/.test(B.c.addenda||'')) add('warn',`다른 ${RA_ORG.reg_word} ${rel.length}건이 바뀌는 조문을 인용합니다 — 부칙에 “다른 ${RA_ORG.reg_word}의 개정”을 넣으세요.`);
   add(sub.dept&&sub.proposer?'ok':'warn',sub.dept&&sub.proposer?`제안: ${sub.dept} ${sub.proposer}`:'제안 부서·제안자(직위·성명)를 입력하세요.');
@@ -1856,18 +1856,21 @@ function raNowStr(){ const d=new Date(), z=n=>String(n).padStart(2,'0'); return 
 // 저장한 산출물 기록: 이 브라우저 대장에 남기고, 기관 대장(서버)에는 메타데이터만 보낸다(본문·질의·이름 제외)
 async function raLedgerAdd(meta){
   const L=RA.ledger=Object.assign({items:[],srv:null},RA.ledger||{});
-  const rec=Object.assign({at:raNowStr(), who:raMe(), pending:!!(RA_ORG&&RA_ORG._ledger)},meta); L.items=[rec,...raArr(L.items)].slice(0,500); _raSave();   // 기관 대장이 꺼져 있으면 서버로 보내지 않는다
+  const rec=Object.assign({at:raNowStr(), ts:Date.now(), who:raMe(), pending:!!(RA_ORG&&RA_ORG._ledger)},meta); L.items=[rec,...raArr(L.items)].slice(0,500); _raSave();   // 기관 대장이 꺼져 있으면 서버로 보내지 않는다
   await raLedgerFlush();
 }
 // 기관 대장에 아직 못 보낸 기록(서버 혼잡·GitHub 오류·네트워크)을 다시 보낸다 — 실적이 조용히 빠지지 않게
-let _raLedgerBusy=false;
-async function raLedgerFlush(){
-  if(_raLedgerBusy||!(RA_ORG&&RA_ORG._ledger)) return; _raLedgerBusy=true;
+let _raLedgerBusy=false, _raLedgerLast=0;
+async function raLedgerFlush(auto){
+  if(_raLedgerBusy||!(RA_ORG&&RA_ORG._ledger)) return;
+  if(auto&&Date.now()-_raLedgerLast<60000) return;             // 화면이 저절로 다시 보낼 때는 1분에 한 번만(서버를 두드리지 않게)
+  _raLedgerBusy=true; _raLedgerLast=Date.now();
   try{ const L=RA.ledger||{}; let n=0, sent=0;
     for(const rec of raArr(L.items).filter(x=>x.pending).reverse()){
       if(n++>=20) break;
-      try{ const {who,pending,stored,...send}=rec; const r=await fetch('/api/regagent/ledger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(send)});
-        const d=await r.json(); rec.stored=!!(d&&d.stored); rec.pending=!rec.stored&&!!(d&&d.retry); sent++;   // 기관 대장이 없는 배포(retry 없음)는 다시 보내지 않는다
+      try{ const {who,pending,stored,tries,...send}=rec; send.resend=!!tries; rec.tries=(tries||0)+1;     // 다시 보내는 기록은 처음 저장한 때(ts)로 남긴다
+        const r=await fetch('/api/regagent/ledger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(send)});
+        const d=await r.json(); rec.stored=!!(d&&d.stored); rec.pending=!rec.stored&&!!(d&&d.retry); if(rec.stored) sent++;   // 기관 대장이 없는 배포(retry 없음)는 다시 보내지 않는다
         if(rec.pending) break; }
       catch(e){ break; }                                      // 연결이 안 되면 다음 기회에
     }
@@ -1891,7 +1894,7 @@ function raLedgerView(){
   const acts=items.length?`<div class="ra-row"><button class="svc-btn" onclick="raLedgerCsv()">${raIc('doc')}CSV로 받기</button><button class="svc-btn ghost" onclick="raLedgerClear()">이 브라우저 대장 비우기</button></div>`:'';
   const S=L.srv;
   if(!S) setTimeout(raLedgerSrv,0);
-  if(items.some(x=>x.pending)) setTimeout(raLedgerFlush,0);
+  if(items.some(x=>x.pending)) setTimeout(()=>raLedgerFlush(true),0);
   const srv=!S?raSpin('기관 대장을 불러오는 중...'):S.disabled?`<div class="ra-note">${raIc('info')}<span>기관 전체 실적 대장은 꺼져 있습니다(기본). 이 브라우저 대장만 남고 서버로는 아무것도 보내지 않습니다. 기관 실적을 모으려면 관리자가 서버 환경변수 <code>LEDGER_ENABLED=1</code>을 설정하세요.</span></div>`:!S.available?`<div class="ra-note">${raIc('info')}<span>기관 전체 대장이 설정되지 않았습니다. 서버에 쓰기 권한이 있거나(로컬·VM) 내규 등록 자동 커밋(GITHUB_TOKEN·GITHUB_REPO)이 켜져 있으면 모든 사용자의 실적이 월별로 모입니다. 지금은 이 브라우저 대장만 남습니다.</span></div>`
     :raArr(S.months).length?`<div class="ra-tbl-w"><table class="ra-tbl"><thead><tr><th>월</th><th>산출물</th><th>종류</th><th>AI 활용</th><th>검토 확인</th><th>AI 작성분 수정</th><th>인용 원문 일치</th></tr></thead><tbody>`+
       S.months.map(m=>`<tr><td>${_e(m.month)}</td><td>${m.count}</td><td>${Object.entries(m.kinds||{}).map(([k,n])=>`${_e(RA_LEDGER_K[k]||k)} ${n}`).join(' · ')}</td><td>${m.ai}</td><td>${raPct(m.reviewed,m.count)}</td><td>${raPct(m.edited,m.total)}</td><td>${raPct(m.cites_ok,m.cites)}</td></tr>`).join('')+`</tbody></table></div>`
@@ -2552,7 +2555,7 @@ function raAdvResView(d){
       `<label class="ra-f"><span>유의사항(한 줄에 하나)</span>${ta('caveats',raArr(d.caveats).join('\n'),3)}</label></div>`
     :`<p class="ra-adv-a">${raAdvCite(d.answer,src)}</p>`;
   const li=(t,arr)=>!ed&&raArr(arr).length?`<div class="ra-adv-l"><b>${t}</b><ul>${arr.map(x=>`<li>${raAdvCite(x,src)}</li>`).join('')}</ul></div>`:'';
-  const basis=raArr(d.basis).length?`<div class="ra-adv-l"><b>근거</b><ul>${d.basis.map((b,bi)=>{ const x=src.find(y=>y.id===b.src); return x?`<li>${ed?`<button class="ra-x" title="이 근거 빼기" onclick="raAdvBasisDel(${bi})">✕</button> `:''}<a class="ra-cite" href="#raAdvS-${x.id}" onclick="return raAdvFocus(${x.id})">[${x.id}]</a> ${_e(raAdvLbl(x))}${x.title?`(${_e(x.title)})`:''} — “${_e(b.point)}”${b.verified===false?' <span class="ra-chip warn" title="AI가 인용한 문장을 근거 조문에서 그대로 확인하지 못했습니다(없거나, 줄인 조각이 짧아 대조할 수 없음). 원문과 대조해 고치거나 빼세요.">⚠ 원문 대조 필요</span>':b.verified&&d.ai?' <span class="ra-chip ok" title="근거 조문에 그대로 있는 문장입니다.">✔ 원문 일치</span>':''}</li>`:''; }).join('')}</ul></div>`:'';
+  const basis=raArr(d.basis).length?`<div class="ra-adv-l"><b>근거</b><ul>${d.basis.map((b,bi)=>{ const x=src.find(y=>y.id===b.src); return x?`<li>${ed?`<button class="ra-x" title="이 근거 빼기" onclick="raAdvBasisDel(${bi})">✕</button> `:''}<a class="ra-cite" href="#raAdvS-${x.id}" onclick="return raAdvFocus(${x.id})">[${x.id}]</a> ${_e(raAdvLbl(x))}${x.title?`(${_e(x.title)})`:''} — “${_e(b.point)}”${b.abridged&&!b.verified?' <span class="ra-chip warn" title="“…”로 줄인 인용입니다. 줄인 부분 때문에 뜻이 달라지지 않았는지 원문과 대조하세요.">… 줄인 인용 — 원문 대조</span>':b.verified===false?' <span class="ra-chip warn" title="AI가 인용한 문장을 근거 조문에서 그대로 확인하지 못했습니다(없거나, 줄인 조각이 짧아 대조할 수 없음). 원문과 대조해 고치거나 빼세요.">⚠ 원문 대조 필요</span>':b.verified&&d.ai?' <span class="ra-chip ok" title="근거 조문에 그대로 있는 문장입니다.">✔ 원문 일치</span>':''}</li>`:''; }).join('')}</ul></div>`:'';
   const fu=raArr(d.followups).length?`<div class="ra-adv-l"><b>이어서 물어보기</b><div class="ra-regs-cats">${d.followups.map(f=>`<button class="ra-chip btn" onclick="raAdvRun('${_a(f)}')">${_e(f)}</button>`).join('')}</div></div>`:'';
   const laws=raArr(d.laws).length?`<div class="ra-adv-l"><b>관련 법령</b><div class="ra-regs-cats">${d.laws.map(l=>raLawLink(l.name,l.art)).join(' ')}</div></div>`:'';
   const cards=src.map(x=>`<details class="ra-det ra-adv-s" id="raAdvS-${x.id}" ${x.role==='main'&&x.id<=3?'open':''}><summary><span class="ra-cite">[${x.id}]</span> <b>${_e(raAdvLbl(x))}</b>${x.title?`(${_e(x.title)})`:''} <span class="ra-chip">${RA_ADV_ROLE[x.role]||x.role}</span>${x.why?` <span class="ra-sub">${_e(x.why)}</span>`:''}${x.rev_date?` <span class="ra-sub">· ${_e(x.rev_date)} 개정</span>`:''}</summary>`+
@@ -2590,7 +2593,9 @@ function raAdvSet(k, v){ const d=RA.advise.res; if(!d) return;
   if(k==='conditions'||k==='caveats') d[k]=String(v).split('\n').map(x=>x.trim()).filter(Boolean); else d[k]=String(v);
   raAdvTouched(d); }
 function raAdvBasisDel(i){ const d=RA.advise.res; if(!d||!raArr(d.basis)[i]) return; d.basis.splice(i,1);
-  if(d.cite_check){ const ai=d.basis.filter(b=>b.verified!==undefined); d.cite_check={n:ai.length, ok:ai.filter(b=>b.verified).length}; }
+  if(d.cite_check){ const ai=d.basis.filter(b=>b.verified!==undefined); d.cite_check={n:ai.length, ok:ai.filter(b=>b.verified).length};
+    const bad=d.cite_check.n-d.cite_check.ok, re=/^AI가 인용한 문장 \d+건은 /;       // 서버가 넣은 인용 안내도 남은 근거에 맞춘다
+    d.caveats=raArr(d.caveats).map(c=>re.test(c)?(bad?c.replace(/\d+건은/,bad+'건은'):''):c).filter(Boolean); }
   raAdvTouched(d); raRerender('advise'); }
 function raAdvExport(fmt){ const d=RA.advise.res; if(!d) return;
   if(d.ai&&!(d.reviewed&&raMe())&&!confirm('AI 회신을 근거 조문과 대조해 검토했다는 확인(검토자 포함)이 없습니다. 그대로 저장할까요?')) return;
