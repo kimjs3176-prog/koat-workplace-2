@@ -562,3 +562,26 @@ test('자문 회신: 근거를 빼면 인용 안내도 남은 근거에 맞춘�
   c.raAdvBasisDel(0);
   assert.equal(JSON.stringify(RA.advise.res.caveats), JSON.stringify(['기타']));
 });
+
+test('자문 회신: 고른 법령해석례만 회신서 참고로 넣고 번호를 이어 간다', () => {
+  const c = load();
+  const d = { question: 'q', conclusion: '가능', answer: 'a [1]', ai: false, sources: [{ id: 1, reg: '여비규정', no: '15', title: '여비', role: 'main' }],
+    basis: [{ src: 1, point: 'x' }], conditions: ['조건'], caveats: ['유의'],
+    expc: { items: [{ id: '1', title: '해석례 하나', by: '법제처', date: '2021.02.24', no: '21-0001', pick: true }, { id: '2', title: '해석례 둘' }] } };
+  const t = c.raAdvText(d);
+  assert.match(t, /4\. 근거[\s\S]*5\. 참고\(법제처 법령해석례 — 정부 법령에 대한 해석으로, 내규에 그대로 적용되지 않을 수 있음\)\n  가\. 해석례 하나 \(법제처 2021\.02\.24 회신, 안건번호 21-0001\)\n\n6\. 유의사항/);
+  assert.doesNotMatch(t, /해석례 둘/);
+  d.expc.items[0].pick = false;
+  assert.match(c.raAdvText(d), /4\. 근거[\s\S]*\n\n5\. 유의사항/);
+  const v = c.raAdvExpcView(d);
+  assert.match(v, /expcInfoP|해석례 하나/);
+  assert.match(c.raAdvExpcView({ expc: { loading: 1 } }), /찾는 중/);
+  assert.match(c.raAdvExpcView({ expc: { items: [], error: '' } }), /찾지 못했습니다/);
+  assert.equal(c.raAdvExpcView({}), '<div id="raAdvExpc"></div>');
+});
+
+test('건강검진: 시행일 확인 대상은 법령과 행정규칙 등', () => {
+  const c = load();
+  assert.equal(c.raHealthNorms({ laws: ['국가공무원법'], rules: ['종자관리요강'] }).join(','), '국가공무원법,종자관리요강');
+  assert.equal(c.raHealthNorms({ laws: ['국가공무원법'] }).join(','), '국가공무원법');
+});

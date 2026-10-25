@@ -366,6 +366,23 @@ def _lookup_law(law_name: str, target: str = "law") -> dict:
     return out
 
 
+def _lookup_rule(name: str) -> dict:
+    """「…규정」·「…지침」·「…고시」 등 → 대통령령·부령(법령)이면 법령, 아니면 행정규칙(훈령·예규·고시)에서 찾는다.
+    이름이 같은(일치도 0~1) 항목만 찾은 것으로 본다. 둘 다 조회에 실패하면 error 를 돌려 캐시하지 않게 한다."""
+    nm = re.sub(r"\s*\([^()]*\)\s*$", "", name or "").strip()      # 「…운영규정(기획재정부훈령)」
+    if re.search(r"(?<![가-힣])(?![및등중내외각그])[가-힣](?![가-힣])", nm):
+        nm = re.sub(r"\s+", "", nm)          # 「업무처 리 지침」처럼 PDF 에서 깨진 띄어쓰기 — 붙여 쓰면 법제처가 찾는다
+    law = _lookup_law(nm, "law")
+    if law.get("mst") and law.get("rank", 99) <= 1:
+        return {**law, "kind": "law"}
+    adm = _lookup_law(nm, "admrul")
+    if adm.get("mst") and adm.get("rank", 99) <= 1:
+        return {**adm, "kind": "admrul"}
+    if law.get("error") or adm.get("error"):
+        return {"error": law.get("error") or adm.get("error")}
+    return {**adm, "kind": "admrul"}
+
+
 def _get_mst(law_name: str, target: str = "law") -> str:
     """법령명 → MST(일련번호). 선택 규칙은 _lookup_law 참고."""
     return _lookup_law(law_name, target).get("mst", "")
@@ -1362,6 +1379,8 @@ _reg_agent.register(
     hwpx_base_bytes=_hwpx_base_bytes,
     hwpx_full_border=_hwpx_full_border,
     law_info=lambda name: _lookup_law(name, "law"),
+    rule_info=_lookup_rule,
+    law_xml=_law_get_xml,
 )
 
 

@@ -2482,6 +2482,31 @@ def cited_laws(reg: dict, official: bool = False) -> list:
     return names
 
 
+_RULE_NAME_OK = re.compile(r"(규정|규칙|지침|기준|고시|훈령|예규|요강|요령|세칙)$")
+
+
+def cited_rules(reg: dict) -> list:
+    """내규 본문(부칙 제외)이 인용하는 외부 규범 중 법률이 아닌 것 — 대통령령 「…규정」, 정부 훈령·예규·고시·지침.
+    우리 내규(등록된 이름·우리 기관명이 붙은 이름·등록된 내규와 이름이 거의 같은 것)와 기관 설정의 외부 규정 목록 밖의 이름은 뺀다.
+    「기타공공기관 계약사무 운영규정(기획재정부훈령)」처럼 끝에 붙은 괄호는 떼고 센다(법제처 조회용)."""
+    regnames = _reg_names()
+    own = [t for t in [ORG["org_short"], ORG["org_name"]] + [o for o, _ in _STALE_TERMS + _STALE_WORDS] if t]
+    names, seen = [], {_nk(reg["title"])}
+    for a in reg["articles"]:
+        if a["deleted"]:
+            continue
+        for m in _QUOTED_NAME.finditer(a["body"]):
+            nm = re.sub(r"\s*\([^()]*\)\s*$", "", re.sub(r"\s+", " ", m.group(1)).strip())
+            k = _nk(nm)
+            if (k in seen or len(nm) > 60 or _LAW_NAME_OK.search(nm) or not _RULE_NAME_OK.search(nm)
+                    or k in regnames or any(t in nm for t in own)
+                    or difflib.get_close_matches(k, list(regnames), n=1, cutoff=0.8)):
+                continue
+            seen.add(k)
+            names.append(nm)
+    return names
+
+
 # 감점(건당, 상한). 점수 기준은 화면에도 그대로 안내한다
 _H_W = {"ref": (10, 30), "xref": (8, 24), "dup": (8, 16), "order": (8, 16), "regname": (6, 18), "stale": (5, 15), "dupreg": (10, 10)}
 _H_GRADE = [("A", 95), ("B", 85), ("C", 75), ("D", 60), ("E", 0)]
@@ -2543,18 +2568,23 @@ def health_row(r: dict, law_info: dict, today: str) -> dict:
             pen += ap
             reasons.append(f"개정 후 {age:g}년 경과")
     laws = cited_laws(r, official=True)
+    rules = cited_rules(r)
     stale_laws = []
-    for nm in laws:
-        info = law_info.get(nm)
+    lk = {_nk(k): v for k, v in law_info.items()}            # PDF 에서 띄어쓰기가 깨진 이름(「공공기 관의 …」)도 같은 규범으로
+    for nm in laws + rules:
+        info = law_info.get(nm) or lk.get(_nk(nm))
         info = info if isinstance(info, dict) else {}
         ef = re.sub(r"\D", "", str(info.get("ef") or ""))[:8]
         if info.get("found") is False:
             continue
         if rd and len(ef) == 8 and rd < ef <= today:
-            stale_laws.append({"law": nm, "ef": ef})
+            # 「…규정」이라도 법제처에서 법령(대통령령 등)으로 찾았으면 상위법, 훈령·예규·고시 등이면 행정규칙
+            stale_laws.append({"law": nm, "ef": ef, "kind": "law" if nm in laws or info.get("kind") == "law" else "rule"})
     if stale_laws:
         pen += min(len(stale_laws) * 8, 32)
-        reasons.append(f"내규 개정 뒤 시행된 상위법 {len(stale_laws)}건")
+        nr = sum(1 for x in stale_laws if x["kind"] == "rule")
+        reasons.append(f"내규 개정 뒤 시행된 상위법 {len(stale_laws) - nr}건" if not nr else
+                       f"내규 개정 뒤 시행된 상위법·행정규칙 {len(stale_laws)}건")
     score = max(0, 100 - pen)
     grade = next(g for g, cut in _H_GRADE if score >= cut)
     by_no = {a["no"]: a for a in r["articles"]}
@@ -2567,7 +2597,7 @@ def health_row(r: dict, law_info: dict, today: str) -> dict:
         detail.append({**i, "art_title": a.get("title", ""), "snip": snip})
     return {"slug": r["slug"], "title": r["title"], "category": r["category"], "revision": r.get("revision", ""),
             "rev_date": rd, "age": age, "score": score, "grade": grade, "counts": cnt,
-            "issues": detail, "laws": laws, "stale_laws": stale_laws, "reasons": reasons,
+            "issues": detail, "laws": laws, "rules": rules, "stale_laws": stale_laws, "reasons": reasons,
             "n_articles": len(r["articles"])}
 
 
@@ -2581,17 +2611,23 @@ def ra_health():
     rows.sort(key=lambda x: (x["score"], -(x["age"] or 0)))
     grades = {g: sum(1 for x in rows if x["grade"] == g) for g in "ABCDE"}
     all_laws = sorted({nm for x in rows for nm in x["laws"]})
+    spell = {}                                               # 같은 규범의 여러 표기 중 가장 많이 쓴(같으면 띄어쓰기가 덜 깨진) 것 하나로 조회
+    for x in rows:
+        for nm in x["rules"]:
+            spell.setdefault(_nk(nm), {}).setdefault(nm, 0)
+            spell[_nk(nm)][nm] += 1
+    all_rules = sorted(max(v, key=lambda t: (v[t], -t.count(" "))) for v in spell.values())
     n = len(rows) or 1
     return jsonify({"success": True, "today": today, "count": len(rows),
                     "rules": {"weights": _H_W, "grades": _H_GRADE,
-                              "age": "2년 -4 · 3년 -8 · 5년 이상 -15", "law": "상위법 건당 -8(최대 -32)"},
+                              "age": "2년 -4 · 3년 -8 · 5년 이상 -15", "law": "상위법·행정규칙 건당 -8(최대 -32)"},
                     "avg": round(sum(x["score"] for x in rows) / n, 1), "grades": grades,
                     "with_errors": sum(1 for x in rows if x["counts"].get("ref") or x["counts"].get("xref") or x["counts"].get("dup") or x["counts"].get("order")),
                     "with_issues": sum(1 for x in rows if x["reasons"]),
                     "issue_total": sum(sum(x["counts"].values()) for x in rows),
                     "stale_regs": sum(1 for x in rows if x["stale_laws"]),
                     "old_regs": sum(1 for x in rows if (x["age"] or 0) >= 3),
-                    "laws": all_laws, "law_checked": len(law_info), "rows": rows})
+                    "laws": all_laws, "rules": all_rules, "law_checked": len(law_info), "rows": rows})
 
 
 _LAW_FRESH: dict = {}
@@ -2599,12 +2635,14 @@ _LAW_FRESH: dict = {}
 
 @bp.route("/api/regagent/health/laws", methods=["POST"])
 def ra_health_laws():
-    """상위법 최신 시행일 조회(법제처). body {names:[...]} — 서버리스 시간 제한에 맞춰 한 번에 최대 12건."""
+    """상위법 최신 시행일 조회(법제처). body {names:[...]} — 서버리스 시간 제한에 맞춰 한 번에 최대 12건.
+    법률·시행령·시행규칙은 법령에서, 그 밖의 「…규정」·「…지침」·「…고시」는 법령(대통령령 등) → 행정규칙 순으로 찾는다."""
     b = _body()
     names = [str(x).strip() for x in (b.get("names") or []) if str(x).strip()][:12]
-    look = _CTX.get("law_info")
-    if not look:
+    look_law = _CTX.get("law_info")
+    if not look_law:
         return jsonify({"success": False, "error": "법령 조회를 사용할 수 없습니다."}), 503
+    look_rule = _CTX.get("rule_info") or look_law
     out = {}
     todo = []
     for nm in names:
@@ -2618,10 +2656,12 @@ def ra_health_laws():
 
         def one(nm):
             try:
-                v = look(nm) or {}
+                is_law = bool(_LAW_NAME_OK.search(nm))
+                v = (look_law if is_law else look_rule)(nm) or {}
                 if v.get("error"):
                     return nm, {"error": str(v["error"])[:120]}
                 return nm, {"ef": v.get("ef", ""), "status": v.get("status", ""), "name": v.get("name", ""),
+                            "kind": "law" if is_law or v.get("kind") == "law" else "admrul",
                             "found": bool(v.get("mst") or v.get("id")) and v.get("rank", 99) <= 1}
             except Exception as e:
                 return nm, {"error": str(e)[:120]}
@@ -3591,6 +3631,138 @@ def ra_advise():
                     "semantic": S["semantic"], "tokens": S["tokens"], "unmatched": S.get("unmatched", []),
                     "gap": S.get("gap", []), "mapped": S.get("mapped", {}),
                     "sources": S["sources"], "laws": S["laws"], **ans})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 내규 자문 참고 — 법제처 법령해석례(정부 부처·민원인 질의에 대한 법제처의 법령 해석)
+# 내규는 상위법·정부 규정을 따라 만든 것이 많아 같은 쟁점의 해석례가 판단에 참고가 된다(내규 자체의 해석은 아니다)
+# ══════════════════════════════════════════════════════════════════════════
+_EXPC_CACHE: dict = {}
+_EXPC_TTL = 6 * 3600
+
+
+def _expc_date(v: str) -> str:
+    d = re.sub(r"\D", "", v or "")[:8]
+    return f"{d[:4]}.{d[4:6]}.{d[6:8]}" if len(d) == 8 else (v or "").strip()
+
+
+def _expc_cut(v: str, n: int) -> str:
+    v = re.sub(r"\s+", " ", (v or "").replace("<br/>", " ")).strip()
+    return v if len(v) <= n else v[:n].rstrip() + "…"
+
+
+def expc_search(q: str, laws: list) -> dict:
+    """질의 → 관련 법령해석례 최대 5건(위 3건은 질의요지·회답 요약 포함).
+    안건명에서 질의 핵심 낱말을 둘씩 묶어(AND) 찾고, 본문 검색(핵심 낱말 + 근거 조문이 인용한 법령명)으로 보탠다.
+    안건명에 핵심 낱말이 둘 이상(핵심 낱말이 하나뿐이면 하나) 나오거나 본문에 모두 나온 것만 남겨 엉뚱한 해석례를 줄인다."""
+    xml = _CTX.get("law_xml")
+    if not xml:
+        return {"items": [], "error": "법제처 조회를 사용할 수 없습니다."}
+    _, _, _, groups = _adv_query(q)
+    core = [g for g in groups if not g["generic"] and len(g["w"]) >= 2][:4]
+    if not core:
+        return {"items": [], "core": []}
+    laws = [re.sub(r"\s+", " ", str(x)).strip() for x in (laws or []) if _LAW_NAME_OK.search(str(x).strip())][:2]
+    ck = (tuple(g["w"] for g in core), tuple(laws))
+    c = _EXPC_CACHE.get(ck)
+    if c and time.time() - c["at"] < _EXPC_TTL:
+        return c["v"]
+    ws = [g["w"] for g in core]
+    queries = [(" ".join(ws[:3] + laws[:1]), "2")]
+    queries += [(f"{a} {b}", "1") for i, a in enumerate(ws[:3]) for b in ws[i + 1:3]] or [(ws[0], "1")]
+    if len(ws) >= 2:
+        queries += [(w, "1") for w in sorted(ws[:3], key=len, reverse=True)[:2]]   # 낱말 하나로만 나온 안건명도 후보로(점수에서 거른다)
+    import concurrent.futures as cf
+    budget = float(os.environ.get("LAW_LOOKUP_BUDGET", "15")) * 0.6
+    t0 = time.time()
+    found, failed = {}, 0
+
+    def search(qs):
+        qq, sec = qs
+        root = xml("lawSearch.do", {"target": "expc", "query": qq, "search": sec, "display": "20"}, timeout=(4, 8))
+        return sec, [el for el in root.iter("expc")]
+    ex = cf.ThreadPoolExecutor(max_workers=4)
+    futs = [ex.submit(search, x) for x in queries]
+    done, pending = cf.wait(futs, timeout=budget)
+    for f in done:
+        try:
+            sec, els = f.result()
+        except Exception:
+            failed += 1
+            continue
+        for el in els:
+            sid = (el.findtext("법령해석례일련번호") or "").strip()
+            title = re.sub(r"\s+", " ", el.findtext("안건명") or "").strip()
+            if not sid.isdigit() or not title:
+                continue
+            x = found.setdefault(sid, {"id": sid, "title": title, "no": (el.findtext("안건번호") or "").strip(),
+                                       "date": _expc_date(el.findtext("회신일자") or ""),
+                                       "org": (el.findtext("질의기관명") or "").strip(),
+                                       "by": (el.findtext("회신기관명") or "").strip(), "body": False})
+            x["body"] = x["body"] or sec == "2"
+    failed += len(pending)
+    tk = lambda t: re.sub(r"\s+", "", t)
+    need = min(2, len(core))
+    cand = []
+    for x in found.values():
+        t = tk(x["title"])
+        # 낱말 자체(또는 동의어)가 있거나, 나눈 조각(육아·휴직)이 모두 있을 때만 — 「계약직원」의 조각 「직원」 하나로 「임직원」에 걸리지 않게
+        match = [g["w"] for g in core if any(tk(a) in t for a in [g["w"]] + list(g.get("syn") or []))
+                 or (len(g["alts"]) > 2 and all(tk(a) in t for a in g["alts"][1:]))]
+        if len(match) < need and not x["body"]:                 # 본문 검색은 핵심 낱말이 모두 나온 해석례만 준다
+            continue
+        x["score"] = len(match) * 2 + any(tk(nm) in t for nm in laws) + x["body"]
+        x["match"] = match
+        cand.append(x)
+    cand.sort(key=lambda x: (-x["score"], -int(re.sub(r"\D", "", x["date"]) or 0), x["id"]))   # 점수 → 최신 회신
+    items, seen_t = [], set()
+    for x in cand:
+        key = re.sub(r"^[^-]{1,40}-\s*", "", x["title"])    # 같은 안건을 여러 기관이 물어 제목만 다른 해석례는 최신 것 하나만
+        if key not in seen_t:
+            seen_t.add(key)
+            items.append(x)
+    items = items[:5]
+
+    def detail(x):
+        root = xml("lawService.do", {"target": "expc", "ID": x["id"]}, timeout=(4, 8))
+        return x, root
+    left = max(1.0, budget - (time.time() - t0))
+    dfuts = [ex.submit(detail, x) for x in items[:3]]
+    ddone, _ = cf.wait(dfuts, timeout=left)
+    for f in ddone:
+        try:
+            x, root = f.result()
+        except Exception:
+            continue
+        x["question"] = _expc_cut(root.findtext(".//질의요지") or "", 300)
+        x["answer"] = _expc_cut(root.findtext(".//회답") or "", 500)
+        x["date"] = _expc_date(root.findtext(".//해석일자") or "") or x["date"]
+    ex.shutdown(wait=False, cancel_futures=True)
+    for x in items:
+        x["url"] = f"https://www.law.go.kr/LSW/expcInfoP.do?expcSeq={x['id']}"
+        x["title"] = re.sub(r"^[^-]{1,40}-\s*", "", x["title"]) or x["title"]
+        x.pop("score", None)
+    v = {"items": items, "core": ws, "laws": laws}
+    if failed and not items:
+        v["error"] = "법제처 응답이 늦거나 실패했습니다. 잠시 뒤 다시 시도하세요."
+    elif not failed:
+        _EXPC_CACHE[ck] = {"at": time.time(), "v": v}
+    return v
+
+
+@bp.route("/api/regagent/expc", methods=["POST"])
+def ra_expc():
+    """내규 자문 참고용 법령해석례. body: {question, laws?:[근거 조문이 인용한 법령명]}"""
+    b = _body()
+    q = str(b.get("question") or "").strip()
+    if len(re.sub(r"\s+", "", q)) < 4 or len(q) > 1000:
+        return jsonify({"success": False, "error": "질의 내용을 확인하세요."}), 400
+    laws = b.get("laws") if isinstance(b.get("laws"), list) else []
+    try:
+        v = expc_search(q, laws)
+    except Exception as e:                                       # 해석례는 참고 자료 — 실패해도 자문 회신은 그대로 쓴다
+        v = {"items": [], "error": f"법령해석례 조회 실패: {str(e)[:80]}"}
+    return jsonify({"success": True, **v})
 
 
 # ══════════════════════════════════════════════════════════════════════════
