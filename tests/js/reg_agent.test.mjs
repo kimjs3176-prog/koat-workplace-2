@@ -491,3 +491,30 @@ test('심의 제출: 절차 미답은 단정하지 않고, 의견 집계·붙임
   assert.ok(c.raSubmitCheck('amend', B).some(x => x.st === 'err' && /반영 여부를 정하지 않은 의견 1건/.test(x.t)));
   assert.equal(c.raLawDate('2027. 1. 1.'), '2027년 1월 1일');
 });
+
+test('AI 산출물 검토: 원문 대비 수정 집계·검토 확인·문서 표기', () => {
+  const c = load();
+  const RA = c.__RA();
+  RA.amend.model = 'gemini:x';
+  RA.amend.changes = [
+    { type: 'modify', no: '5', title: '일비', body: '일비는 3만원으로 한다.', ai: '일비는 3만원으로 한다.', aiTitle: '일비' },
+    { type: 'modify', no: '6', title: '숙박비', body: '숙박비는 실비로 한다.', ai: '숙박비는 7만원으로 한다.', aiTitle: '숙박비' },
+    { type: 'modify', no: '7', title: '식비', body: '식비는 2만원으로 한다.' },          // 사람이 직접 고친 조(AI 원문 없음)
+  ];
+  const pv = c.raAiProv('amend');
+  assert.equal(`${pv.total}/${pv.same}/${pv.edited}`, '2/1/1');
+  assert.match(c.raAiChip(RA.amend.changes[0], 0), /AI 원문 그대로/);
+  assert.match(c.raAiChip(RA.amend.changes[1], 1), /사람이 고침/);
+  assert.equal(c.raAiChip(RA.amend.changes[2], 2), '');
+  assert.match(c.raAiMarkText('amend'), /AI가 쓴 조문 2개 중 1개 담당자 수정.*검토 확인 전/);
+  c.raMeSet('주임 홍길동'); c.raSub_('amend').aiOk = true;
+  assert.match(c.raAiMarkText('amend'), /검토: 주임 홍길동 \(/);
+  RA.amend.aiMark = false;
+  assert.equal(c.raAiMarkBlocks('amend').length, 0);
+  // 제정: 초안 원문과 조별로 견준다
+  RA.enact.draft = { text: '제1조(목적) 가.\n제2조(정의) 나를 고침.', ai: '제1조(목적) 가.\n제2조(정의) 나.', model: 'gemini:x' };
+  const pe = c.raAiProv('enact');
+  assert.equal(`${pe.total}/${pe.same}/${pe.edited}`, '2/1/1');
+  RA.enact.draft = { text: '제1조(목적) 가.', ai: '', template: true };
+  assert.equal(c.raAiProv('enact'), null);                                   // 표준 골격(규칙 기반)은 AI 산출물이 아니다
+});

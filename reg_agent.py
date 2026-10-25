@@ -2491,7 +2491,6 @@ _DUPREG = {"key": None, "v": {}}
 def dup_regs() -> dict:
     """본문이 거의 같은 내규 — 파일명 오타 등으로 같은 내규가 두 번 등록된 경우(“직업창업규칙” ↔ 「직원창업규칙」).
     → {slug: [{"slug","title","revision","ratio"}]}"""
-    import difflib
     regs = all_regs()
     if _DUPREG["key"] == id(regs):
         return _DUPREG["v"]
@@ -3431,9 +3430,9 @@ def _adv_rule_answer(q: str, S: dict) -> dict:
     mains = [x for x in src if x["role"] == "main"][:3]
     ap = [x for x in src if x["role"] == "appx"]
     lst = ", ".join(f"「{x['reg']}」 {art_label(x['no'])}" + (f"({x['title']})" if x["title"] else "") for x in mains)
-    basis = [{"src": x["id"], "point": " / ".join(x["keys"]) or (x["body"][:160] + "…")} for x in mains]
+    basis = [{"src": x["id"], "point": " / ".join(x["keys"]) or (x["body"][:160] + "…"), "verified": True} for x in mains]   # 조문에서 그대로 뽑은 문장
     extra = [x for x in src if x["role"] not in ("main", "appx")]
-    basis += [{"src": x["id"], "point": " / ".join(x["keys"]) or f"{x['appx']} {x['title']}"} for x in ap[:2]]
+    basis += [{"src": x["id"], "point": " / ".join(x["keys"]) or f"{x['appx']} {x['title']}", "verified": True} for x in ap[:2]]
     gap, core = S.get("gap") or [], S.get("core") or []
     weak = bool(miss) or bool(gap) or not any(x["keys"] for x in mains)
     if weak:                                                      # 질의의 핵심 낱말이 어느 조문에도 없으면 단정하지 않는다
@@ -3469,6 +3468,15 @@ def _adv_cites(t: str, ids: set) -> str:
         return "".join(f"[{i}]" for i in out)
     t = _ADV_CITE_GROUP.sub(grp, str(t or ""))
     return re.sub(r"\[\s*([^\]\s]{1,6})\s*\]", lambda m: m.group(0) if re.fullmatch(r"[0-9]+", m.group(1)) and int(m.group(1)) in ids else "", t).strip()
+
+
+def _quote_ok(point: str, body: str) -> bool:
+    """AI가 “원문 그대로” 인용했다는 말이 조문에 실제로 있는지(빈칸·따옴표·문장부호 무시, “…”로 줄인 인용은 조각마다)."""
+    norm = lambda t: re.sub(r"[\s“”‘’\"'「」『』〔〕\[\]().,·ㆍ:;]+", "", t or "")
+    b = norm(body)
+    segs = [norm(x) for x in re.split(r"…|\.\.\.|/", point or "")]
+    segs = [x for x in segs if len(x) >= 4]
+    return bool(segs) and all(x in b for x in segs)
 
 
 def ai_advise(b: dict, S: dict):
@@ -3519,7 +3527,9 @@ def ai_advise(b: dict, S: dict):
             continue                                              # 1.9·true 같은 값은 근거 번호로 보지 않는다
         i = int(v)
         if i in ids and str(x.get("point") or "").strip():
-            basis.append({"src": i, "point": str(x["point"]).strip()[:400]})
+            pt = str(x["point"]).strip()[:400]
+            src_body = next((y["body"] for y in S["sources"] if y["id"] == i), "")
+            basis.append({"src": i, "point": pt, "verified": _quote_ok(pt, src_body)})
     concl = str(d.get("conclusion") or "").strip()
     out = {"conclusion": concl if concl in _ADV_CONCL else "확인 필요", "answer": _adv_cites(d["answer"], ids)[:3000],
            "basis": basis[:8], "conditions": [_adv_cites(x, ids)[:300] for x in _strs(d.get("conditions"))][:6],
@@ -3528,6 +3538,10 @@ def ai_advise(b: dict, S: dict):
            "model": f"{provider}:{mdl}"}
     if not out["answer"]:
         return None, "AI 회신이 비어 관련 조문 안내만 드립니다."
+    bad = sum(1 for x in out["basis"] if not x["verified"])
+    out["cite_check"] = {"n": len(out["basis"]), "ok": len(out["basis"]) - bad}
+    if bad:                                                    # 사람이 대조할 곳을 짚어 준다(화면에 ⚠ 표시)
+        out["caveats"].insert(0, f"AI가 인용한 문장 {bad}건은 근거 조문에서 그대로 찾지 못했습니다(⚠ 표시). 원문과 대조하세요.")
     if gap and out["conclusion"] != "규정 없음":
         out["conclusion"] = "확인 필요"                            # 핵심 낱말을 다룬 조문이 없으면 “가능·불가”로 단정하지 않는다
     if gap and not any(all(w in c for w in gap[:3]) for c in out["caveats"]):
@@ -3562,3 +3576,181 @@ def ra_advise():
                     "semantic": S["semantic"], "tokens": S["tokens"], "unmatched": S.get("unmatched", []),
                     "gap": S.get("gap", []), "mapped": S.get("mapped", {}),
                     "sources": S["sources"], "laws": S["laws"], **ans})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 작업 실적 대장 — 저장한 산출물(회신서·개정안·제출 패키지 …)의 메타데이터만 남긴다(본문·질의·이름은 남기지 않음)
+# 쓰기 가능한 서버(로컬·VM)는 LEDGER_DIR(기본 ledger/)에 월별 JSONL 로 모으고, 읽기 전용 배포는 브라우저 대장만 쓴다
+# ══════════════════════════════════════════════════════════════════════════
+_LEDGER_KINDS = {"advise": "자문 회신", "enact": "제정안 문서", "amend": "개정안 문서", "submit": "심의 제출 패키지",
+                 "bulk": "일괄 정비 문서", "plan": "추진계획표"}
+_LEDGER_LOCK = threading.Lock()
+
+
+def _ledger_dir() -> str:
+    return os.environ.get("LEDGER_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "ledger")
+
+
+def ledger_record(b: dict) -> dict:
+    """화면이 보낸 실적 → 저장할 메타데이터(정해진 칸만, 길이·범위 제한)."""
+    import datetime as _dt
+    kind = str(b.get("kind") or "")
+    if kind not in _LEDGER_KINDS:
+        raise ValueError("알 수 없는 산출물 종류입니다.")
+    n = lambda k: _clamp_int(b.get(k), 0, 9999, 0)
+    rec = {"at": (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=9)).strftime("%Y-%m-%d %H:%M"), "kind": kind,
+           "reg": re.sub(r"\s+", " ", str(b.get("reg") or ""))[:80], "ai": re.sub(r"[^\w:.\-]", "", str(b.get("ai") or ""))[:60],
+           "total": n("total"), "edited": n("edited"), "reviewed": bool(b.get("reviewed")),
+           "cites": n("cites"), "cites_ok": n("cites_ok"), "fmt": "docx" if b.get("fmt") == "docx" else "hwpx"}
+    rec["edited"] = min(rec["edited"], rec["total"])
+    rec["cites_ok"] = min(rec["cites_ok"], rec["cites"])
+    return rec
+
+
+_LEDGER_RATE: dict = {}
+
+
+def _ledger_gh():
+    """내규 등록과 같은 GitHub 설정(GITHUB_TOKEN·GITHUB_REPO)이 있으면 그 모듈을, 없으면 None."""
+    try:
+        import reg_upload
+        return reg_upload if reg_upload._gh_enabled() else None
+    except Exception:
+        return None
+
+
+def _ledger_branch() -> str:
+    return (os.environ.get("LEDGER_BRANCH") or "ledger-data").strip() or "ledger-data"
+
+
+def _ledger_gh_append(gh, rec: dict) -> None:
+    """읽기 전용 배포: 실적을 별도 브랜치(LEDGER_BRANCH, 기본 ledger-data)의 월별 파일에 덧붙여 커밋한다.
+    배포 브랜치가 아니므로 재배포가 일어나지 않는다(vercel.json 에서 이 브랜치 배포를 끈다)."""
+    import base64
+    br, path = _ledger_branch(), f"ledger/{rec['at'][:7]}.jsonl"
+    try:
+        gh._gh("GET", f"/git/ref/heads/{br}")
+    except Exception as e:
+        if getattr(e, "status", None) != 404:
+            raise
+        head = gh._gh("GET", f"/git/ref/heads/{gh.GITHUB_BRANCH}")["object"]["sha"]
+        gh._gh("POST", "/git/refs", json={"ref": f"refs/heads/{br}", "sha": head})
+    for attempt in range(2):                                   # 동시에 저장하면 sha 가 어긋난다 — 한 번 다시 읽어 붙인다
+        old, sha = b"", None
+        try:
+            d = gh._gh("GET", f"/contents/{path}", params={"ref": br})
+            old, sha = base64.b64decode(d.get("content", "") or ""), d.get("sha")
+        except Exception as e:
+            if getattr(e, "status", None) != 404:
+                raise
+        body = {"message": f"실적 대장: {_LEDGER_KINDS[rec['kind']]} {rec['reg']}".strip(), "branch": br,
+                "content": base64.b64encode(old + (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")).decode()}
+        if sha:
+            body["sha"] = sha
+        try:
+            gh._gh("PUT", f"/contents/{path}", json=body)
+            return
+        except Exception as e:
+            if attempt or getattr(e, "status", None) not in (409, 422):
+                raise
+
+
+@bp.route("/api/regagent/ledger", methods=["POST"])
+def ra_ledger_add():
+    try:
+        rec = ledger_record(_body())
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[0].strip()
+    now = time.time()
+    hits = [t for t in _LEDGER_RATE.get(ip, []) if now - t < 3600]
+    if len(hits) >= 60:                                        # 한 사람이 한 시간에 60건 넘게 쌓지 않도록(대장 부풀리기 방지)
+        return jsonify({"success": True, "stored": False, "record": rec, "why": "잠시 뒤 다시 기록합니다."})
+    _LEDGER_RATE[ip] = hits + [now]
+    gh = _ledger_gh()
+    if gh:
+        try:
+            _ledger_gh_append(gh, rec)
+            _LEDGER_SUM["at"] = 0
+            return jsonify({"success": True, "stored": True, "where": "github", "record": rec})
+        except Exception as e:
+            print(f"[ledger] GitHub 기록 실패: {e}")
+            return jsonify({"success": True, "stored": False, "record": rec, "why": "기관 대장에 기록하지 못했습니다."})
+    d = _ledger_dir()
+    try:
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, rec["at"][:7] + ".jsonl")
+        if os.path.exists(path) and os.path.getsize(path) > 5 * 1024 * 1024:
+            return jsonify({"success": True, "stored": False, "record": rec, "why": "이번 달 대장 파일이 가득 찼습니다."})
+        with _LEDGER_LOCK, open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError:                                            # 읽기 전용이고 GitHub 설정도 없으면 화면의 브라우저 대장만 남는다
+        return jsonify({"success": True, "stored": False, "record": rec})
+    _LEDGER_SUM["at"] = 0
+    return jsonify({"success": True, "stored": True, "where": "local", "record": rec})
+
+
+def ledger_summary(recs: list) -> list:
+    """월별 집계: 산출물 수·종류별·AI 활용·검토 확인·AI 조문 수정 비율·인용 원문 일치."""
+    months = {}
+    for r in recs:
+        m = months.setdefault(str(r.get("at", ""))[:7], {"month": str(r.get("at", ""))[:7], "count": 0, "kinds": {}, "ai": 0,
+                                                         "reviewed": 0, "total": 0, "edited": 0, "cites": 0, "cites_ok": 0})
+        m["count"] += 1
+        m["kinds"][r.get("kind", "")] = m["kinds"].get(r.get("kind", ""), 0) + 1
+        m["ai"] += 1 if r.get("ai") else 0
+        m["reviewed"] += 1 if r.get("reviewed") else 0
+        for k in ("total", "edited", "cites", "cites_ok"):
+            m[k] += _clamp_int(r.get(k), 0, 9999, 0)
+    return sorted(months.values(), key=lambda x: x["month"], reverse=True)
+
+
+_LEDGER_SUM: dict = {"at": 0, "v": None}
+
+
+def _ledger_lines() -> tuple:
+    """(대장을 읽을 수 있는지, 기록 목록) — GitHub 브랜치 또는 로컬 폴더, 최근 24개월."""
+    recs = []
+
+    def take(text):
+        for line in (text or "").splitlines():
+            try:
+                recs.append(json.loads(line))
+            except ValueError:
+                continue
+    gh = _ledger_gh()
+    if gh:
+        import base64
+        try:
+            files = gh._gh("GET", "/contents/ledger", params={"ref": _ledger_branch()})
+        except Exception as e:
+            return (getattr(e, "status", None) == 404), []        # 아직 기록이 없으면 빈 대장
+        for f in sorted([x for x in files if isinstance(x, dict) and str(x.get("name", "")).endswith(".jsonl")],
+                        key=lambda x: x["name"])[-24:]:
+            try:
+                d = gh._gh("GET", f"/contents/ledger/{f['name']}", params={"ref": _ledger_branch()})
+                take(base64.b64decode(d.get("content", "") or "").decode("utf-8", "replace"))
+            except Exception:
+                continue
+        return True, recs
+    d = _ledger_dir()
+    try:
+        os.makedirs(d, exist_ok=True)                           # 아직 기록이 없어도 쓸 수 있으면 빈 대장
+        if not os.access(d, os.W_OK):
+            return False, []
+        for fn in sorted(os.listdir(d))[-24:]:
+            if fn.endswith(".jsonl"):
+                with open(os.path.join(d, fn), encoding="utf-8") as f:
+                    take(f.read())
+    except OSError:
+        return False, []
+    return True, recs
+
+
+@bp.route("/api/regagent/ledger", methods=["GET"])
+def ra_ledger_sum():
+    """기관 전체 실적(월별 집계만 — 개별 기록은 내주지 않는다)."""
+    if _LEDGER_SUM["v"] is None or time.time() - _LEDGER_SUM["at"] > 120:
+        ok, recs = _ledger_lines()
+        _LEDGER_SUM.update(at=time.time(), v={"available": ok, "months": ledger_summary(recs) if ok else []})
+    return jsonify({"success": True, "kinds": _LEDGER_KINDS, **_LEDGER_SUM["v"]})

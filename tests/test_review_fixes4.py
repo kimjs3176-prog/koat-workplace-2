@@ -109,3 +109,94 @@ def test_upload_guards_misnamed_duplicate(tmp_path):
     code, data = out["typo"]
     assert code == 409 and data["similar"] == "직원창업규칙"
     assert out["typo_ok"] == 200                             # 새 규정이 맞다고 확인하면 등록
+
+
+# ── AI 산출물의 사람 검토: 인용 검증 · 작업 실적 대장 ─────────────────────────
+def test_quote_ok():
+    body = "① 국내여행자의 일비·숙박비 및 식비는 〔별표 2〕, 국외여행자의 경우는 〔별표 4〕에서 정하는 바에 따라 지급한다."
+    assert ra._quote_ok("국내여행자의 일비·숙박비 및 식비는 〔별표 2〕", body)
+    assert ra._quote_ok("국내여행자의 일비 … 정하는 바에 따라 지급한다", body)           # 줄인 인용은 조각마다
+    assert not ra._quote_ok("일비는 3만원으로 한다", body)
+    assert not ra._quote_ok("", body)
+
+
+def test_advise_ai_quotes_marked(client, monkeypatch):
+    monkeypatch.setitem(ra._CTX, "default_model_for", lambda p, k: "m")
+    monkeypatch.setitem(ra._CTX, "ai_generate", lambda *a, **k: (json.dumps({
+        "conclusion": "해당 규정", "answer": "별표 2에 따라 지급합니다 [1].",
+        "basis": [{"src": 1, "point": "국내여행자의 일비·숙박비 및 식비는 〔별표 2〕"}, {"src": 1, "point": "숙박비는 무제한 지급한다"}]}), ""))
+    d = client.post("/api/regagent/advise", json={"question": "국내 출장 숙박비 상한액은?", "slug": "여비규정",
+                                                  "provider": "gemini", "api_key": "k"}).get_json()
+    assert [b["verified"] for b in d["basis"]] == [True, False]
+    assert d["cite_check"] == {"n": 2, "ok": 1} and "그대로 찾지 못했습니다" in d["caveats"][0]
+    d = client.post("/api/regagent/advise", json={"question": "국내 출장 숙박비 상한액은?", "slug": "여비규정"}).get_json()
+    assert all(b["verified"] for b in d["basis"])                     # 규칙 기반 근거는 조문에서 뽑은 문장
+
+
+def test_ledger_record_and_summary(client, tmp_path, monkeypatch):
+    import pytest
+    with pytest.raises(ValueError):
+        ra.ledger_record({"kind": "x"})
+    r = ra.ledger_record({"kind": "amend", "reg": "여비규정", "ai": "gemini:m<script>", "total": 3, "edited": 9, "reviewed": 1,
+                          "body": "본문은 남기지 않는다", "who": "홍길동"})
+    assert r["ai"] == "gemini:mscript" and r["edited"] == 3 and "body" not in r and "who" not in r
+    monkeypatch.setenv("LEDGER_DIR", str(tmp_path))
+    monkeypatch.setattr(ra, "_ledger_gh", lambda: None)
+    ra._LEDGER_RATE.clear()
+    ra._LEDGER_SUM.update(at=0, v=None)
+    for k in ("advise", "amend", "amend"):
+        d = client.post("/api/regagent/ledger", json={"kind": k, "reg": "여비규정", "ai": "gemini:m" if k == "amend" else "",
+                                                      "total": 4, "edited": 1, "reviewed": True, "cites": 2, "cites_ok": 2}).get_json()
+        assert d["stored"] and d["where"] == "local"
+    assert client.post("/api/regagent/ledger", json={"kind": "nope"}).status_code == 400
+    s = client.get("/api/regagent/ledger").get_json()
+    m = s["months"][0]
+    assert s["available"] and m["count"] == 3 and m["kinds"] == {"advise": 1, "amend": 2} and m["ai"] == 2 and m["reviewed"] == 3
+    assert "reg" not in json.dumps(s["months"])                         # 기관 대장은 집계만 내준다
+    client.post("/api/regagent/ledger", json={"kind": "submit", "reg": "여비규정"})
+    assert client.get("/api/regagent/ledger").get_json()["months"][0]["count"] == 4     # 새 기록은 집계 캐시를 비운다
+
+
+def test_ledger_github_branch(client, monkeypatch):
+    import base64
+
+    class E(RuntimeError):
+        def __init__(self, status):
+            super().__init__(str(status))
+            self.status = status
+    files, refs, calls = {}, {"main": "abc"}, []
+
+    def gh(method, path, **kw):
+        calls.append((method, path))
+        if method == "GET" and path.startswith("/git/ref/heads/"):
+            br = path.rsplit("/", 1)[1]
+            if br not in refs:
+                raise E(404)
+            return {"object": {"sha": refs[br]}}
+        if method == "POST" and path == "/git/refs":
+            refs[kw["json"]["ref"].rsplit("/", 1)[1]] = kw["json"]["sha"]
+            return {}
+        if method == "GET" and path == "/contents/ledger":
+            return [{"name": n.rsplit("/", 1)[1]} for n in files]
+        if method == "GET" and path.startswith("/contents/"):
+            p = path[len("/contents/"):]
+            if p not in files:
+                raise E(404)
+            return {"content": base64.b64encode(files[p]).decode(), "sha": "s"}
+        if method == "PUT":
+            assert kw["json"]["branch"] == "ledger-data"
+            files[path[len("/contents/"):]] = base64.b64decode(kw["json"]["content"])
+            return {}
+        raise AssertionError((method, path))
+
+    fake = type("G", (), {"_gh": staticmethod(gh), "GITHUB_BRANCH": "main"})
+    monkeypatch.setattr(ra, "_ledger_gh", lambda: fake)
+    monkeypatch.delenv("LEDGER_BRANCH", raising=False)
+    ra._LEDGER_RATE.clear()
+    for _ in range(2):
+        d = client.post("/api/regagent/ledger", json={"kind": "advise", "reg": "여비규정", "ai": "gemini:m", "reviewed": True}).get_json()
+        assert d["stored"] and d["where"] == "github"
+    assert "ledger-data" in refs and len(list(files.values())[0].decode().splitlines()) == 2   # 배포 브랜치가 아닌 곳에 덧붙인다
+    ra._LEDGER_SUM.update(at=0, v=None)
+    s = client.get("/api/regagent/ledger").get_json()
+    assert s["available"] and s["months"][0]["count"] == 2

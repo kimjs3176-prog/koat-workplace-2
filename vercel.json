@@ -1,5 +1,10 @@
 {
   "version": 2,
+  "git": {
+    "deploymentEnabled": {
+      "ledger-data": false
+    }
+  },
   "builds": [
     {
       "src": "api/index.py",
