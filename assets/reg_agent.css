@@ -900,3 +900,5 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 .ra-aichk{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:flex-end;margin:8px 0}
 .ra-aichk .ra-chk{align-self:center}
 .ra-me{max-width:240px;margin:0}
+.ra-adv-edit{display:grid;gap:8px;margin:8px 0}
+.ra-adv-edit .ra-f{margin:0}

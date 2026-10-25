@@ -129,7 +129,7 @@ def test_advise_ai_quotes_marked(client, monkeypatch):
     d = client.post("/api/regagent/advise", json={"question": "국내 출장 숙박비 상한액은?", "slug": "여비규정",
                                                   "provider": "gemini", "api_key": "k"}).get_json()
     assert [b["verified"] for b in d["basis"]] == [True, False]
-    assert d["cite_check"] == {"n": 2, "ok": 1} and "그대로 찾지 못했습니다" in d["caveats"][0]
+    assert d["cite_check"] == {"n": 2, "ok": 1} and "그대로 확인하지 못했습니다" in d["caveats"][0] and "⚠" not in d["caveats"][0]
     d = client.post("/api/regagent/advise", json={"question": "국내 출장 숙박비 상한액은?", "slug": "여비규정"}).get_json()
     assert all(b["verified"] for b in d["basis"])                     # 규칙 기반 근거는 조문에서 뽑은 문장
 
@@ -205,3 +205,43 @@ def test_ledger_github_branch(client, monkeypatch):
     ra._LEDGER_SUM.update(at=0, v=None)
     s = client.get("/api/regagent/ledger").get_json()
     assert s["available"] and s["months"][0]["count"] == 2
+
+
+
+# ── 검증 에이전트 지적 보완: 인용 대조·AI 결론·실적 대장 재전송 ─────────────────
+def test_quote_ok_rejects_loose_fragments():
+    r = ra.find_reg("", "여비규정")
+    b15 = next(a for a in r["articles"] if a["no"] == "15")["body"]
+    ap = r["appendix"]
+    assert ra._quote_ok("상한액: 서울특별시 100,000…광역시 80,000", ap)
+    assert not ra._quote_ok("상한액: 서울 … 70,000", ap)                 # 짧은 조각은 아무 데서나 맞는다 — 대조 불가
+    assert not ra._quote_ok("국외 … 10분의 3을", b15)
+    assert not ra._quote_ok("지급한다", b15)
+    assert ra._quote_ok("숙박비 상한액의 10분의 3을 … 추가로 지급할 수 있다", b15)
+    far = "국내여행자의 일비·숙박비 및 식비는 … 증거자료를 갖추어 회계"         # 조각 사이가 80자를 넘으면 다른 문맥
+    assert not ra._quote_ok(far, b15)
+
+
+def test_advise_all_quotes_unverified_downgrades(client, monkeypatch):
+    monkeypatch.setitem(ra._CTX, "default_model_for", lambda p, k: "m")
+    monkeypatch.setitem(ra._CTX, "ai_generate", lambda *a, **k: (json.dumps({
+        "conclusion": "가능", "answer": "가능합니다 [1].", "basis": [{"src": 1, "point": "숙박비는 무제한 지급한다"}]}), ""))
+    d = client.post("/api/regagent/advise", json={"question": "국내 출장 숙박비 상한액은?", "slug": "여비규정",
+                                                  "provider": "gemini", "api_key": "k"}).get_json()
+    assert d["cite_check"] == {"n": 1, "ok": 0} and d["conclusion"] == "확인 필요"
+
+
+def test_ledger_retry_and_client_address(client, tmp_path, monkeypatch):
+    monkeypatch.setenv("LEDGER_DIR", str(tmp_path))
+    monkeypatch.setattr(ra, "_ledger_gh", lambda: None)
+    monkeypatch.setattr(ra, "_LEDGER_PER_HOUR", 2)
+    ra._LEDGER_RATE.clear()
+    post = lambda xff: client.post("/api/regagent/ledger", json={"kind": "advise"}, headers={"X-Forwarded-For": xff}).get_json()
+    assert post("1.1.1.1")["stored"] and post("2.2.2.2")["stored"]
+    d = post("3.3.3.3")                                                   # X-Forwarded-For 를 바꿔도 같은 접속으로 센다
+    assert not d["stored"] and d["retry"]                                 # 버리지 않고 화면이 다시 보내게 한다
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=9)
+    old = (now - _dt.timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
+    assert ra.ledger_record({"kind": "advise", "at": old})["at"] == old  # 다시 보낸 기록은 저장한 때로
+    assert ra.ledger_record({"kind": "advise", "at": "2001-01-01 00:00"})["at"] != "2001-01-01 00:00"

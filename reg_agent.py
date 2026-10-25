@@ -3470,19 +3470,25 @@ def _adv_cites(t: str, ids: set) -> str:
     return re.sub(r"\[\s*([^\]\s]{1,6})\s*\]", lambda m: m.group(0) if re.fullmatch(r"[0-9]+", m.group(1)) and int(m.group(1)) in ids else "", t).strip()
 
 
+_QUOTE_MIN, _QUOTE_GAP = 6, 80
+
+
 def _quote_ok(point: str, body: str) -> bool:
-    """AI가 “원문 그대로” 인용했다는 말이 조문에 실제로 있는지(빈칸·따옴표·문장부호 무시, “…”로 줄인 인용은 조각마다)."""
+    """AI가 “원문 그대로” 인용했다는 말이 조문에 실제로 있는지(빈칸·따옴표·문장부호 무시).
+    “…”로 줄인 인용은 조각마다 6자 이상이어야 하고, 원문에 그 차례대로 80자 안쪽 간격으로 나와야 한다.
+    짧은 조각(“국외 … 10분의 3을”)은 아무 곳에서나 맞기 쉬워 대조할 수 없다고 본다(False → 사람이 원문 대조)."""
     norm = lambda t: re.sub(r"[\s“”‘’\"'「」『』〔〕\[\]().,·ㆍ:;]+", "", t or "")
     b = norm(body)
-    segs = [norm(x) for x in re.split(r"…|\.\.\.|/", point or "")]
-    segs = [x for x in segs if len(x) >= 4]
-    pos = 0
-    for x in segs:                                             # 줄인 인용의 조각은 원문에 그 차례대로 나와야 한다
-        k = b.find(x, pos)
-        if k < 0:
+    segs = [x for x in (norm(x) for x in re.split(r"…|\.\.\.|/", point or "")) if x]
+    if not segs or any(len(x) < _QUOTE_MIN for x in segs):
+        return False
+    pos = None
+    for x in segs:
+        k = b.find(x) if pos is None else b.find(x, pos)
+        if k < 0 or (pos is not None and k - pos > _QUOTE_GAP):
             return False
         pos = k + len(x)
-    return bool(segs)
+    return True
 
 
 def ai_advise(b: dict, S: dict):
@@ -3547,7 +3553,9 @@ def ai_advise(b: dict, S: dict):
     bad = sum(1 for x in out["basis"] if not x["verified"])
     out["cite_check"] = {"n": len(out["basis"]), "ok": len(out["basis"]) - bad}
     if bad:                                                    # 사람이 대조할 곳을 짚어 준다(화면에 ⚠ 표시)
-        out["caveats"].insert(0, f"AI가 인용한 문장 {bad}건은 근거 조문에서 그대로 찾지 못했습니다(⚠ 표시). 원문과 대조하세요.")
+        out["caveats"].insert(0, f"AI가 인용한 문장 {bad}건은 근거 조문에서 그대로 확인하지 못했습니다. 해당 조문 원문과 대조하세요.")
+    if bad and bad == len(out["basis"]) and out["conclusion"] in ("가능", "불가", "조건부 가능", "해당 규정"):
+        out["conclusion"] = "확인 필요"                            # 확인된 인용이 하나도 없으면 단정하지 않는다
     if gap and out["conclusion"] != "규정 없음":
         out["conclusion"] = "확인 필요"                            # 핵심 낱말을 다룬 조문이 없으면 “가능·불가”로 단정하지 않는다
     if gap and not any(all(w in c for w in gap[:3]) for c in out["caveats"]):
@@ -3604,7 +3612,17 @@ def ledger_record(b: dict) -> dict:
     if kind not in _LEDGER_KINDS:
         raise ValueError("알 수 없는 산출물 종류입니다.")
     n = lambda k: _clamp_int(b.get(k), 0, 9999, 0)
-    rec = {"at": (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=9)).strftime("%Y-%m-%d %H:%M"), "kind": kind,
+    now = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=9)
+    at = now.strftime("%Y-%m-%d %H:%M")
+    sent = str(b.get("at") or "")                              # 나중에 다시 보낸 기록은 저장한 때(최근 7일 안)로 남긴다
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", sent):
+        try:
+            t = _dt.datetime.strptime(sent, "%Y-%m-%d %H:%M").replace(tzinfo=now.tzinfo)
+            if now - _dt.timedelta(days=7) <= t <= now + _dt.timedelta(hours=1):
+                at = sent
+        except ValueError:
+            pass
+    rec = {"at": at, "kind": kind,
            "reg": re.sub(r"\s+", " ", str(b.get("reg") or ""))[:80], "ai": re.sub(r"[^\w:.\-]", "", str(b.get("ai") or ""))[:60],
            "total": n("total"), "edited": n("edited"), "reviewed": bool(b.get("reviewed")),
            "cites": n("cites"), "cites_ok": n("cites_ok"), "fmt": "docx" if b.get("fmt") == "docx" else "hwpx"}
@@ -3614,6 +3632,7 @@ def ledger_record(b: dict) -> dict:
 
 
 _LEDGER_RATE: dict = {}
+_LEDGER_PER_HOUR = _clamp_int(os.environ.get("LEDGER_PER_HOUR"), 1, 100000, 600)
 
 
 def _ledger_gh():
@@ -3676,11 +3695,13 @@ def ra_ledger_add():
         rec = ledger_record(_body())
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
-    ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[0].strip()
+    # 접속 주소는 요청자가 바꿀 수 없는 remote_addr 로 센다(X-Forwarded-For 는 위조 가능). 기관이 한 주소(NAT)로
+    # 나가도 막히지 않을 만큼 넉넉히 두고, 넘치면 버리지 않고 화면이 나중에 다시 보내게 한다(retry)
+    ip = request.remote_addr or ""
     now = time.time()
     hits = [t for t in _LEDGER_RATE.get(ip, []) if now - t < 3600]
-    if len(hits) >= 60:                                        # 한 사람이 한 시간에 60건 넘게 쌓지 않도록(대장 부풀리기 방지)
-        return jsonify({"success": True, "stored": False, "record": rec, "why": "잠시 뒤 다시 기록합니다."})
+    if len(hits) >= _LEDGER_PER_HOUR:
+        return jsonify({"success": True, "stored": False, "retry": True, "record": rec, "why": "잠시 뒤 다시 기록합니다."})
     _LEDGER_RATE[ip] = hits + [now]
     gh = _ledger_gh()
     if gh:
@@ -3690,7 +3711,7 @@ def ra_ledger_add():
             return jsonify({"success": True, "stored": True, "where": "github", "record": rec})
         except Exception as e:
             print(f"[ledger] GitHub 기록 실패: {e}")
-            return jsonify({"success": True, "stored": False, "record": rec, "why": "기관 대장에 기록하지 못했습니다."})
+            return jsonify({"success": True, "stored": False, "retry": True, "record": rec, "why": "기관 대장에 기록하지 못했습니다."})
     d = _ledger_dir()
     try:
         os.makedirs(d, exist_ok=True)
