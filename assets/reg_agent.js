@@ -111,6 +111,7 @@ function _raLoad(){
   return _raBlank();
 }
 let RA=_raLoad(); RA.agent=Object.assign({req:'',steps:[],plan:null,done:null},RA.agent||{},{running:false}); (RA.agent.steps||[]).forEach(s=>{ if(s.st==='run') s.st='err'; }); RA.health=Object.assign({law:{},f:{q:'',g:''}},RA.health||{}); RA.advise=Object.assign({q:'',scope:'',res:null,hist:[],thread:[]},RA.advise||{}); RA.ledger.srv=null;   // 기관 대장 집계는 열 때마다 새로 받는다
+setTimeout(()=>{ if(raArr((RA.ledger||{}).items).some(x=>x.pending)) raLedgerFlush(); },3000);   // 지난번에 못 보낸 실적
 let _raArtsErr='', _raArts=null, _raCatalog=null, _raSaveT=null, _raBusy={};
 function _raSave(){ clearTimeout(_raSaveT); _raSaveT=setTimeout(()=>{ try{ localStorage.setItem(RA_KEY, raStateJson()); }catch(e){ if(typeof _toast==='function') _toast('작업 내용을 저장하지 못했습니다(브라우저 저장 공간 부족).'); } },300); }
 // 저장본: 일괄 정비 결과가 크면(수백 KB) 빼고 저장한다 — 입력·선택은 남기고, 새로고침 뒤에는 다시 찾게 한다
@@ -1459,10 +1460,11 @@ function raOutNotice(c, staff){
 }
 function raOutReview(c, mode){
   const d=RA[mode].review; if(!d) return null;
-  const items=d.rows.map(r=>({t:`${r.t}(${r.ref}): ${RA_ST[r.status][0]}`, s:[...r.items.map(x=>x.msg), ...(r.ai?[`검토의견: ${r.ai}`]:[])]}));
-  if(d.delegation) items.push({t:'위임 범위·상위법 저촉 검토', s:[d.delegation]});
-  if(d.overall) items.push({t:'종합의견', s:[d.overall]});
-  return {title:`「${c.title}」 ${c.word}(안) 심의 사전검토 의견서`, lead:`검토 기준: 「${raRules()}」 심의사항, 검토일: ${raToday(0)}`, items, tail:'끝.'};
+  const ai=d.model?'(AI) ':'';                               // AI가 쓴 의견은 자동 점검 결과와 구분해 적는다
+  const items=d.rows.map(r=>({t:`${r.t}(${r.ref}): ${RA_ST[r.status][0]}`, s:[...r.items.map(x=>x.msg), ...(r.ai?[`${ai}검토의견: ${r.ai}`]:[])]}));
+  if(d.delegation) items.push({t:`${ai}위임 범위·상위법 저촉 검토`, s:[d.delegation]});
+  if(d.overall) items.push({t:`${ai}종합의견`, s:[d.overall]});
+  return {title:`「${c.title}」 ${c.word}(안) 심의 사전검토 의견서`, lead:`검토 기준: 「${raRules()}」 심의사항, 검토일: ${raToday(0)}`+(d.model?` · (AI) 표시는 AI 검토의견(${d.model})`:''), items, tail:'끝.'};
 }
 function raDocReason(c){ return raOutText(raOutReason(c)); }
 function raDocNotice(c, staff){ return raOutText(raOutNotice(c, staff)); }
@@ -1567,7 +1569,7 @@ function raExport(mode, fmt){
   const picks=raPicks(mode).filter(k=>k!=='review'||RA[mode].review);
   if(!picks.length){ _toast('저장할 문서를 고르세요.'); return; }
   const B=raDocsBuild(mode), names=Object.fromEntries(RA_DOCS[mode]);
-  raSaveFile(fmt, `${B.c.title}_${B.c.word}안`, raDocBlocks(B,picks).concat(raAiMarkBlocks(mode)), picks.map(k=>names[k]).join('·'), raLedgerMeta(mode,mode));
+  raSaveFile(fmt, `${B.c.title}_${B.c.word}안`, raDocBlocks(B,picks).concat(raAiMarkBlocks(mode,picks)), picks.map(k=>names[k]).join('·'), raLedgerMeta(mode,mode,picks));
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1752,9 +1754,9 @@ function raSubmitCheck(mode, B){
   if(mode==='amend'&&!raEffChanges().length) add('err','개정 내용(수정안)이 없습니다.');
   const pv=raAiProv(mode);                                   // AI가 쓴 조문은 사람이 대조·확인한 뒤 낸다
   const aok=raAiOk(mode), stale=sub.aiOk&&!aok;
-  if(pv) add(aok&&raMe()?'ok':'err',aok&&raMe()?`AI 작성 조문 ${pv.total}개 검토 확인 — ${raMe()}(원문 그대로 ${pv.same} · 고침 ${pv.edited})`
-    :stale?`검토 확인 뒤 조문이 바뀌었습니다 — 바뀐 조문을 다시 검토하고 “AI 작성 조문 검토 확인”에 다시 체크하세요.`
-    :`AI가 쓴 조문 ${pv.total}개(원문 그대로 ${pv.same} · 고침 ${pv.edited})를 현행·근거와 대조해 검토한 뒤 “AI 작성 조문 검토 확인”에 체크하세요.`);
+  if(pv) add(aok&&raMe()?'ok':'err',aok&&raMe()?`AI 작성분 검토 확인 — ${raMe()}(${raAiParts(pv)})`
+    :stale?`검토 확인 뒤 조문·이유·사전검토가 바뀌었습니다 — 바뀐 내용을 다시 검토하고 “AI 작성분 검토 확인”에 다시 체크하세요.`
+    :`${raAiParts(pv)}을 현행·근거와 대조해 검토한 뒤 “AI 작성분 검토 확인”에 체크하세요.`);
   if(mode==='amend'){ const sc=raAmendScale(); if(sc.full&&!RA.amend.fullRev) add('warn',`조문의 ${Math.round(sc.ratio*100)}%를 고칩니다 — 3분의 2 이상이면 전부개정 방식입니다(「${raRules()}」 제6조).`); }
   const rel=raRelRegs(mode); if(rel.length&&!/다른\s*\S*\s*개정/.test(B.c.addenda||'')) add('warn',`다른 ${RA_ORG.reg_word} ${rel.length}건이 바뀌는 조문을 인용합니다 — 부칙에 “다른 ${RA_ORG.reg_word}의 개정”을 넣으세요.`);
   add(sub.dept&&sub.proposer?'ok':'warn',sub.dept&&sub.proposer?`제안: ${sub.dept} ${sub.proposer}`:'제안 부서·제안자(직위·성명)를 입력하세요.');
@@ -1794,7 +1796,7 @@ function raSubmitPanel(mode, B){
     `<div class="ra-grid2">${openSel}${S.open==='비공개'?f('openWhy','비공개 사유','예) 「공공기관의 정보공개에 관한 법률」 제9조제1항제○호'):'<div></div>'}</div>`;
   const need=n.answered?`<div class="ra-hint">절차 답변 기준 필요 서식: 심의안건서·${B.c.mode==='enact'?'내규안':'개정문·신구조문대비표'}·이유서·의견수렴 결과${n.regul?'·자체 규제심사서':''}${n.corrupt?'·부패영향평가 기초자료':''} <button class="ra-link" onclick="raSubPickReq('${mode}')">패키지에 필요한 서식만 담기</button></div>`:'';
   const pv=raAiProv(mode);
-  const aiBox=`<div class="ra-aichk">${pv?`<label class="ra-chk"><input type="checkbox" ${raAiOk(mode)?'checked':''} onchange="raAiConfirm('${mode}',this.checked)"> AI 작성 조문 검토 확인 <span class="ra-sub">AI가 쓴 조문 ${pv.total}개 — 원문 그대로 ${pv.same} · 고침 ${pv.edited}</span></label>`:''}`+
+  const aiBox=`<div class="ra-aichk">${pv?`<label class="ra-chk"><input type="checkbox" ${raAiOk(mode)?'checked':''} onchange="raAiConfirm('${mode}',this.checked)"> AI 작성분 검토 확인 <span class="ra-sub">${raAiParts(pv)}</span></label>`:''}`+
     `<label class="ra-f ra-me"><span>검토자(직위·성명)</span><input class="ra-in" value="${_e(raMe())}" placeholder="예) 주임 홍길동" oninput="raMeSet(this.value);raSubRedraw('${mode}')"></label>`+
     `<label class="ra-chk"><input type="checkbox" ${RA[mode].aiMark!==false?'checked':''} onchange="raSet('${mode}.aiMark',this.checked)"> 문서 끝에 작성 지원·검토 표기 ${raTip('저장하는 문서 끝에 “작성 지원: AI 초안 활용(모델), 조문 N개 중 M개 담당자 수정 · 검토: 검토자(날짜)”를 붙입니다. AI를 쓰지 않았으면 규칙 기반 작성 지원으로 적습니다.')}</label></div>`;
   return `<details class="ra-det ra-subp" open><summary><b>${raIc('doc')}심의 제출 준비</b> <span class="ra-sub">「${_e(raRules())}」 [별지 제3호 서식] 심의안건서 기준</span></summary>`+
@@ -1815,36 +1817,62 @@ function raAiChip(c,i){ if(typeof c.ai!=='string') return ''; const same=raAiSam
 function raProvSum(model, items){ const same=items.filter(x=>x.same).length; return {model:model||'AI', total:items.length, same, edited:items.length-same, items}; }
 // AI가 쓴 조문이 지금 얼마나 그대로인지(제정: 초안 원문과 조별로, 개정: 수정안 카드별로)
 function raAiProv(mode){
-  if(mode==='enact'){ const D=RA.enact.draft; if(!D||!D.ai) return null;
-    const cur=Object.fromEntries(raParse(D.text||'').articles.map(a=>[a.no,raNormT(a.title+a.body)]));
-    const items=raParse(D.ai).articles.map(a=>({no:a.no, same:cur[a.no]===raNormT(a.title+a.body)}));
-    return items.length?raProvSum(D.model,items):null; }
-  if(mode!=='amend') return null;
-  const items=raArr(RA.amend.changes).filter(c=>typeof c.ai==='string').map(c=>({no:c.no, same:raAiSame(c)}));
-  return items.length?raProvSum(RA.amend.model,items):null;
+  const rv=RA[mode]&&RA[mode].review, rvAi=rv&&rv.model?rv.model:'';     // AI 사전검토 의견도 사람이 확인할 AI 산출물이다
+  let pv=null;
+  if(mode==='enact'){ const D=RA.enact.draft;
+    if(D&&D.ai){ const cur=Object.fromEntries(raParse(D.text||'').articles.map(a=>[a.no,raNormT(a.title+a.body)]));
+      const items=raParse(D.ai).articles.map(a=>({no:a.no, same:cur[a.no]===raNormT(a.title+a.body)}));
+      if(items.length) pv=raProvSum(D.model,items); } }
+  else if(mode==='amend'){ const items=raArr(RA.amend.changes).filter(c=>typeof c.ai==='string').map(c=>({no:c.no, same:raAiSame(c)}));
+    if(items.length) pv=raProvSum(RA.amend.model,items); }
+  else return null;
+  if(!pv&&!rvAi) return null;
+  return Object.assign(pv||{model:rvAi,total:0,same:0,edited:0,items:[]},{review:rvAi});
 }
+// 확인할 AI 산출물을 한 줄로: “AI가 쓴 조문 2개(원문 그대로 1 · 고침 1)·AI 사전검토 의견”
+function raAiParts(pv){ return [pv.total?`AI가 쓴 조문 ${pv.total}개(원문 그대로 ${pv.same} · 고침 ${pv.edited})`:'',pv.review?'AI 사전검토 의견':''].filter(Boolean).join('·'); }
 // 검토 확인은 확인한 그 조문에만 유효하다 — 확인 뒤 조문(본문·부칙·이유)이 바뀌면 다시 확인해야 한다
-function raAiSig(mode){ const t=mode==='enact'?JSON.stringify([(RA.enact.draft||{}).text,(RA.enact.draft||{}).addenda])
-    :JSON.stringify(raArr(RA.amend.changes).map(c=>[c.type,c.no,c.title,c.body]).concat([RA.amend.addenda]));
+function raAiSig(mode){ const D=RA.enact.draft||{}, A=RA.amend, rv=RA[mode].review||{};
+  const ai=[raArr(rv.rows).map(r=>r.ai||''), rv.delegation||'', rv.overall||''];      // 사전검토를 다시 하면 AI 의견도 다시 확인
+  const t=mode==='enact'?JSON.stringify([D.text,D.addenda,D.purpose,D.main,ai])
+    :JSON.stringify([raArr(A.changes).map(c=>[c.type,c.no,c.title,c.body]),A.addenda,A.purpose,A.main,ai]);
   let h=5381; const x=raNormT(t); for(let i=0;i<x.length;i++) h=((h<<5)+h+x.charCodeAt(i))|0; return (h>>>0).toString(36)+':'+x.length; }
 function raAiOk(mode){ const S=raSub_(mode); return !!(S.aiOk&&S.aiSig===raAiSig(mode)); }
 function raAiConfirm(mode, on){ const S=raSub_(mode); S.aiOk=!!on; S.aiSig=on?raAiSig(mode):''; _raSave(); raSubRedraw(mode); }
 function raAiProvLine(mode){ const pv=raAiProv(mode); return pv?`<span class="ra-sub">AI가 쓴 조문 ${pv.total}개 — 원문 그대로 ${pv.same} · 사람이 고침 ${pv.edited}</span>`:''; }
-function raAiMarkText(mode){
-  const pv=raAiProv(mode), who=raMe(), ok=raAiOk(mode);
-  const head=pv?`※ 작성 지원: 규정 제·개정 에이전트 — AI 초안 활용(${pv.model}), AI가 쓴 조문 ${pv.total}개 중 ${pv.edited}개 담당자 수정`:'※ 작성 지원: 규정 제·개정 에이전트(규칙 기반 점검·문서 작성)';
+// picks: 저장하는 문서 — 사전검토 의견서를 넣을 때만 AI 검토의견을 표기한다
+function raAiUsed(mode, picks){ const pv=raAiProv(mode); if(!pv) return null;
+  const rv=pv.review&&(!picks||picks.includes('review'))?pv.review:'';
+  return pv.total||rv?Object.assign({},pv,{review:rv,model:pv.total?pv.model:rv}):null; }
+function raAiMarkText(mode, picks){
+  const pv=raAiUsed(mode,picks), who=raMe(), ok=raAiOk(mode);
+  const head=pv?`※ 작성 지원: 규정 제·개정 에이전트 — `+[pv.total?`AI 초안 활용(${pv.model}), AI가 쓴 조문 ${pv.total}개 중 ${pv.edited}개 담당자 수정`:'',pv.review?`AI 사전검토 의견 활용(${pv.review})`:''].filter(Boolean).join(', '):'※ 작성 지원: 규정 제·개정 에이전트(규칙 기반 점검·문서 작성)';
   return `${head} · 검토: ${who||'          '}${pv&&!ok?'(검토 확인 전)':''} (${raToday(0)})`;
 }
-function raAiMarkBlocks(mode){ return RA[mode].aiMark===false?[]:[{t:'p',text:''},{t:'p',text:raAiMarkText(mode)}]; }
-function raLedgerMeta(mode, kind){ const pv=raAiProv(mode);
-  return {kind, reg:raDocCtx(mode).title, ai:pv?pv.model:'', total:pv?pv.total:0, edited:pv?pv.edited:0, reviewed:!!(raMe()&&(!pv||raAiOk(mode)))}; }
+function raAiMarkBlocks(mode, picks){ return RA[mode].aiMark===false?[]:[{t:'p',text:''},{t:'p',text:raAiMarkText(mode,picks)}]; }
+function raLedgerMeta(mode, kind, picks){ const pv=raAiUsed(mode,picks);
+  return {kind, reg:raDocCtx(mode).title, ai:pv?pv.model:'', total:pv?pv.total:0, edited:pv?pv.edited:0, reviewed:!!(raMe()&&(!raAiProv(mode)||raAiOk(mode)))}; }
 function raNowStr(){ const d=new Date(), z=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`; }
 // 저장한 산출물 기록: 이 브라우저 대장에 남기고, 기관 대장(서버)에는 메타데이터만 보낸다(본문·질의·이름 제외)
 async function raLedgerAdd(meta){
   const L=RA.ledger=Object.assign({items:[],srv:null},RA.ledger||{});
-  const rec=Object.assign({at:raNowStr(), who:raMe()},meta); L.items=[rec,...raArr(L.items)].slice(0,500); _raSave();
-  try{ const {who,...send}=rec; const r=await fetch('/api/regagent/ledger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(send)});
-    const d=await r.json(); rec.stored=!!(d&&d.stored); L.srv=null; _raSave(); if(RA.tab==='ledger') raRerender('ledger'); }catch(e){}
+  const rec=Object.assign({at:raNowStr(), who:raMe(), pending:true},meta); L.items=[rec,...raArr(L.items)].slice(0,500); _raSave();
+  await raLedgerFlush();
+}
+// 기관 대장에 아직 못 보낸 기록(서버 혼잡·GitHub 오류·네트워크)을 다시 보낸다 — 실적이 조용히 빠지지 않게
+let _raLedgerBusy=false;
+async function raLedgerFlush(){
+  if(_raLedgerBusy) return; _raLedgerBusy=true;
+  try{ const L=RA.ledger||{}; let n=0, sent=0;
+    for(const rec of raArr(L.items).filter(x=>x.pending).reverse()){
+      if(n++>=20) break;
+      try{ const {who,pending,stored,...send}=rec; const r=await fetch('/api/regagent/ledger',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(send)});
+        const d=await r.json(); rec.stored=!!(d&&d.stored); rec.pending=!rec.stored&&!!(d&&d.retry); sent++;   // 기관 대장이 없는 배포(retry 없음)는 다시 보내지 않는다
+        if(rec.pending) break; }
+      catch(e){ break; }                                      // 연결이 안 되면 다음 기회에
+    }
+    if(sent){ L.srv=null; _raSave(); if(RA.tab==='ledger') raRerender('ledger'); }
+  } finally{ _raLedgerBusy=false; }
 }
 const RA_LEDGER_K={advise:'자문 회신',enact:'제정안 문서',amend:'개정안 문서',submit:'심의 제출 패키지',bulk:'일괄 정비 문서',plan:'추진계획표'};
 function raPct(a,b){ return b?Math.round(a/b*100)+'%':'—'; }
@@ -1855,16 +1883,17 @@ function raLedgerView(){
   const kpi=(l,v,s)=>`<div class="ra-kpi"><div class="ra-kpi-l">${l}</div><div class="ra-kpi-v">${v}</div><div class="ra-kpi-s">${s}</div></div>`;
   const tiles=`<div class="ra-kpis">`+kpi('이번 달 산출물',`${cur.length}<small>건</small>`,`누적 ${items.length}건`)+kpi('AI 활용',`${ai.length}<small>건</small>`,`산출물의 ${raPct(ai.length,cur.length)}`)+
     kpi('사람 검토 확인',raPct(cur.filter(x=>x.reviewed).length,cur.length),`${cur.filter(x=>x.reviewed).length}/${cur.length}건`)+
-    kpi('AI 조문 담당자 수정',raPct(ed,tot),`${ed}/${tot}개 조`)+kpi('회신 인용 원문 일치',raPct(cok,cit),`${cok}/${cit}건`)+`</div>`;
+    kpi('AI 작성분 담당자 수정',raPct(ed,tot),`${ed}/${tot}건(조문·회신)`)+kpi('회신 인용 원문 일치',raPct(cok,cit),`${cok}/${cit}건`)+`</div>`;
   const rows=items.slice(0,200).map(x=>`<tr><td>${_e(x.at)}</td><td>${_e(RA_LEDGER_K[x.kind]||x.kind)}</td><td>${_e(x.reg||'')}</td><td>${x.ai?`<span class="ra-chip sem">${_e(x.ai)}</span>`:'규칙 기반'}</td>`+
-    `<td>${x.total?`${x.edited}/${x.total}`:'—'}</td><td>${x.cites?`${x.cites_ok}/${x.cites}`:'—'}</td><td>${x.reviewed?`✔ ${_e(x.who||'')}`:'<span class="ra-chip warn">미확인</span>'}</td><td>${x.stored?'✔':'—'}</td></tr>`).join('');
-  const table=items.length?`<div class="ra-tbl-w"><table class="ra-tbl"><thead><tr><th>일시</th><th>산출물</th><th>대상</th><th>AI</th><th>AI 조문 수정/전체</th><th>인용 원문 일치</th><th>검토</th><th>기관 대장</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    `<td>${x.total?`${x.edited}/${x.total}`:'—'}</td><td>${x.cites?`${x.cites_ok}/${x.cites}`:'—'}</td><td>${x.reviewed?`✔ ${_e(x.who||'')}`:'<span class="ra-chip warn">미확인</span>'}</td><td>${x.stored?'✔':x.pending?'<span class="ra-chip warn" title="기관 대장에 아직 못 보냈습니다. 다음에 자동으로 다시 보냅니다.">대기</span>':'—'}</td></tr>`).join('');
+  const table=items.length?`<div class="ra-tbl-w"><table class="ra-tbl"><thead><tr><th>일시</th><th>산출물</th><th>대상</th><th>AI</th><th>AI 작성분 수정/전체</th><th>인용 원문 일치</th><th>검토</th><th>기관 대장</th></tr></thead><tbody>${rows}</tbody></table></div>`
     :`<div class="ra-empty sm">${raIc('doc')}아직 저장한 산출물이 없습니다. 자문 회신·제정·개정 문서를 한글·Word로 저장하면 여기에 쌓입니다.</div>`;
   const acts=items.length?`<div class="ra-row"><button class="svc-btn" onclick="raLedgerCsv()">${raIc('doc')}CSV로 받기</button><button class="svc-btn ghost" onclick="raLedgerClear()">이 브라우저 대장 비우기</button></div>`:'';
   const S=L.srv;
   if(!S) setTimeout(raLedgerSrv,0);
+  if(items.some(x=>x.pending)) setTimeout(raLedgerFlush,0);
   const srv=!S?raSpin('기관 대장을 불러오는 중...'):!S.available?`<div class="ra-note">${raIc('info')}<span>기관 전체 대장이 설정되지 않았습니다. 서버에 쓰기 권한이 있거나(로컬·VM) 내규 등록 자동 커밋(GITHUB_TOKEN·GITHUB_REPO)이 켜져 있으면 모든 사용자의 실적이 월별로 모입니다. 지금은 이 브라우저 대장만 남습니다.</span></div>`
-    :raArr(S.months).length?`<div class="ra-tbl-w"><table class="ra-tbl"><thead><tr><th>월</th><th>산출물</th><th>종류</th><th>AI 활용</th><th>검토 확인</th><th>AI 조문 수정</th><th>인용 원문 일치</th></tr></thead><tbody>`+
+    :raArr(S.months).length?`<div class="ra-tbl-w"><table class="ra-tbl"><thead><tr><th>월</th><th>산출물</th><th>종류</th><th>AI 활용</th><th>검토 확인</th><th>AI 작성분 수정</th><th>인용 원문 일치</th></tr></thead><tbody>`+
       S.months.map(m=>`<tr><td>${_e(m.month)}</td><td>${m.count}</td><td>${Object.entries(m.kinds||{}).map(([k,n])=>`${_e(RA_LEDGER_K[k]||k)} ${n}`).join(' · ')}</td><td>${m.ai}</td><td>${raPct(m.reviewed,m.count)}</td><td>${raPct(m.edited,m.total)}</td><td>${raPct(m.cites_ok,m.cites)}</td></tr>`).join('')+`</tbody></table></div>`
     :`<div class="ra-empty sm">기관 대장에 아직 기록이 없습니다.</div>`;
   return `<div class="ra-wide">${raSec(1,'내 작업 실적',raTip('AI가 만든 결과(초안·회신·검토의견)를 사람이 확인해 실제 업무 문서로 저장한 기록입니다. 문서를 한글·Word로 저장할 때 자동으로 남습니다.'),
@@ -1874,8 +1903,8 @@ function raLedgerView(){
 async function raLedgerSrv(){ const L=RA.ledger; try{ const d=await raGet('/api/regagent/ledger'); L.srv=d&&d.success?{available:!!d.available,months:raArr(d.months)}:{available:false,months:[]}; }catch(e){ L.srv={available:false,months:[]}; } if(RA.tab==='ledger') raRerender('ledger'); }
 function raLedgerCsv(){
   const q=v=>`"${String(v==null?'':v).replace(/"/g,'""')}"`;
-  const lines=[['일시','산출물','대상','AI','AI 조문 전체','AI 조문 수정','인용','인용 원문 일치','검토 확인','검토자','형식','기관 대장'].map(q).join(',')]
-    .concat(raArr(RA.ledger.items).map(x=>[x.at,RA_LEDGER_K[x.kind]||x.kind,x.reg,x.ai||'규칙 기반',x.total||0,x.edited||0,x.cites||0,x.cites_ok||0,x.reviewed?'예':'아니오',x.who||'',x.fmt||'',x.stored?'예':'아니오'].map(q).join(',')));
+  const lines=[['일시','산출물','대상','AI','AI 작성분 전체','AI 작성분 수정','인용','인용 원문 일치','검토 확인','검토자','형식','기관 대장'].map(q).join(',')]
+    .concat(raArr(RA.ledger.items).map(x=>[x.at,RA_LEDGER_K[x.kind]||x.kind,x.reg,x.ai||'규칙 기반',x.total||0,x.edited||0,x.cites||0,x.cites_ok||0,x.reviewed?'예':'아니오',x.who||'',x.fmt||'',x.stored?'예':x.pending?'대기':'아니오'].map(q).join(',')));
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['﻿'+lines.join('\r\n')],{type:'text/csv'})); a.download=`작업실적_${raNowStr().slice(0,10)}.csv`;
   document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },500);
 }
@@ -1888,7 +1917,7 @@ function raSubmitExport(mode, fmt){
   if(!picks.includes('agenda')) picks.unshift('agenda');
   B.blk.agenda=raAgendaBlocks(B.c,mode,picks);          // 붙임 목록을 실제로 담는 문서에 맞춘다
   const names=Object.fromEntries(RA_DOCS[mode]);
-  raSaveFile(fmt, `${B.c.title}_${B.c.word}안_심의제출`, raDocBlocks(B,picks).concat(raAiMarkBlocks(mode)), `심의 제출 패키지(${picks.map(k=>names[k]).join('·')})`, raLedgerMeta(mode,'submit'));
+  raSaveFile(fmt, `${B.c.title}_${B.c.word}안_심의제출`, raDocBlocks(B,picks).concat(raAiMarkBlocks(mode,picks)), `심의 제출 패키지(${picks.map(k=>names[k]).join('·')})`, raLedgerMeta(mode,'submit',picks));
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -2457,7 +2486,7 @@ function raBulkExport(fmt){
   const D=raBulkDocs(), R=RA.bulk.res; if(!D.regs.length){ _toast('정비할 내규를 체크하세요.'); return; }
   const rows=[[{t:'현 행',hd:1},{t:'개 정 안',hd:1}]]; D.cmp.forEach(r=>rows.push(r.reg?[{t:`「${r.reg}」`,cs:2,hd:1}]:[{t:r[2],r:raHtmlRuns(r[0])},{t:r[3],r:raHtmlRuns(r[1])}]));
   const blocks=[{t:'p',text:D.reason,titleBold:1},{t:'break'},{t:'p',text:D.amend,titleBold:1},{t:'break'},{t:'p',text:D.addenda,titleBold:1},{t:'break'},{t:'p',text:`“${R.old}” → “${R.new}” 일괄 정비 신구조문대비표`,titleBold:1},{t:'table',colWidths:[23814,23814],rows}];
-  raSaveFile(fmt, `일괄정비_${R.old}→${R.new}`.replace(/[\\/:*?"<>|→]/g,'_'), blocks, '일괄 정비 문서', {kind:'bulk', reg:`${R.old} → ${R.new} (${D.regs.length}개 ${RA_ORG.reg_word})`});
+  raSaveFile(fmt, `일괄정비_${R.old}→${R.new}`.replace(/[\\/:*?"<>|→]/g,'_'), blocks, '일괄 정비 문서', {kind:'bulk', reg:`${R.old} → ${R.new} (${D.regs.length}개 ${RA_ORG.reg_word})`, reviewed:!!raMe()});
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -2485,7 +2514,7 @@ function raAdviseView(){
 }
 function raAdvEx(t){ RA.advise.q=t; _raSave(); const el=document.getElementById('raAdvQ'); if(el){ el.value=t; el.focus(); } }
 function raAdvNew(){ Object.assign(RA.advise,{q:'',res:null,thread:[]}); _raSave(); raRerender('advise'); const el=document.getElementById('raAdvQ'); if(el) el.focus(); }
-function raAdvHist(i){ const h=RA.advise.hist[i]; if(!h) return; Object.assign(RA.advise,{q:h.q,scope:h.scope||'',res:h.res,thread:[]}); _raSave(); raRerender('advise'); }
+function raAdvHist(i){ const h=RA.advise.hist[i]; if(!h) return; Object.assign(RA.advise,{q:h.q,scope:h.scope||'',res:h.res,thread:[],edit:false}); _raSave(); raRerender('advise'); }
 function raAdvRun(follow){ return raOnce('advise', ()=>_raAdvRun(follow)); }
 async function _raAdvRun(follow){
   const V=RA.advise; const el=document.getElementById('raAdvQ'); if(el&&typeof follow!=='string') V.q=el.value.trim();
@@ -2497,7 +2526,7 @@ async function _raAdvRun(follow){
   const box=document.getElementById('raAdv'); if(box) box.innerHTML=raSpin('근거 조문을 찾아 회신을 쓰는 중...');
   const d=await raPost('/api/regagent/advise',{question:V.q.trim(), slug, history:V.thread.slice(-3), ...raAi()});
   if(!d.success){ if(box) box.innerHTML=raErr(d.error||'자문 실패'); return; }
-  V.res=d; V.thread.push({q:d.question, a:String(d.answer||'').slice(0,500)}); V.thread=V.thread.slice(-5);
+  V.res=d; V.edit=false; V.thread.push({q:d.question, a:String(d.answer||'').slice(0,500)}); V.thread=V.thread.slice(-5);
   V.hist=[{q:d.question, scope:V.scope, c:d.conclusion, res:d}, ...V.hist.filter(h=>!(h.q===d.question&&(h.scope||'')===(V.scope||'')))].slice(0,6);
   _raSave(); raRerender('advise');
   setTimeout(()=>{ const x=document.getElementById('raAdvSec'); if(x) x.scrollIntoView({behavior:'smooth',block:'start'}); },60);
@@ -2516,9 +2545,14 @@ function raAdvResView(d){
     `<div class="ra-adv-q">${raIc('advise')}${_e(d.question)}</div>`+(d.notice?`<div class="ra-note">${raIc('info')}${_e(d.notice)}</div>`:'')+
     (raArr(d.unmatched).length?`<div class="ra-hint">원문에 그대로 나오지 않는 말: ${d.unmatched.map(w=>`<span class="ra-chip">${_e(w)}</span>`).join('')} — 다른 표현(예: 출장비 → 여비)으로도 물어보세요.</div>`:'')+
     (Object.keys(d.mapped||{}).length?`<div class="ra-hint">${_e(RA_ORG.reg_word)} 용어로도 찾았습니다: ${Object.entries(d.mapped).map(([w,ws])=>`${_e(w)} → ${raArr(ws).map(x=>`<span class="ra-chip">${_e(x)}</span>`).join('')}`).join(' · ')}</div>`:'');
-  const ans=`<p class="ra-adv-a">${raAdvCite(d.answer,src)}</p>`;
-  const li=(t,arr)=>raArr(arr).length?`<div class="ra-adv-l"><b>${t}</b><ul>${arr.map(x=>`<li>${raAdvCite(x,src)}</li>`).join('')}</ul></div>`:'';
-  const basis=raArr(d.basis).length?`<div class="ra-adv-l"><b>근거</b><ul>${d.basis.map(b=>{ const x=src.find(y=>y.id===b.src); return x?`<li><a class="ra-cite" href="#raAdvS-${x.id}" onclick="return raAdvFocus(${x.id})">[${x.id}]</a> ${_e(raAdvLbl(x))}${x.title?`(${_e(x.title)})`:''} — “${_e(b.point)}”${b.verified===false?' <span class="ra-chip warn" title="AI가 인용한 문장을 근거 조문에서 그대로 찾지 못했습니다. 원문과 대조하세요.">⚠ 원문에서 못 찾음</span>':b.verified&&d.ai?' <span class="ra-chip ok" title="근거 조문에 그대로 있는 문장입니다.">✔ 원문 일치</span>':''}</li>`:''; }).join('')}</ul></div>`:'';
+  const ed=!!RA.advise.edit;                                  // 검토자가 회신을 직접 고친다(근거 번호 [n]은 그대로 쓸 수 있음)
+  const ta=(k,v,rows)=>`<textarea class="ra-ta" rows="${rows}" oninput="raAdvSet('${k}',this.value)">${_e(v)}</textarea>`;
+  const ans=ed?`<div class="ra-adv-edit"><label class="ra-f"><span>결론</span><select class="ra-in sm" onchange="raAdvSet('conclusion',this.value)">${RA_ADV_CONCL.map(c=>`<option ${c===d.conclusion?'selected':''}>${c}</option>`).join('')}</select></label>`+
+      `<label class="ra-f"><span>회신</span>${ta('answer',d.answer,5)}</label><label class="ra-f"><span>조건·절차(한 줄에 하나)</span>${ta('conditions',raArr(d.conditions).join('\n'),3)}</label>`+
+      `<label class="ra-f"><span>유의사항(한 줄에 하나)</span>${ta('caveats',raArr(d.caveats).join('\n'),3)}</label></div>`
+    :`<p class="ra-adv-a">${raAdvCite(d.answer,src)}</p>`;
+  const li=(t,arr)=>!ed&&raArr(arr).length?`<div class="ra-adv-l"><b>${t}</b><ul>${arr.map(x=>`<li>${raAdvCite(x,src)}</li>`).join('')}</ul></div>`:'';
+  const basis=raArr(d.basis).length?`<div class="ra-adv-l"><b>근거</b><ul>${d.basis.map((b,bi)=>{ const x=src.find(y=>y.id===b.src); return x?`<li>${ed?`<button class="ra-x" title="이 근거 빼기" onclick="raAdvBasisDel(${bi})">✕</button> `:''}<a class="ra-cite" href="#raAdvS-${x.id}" onclick="return raAdvFocus(${x.id})">[${x.id}]</a> ${_e(raAdvLbl(x))}${x.title?`(${_e(x.title)})`:''} — “${_e(b.point)}”${b.verified===false?' <span class="ra-chip warn" title="AI가 인용한 문장을 근거 조문에서 그대로 확인하지 못했습니다(없거나, 줄인 조각이 짧아 대조할 수 없음). 원문과 대조해 고치거나 빼세요.">⚠ 원문 대조 필요</span>':b.verified&&d.ai?' <span class="ra-chip ok" title="근거 조문에 그대로 있는 문장입니다.">✔ 원문 일치</span>':''}</li>`:''; }).join('')}</ul></div>`:'';
   const fu=raArr(d.followups).length?`<div class="ra-adv-l"><b>이어서 물어보기</b><div class="ra-regs-cats">${d.followups.map(f=>`<button class="ra-chip btn" onclick="raAdvRun('${_a(f)}')">${_e(f)}</button>`).join('')}</div></div>`:'';
   const laws=raArr(d.laws).length?`<div class="ra-adv-l"><b>관련 법령</b><div class="ra-regs-cats">${d.laws.map(l=>raLawLink(l.name,l.art)).join(' ')}</div></div>`:'';
   const cards=src.map(x=>`<details class="ra-det ra-adv-s" id="raAdvS-${x.id}" ${x.role==='main'&&x.id<=3?'open':''}><summary><span class="ra-cite">[${x.id}]</span> <b>${_e(raAdvLbl(x))}</b>${x.title?`(${_e(x.title)})`:''} <span class="ra-chip">${RA_ADV_ROLE[x.role]||x.role}</span>${x.why?` <span class="ra-sub">${_e(x.why)}</span>`:''}${x.rev_date?` <span class="ra-sub">· ${_e(x.rev_date)} 개정</span>`:''}</summary>`+
@@ -2526,9 +2560,9 @@ function raAdvResView(d){
     `<div class="ra-row"><a class="ra-link" href="${raRegUrl(x.slug)}" target="_blank" rel="noopener">원문↗</a>`+
     (x.no?`<button class="ra-link" onclick="raAdvOpenReg('${_a(x.slug)}','${_a(x.reg)}','${_a(x.no)}')">내규 목록에서 보기</button><button class="ra-link" onclick="raRegsAmendArt('${_a(x.slug)}','${_a(x.reg)}','${_a(x.no)}')">${raIc('amend')}이 조문 개정</button>`:'')+`</div></details>`).join('');
   const cc=d.cite_check||null;
-  const chk=`<div class="ra-row ra-aichk"><label class="ra-chk"><input type="checkbox" ${d.reviewed?'checked':''} onchange="raAdvReviewed(this.checked)"> 근거 조문과 대조해 검토했습니다${cc&&cc.n?` <span class="ra-sub">AI 인용 ${cc.n}건 중 ${cc.ok}건 원문 일치</span>`:''}</label>`+
+  const chk=`<div class="ra-row ra-aichk"><label class="ra-chk"><input type="checkbox" id="raAdvRv" ${d.reviewed?'checked':''} onchange="raAdvReviewed(this.checked)"> 근거 조문과 대조해 검토했습니다${cc&&cc.n?` <span class="ra-sub">AI 인용 ${cc.n}건 중 ${cc.ok}건 원문 일치</span>`:''}${d.edited?' <span class="ra-chip ok">담당자 수정</span>':''}</label>`+
     `<label class="ra-f ra-me"><span>검토자(직위·성명)</span><input class="ra-in" value="${_e(raMe())}" placeholder="예) 주임 홍길동" oninput="raMeSet(this.value)"></label></div>`;
-  const acts=chk+`<div class="ra-row"><button class="svc-btn" onclick="raAdvCopy()">회신 복사</button><span class="ra-sep"></span><button class="svc-btn yes" onclick="raAdvExport('hwpx')">한글(.hwpx)로 저장</button><button class="svc-btn" onclick="raAdvExport('docx')">Word(.docx)로 저장</button></div>`;
+  const acts=chk+`<div class="ra-row"><button class="svc-btn${ed?' yes':''}" onclick="raAdvEdit(${!ed})">${raIc('amend')}${ed?'고치기 마침':'회신 고치기'}</button><button class="svc-btn" onclick="raAdvCopy()">회신 복사</button><span class="ra-sep"></span><button class="svc-btn yes" onclick="raAdvExport('hwpx')">한글(.hwpx)로 저장</button><button class="svc-btn" onclick="raAdvExport('docx')">Word(.docx)로 저장</button></div>`;
   return head+ans+li('조건·절차',d.conditions)+li('유의사항',d.caveats)+basis+fu+laws+
     (src.length?raSub(`근거 조문 ${src.length}건`,cards):'')+acts+
     `<div class="ra-hint">이 회신은 등록된 ${_e(RA_ORG.reg_word)} 조문을 바탕으로 한 참고 의견입니다. 구체적 사안은 소관 부서의 확인을 거치세요.</div>`;
@@ -2543,16 +2577,26 @@ function raAdvText(d){
   if(raArr(d.caveats).length) L.push('',`${raArr(d.conditions).length?5:4}. 유의사항`,...d.caveats.map((x,i)=>`  ${RA_GANA(i)}. ${lab(x)}`));
   L.push('',`※ 이 회신은 등록된 ${RA_ORG.reg_word} 조문을 바탕으로 한 참고 의견이며, 구체적 사안은 소관 부서의 확인을 거치시기 바랍니다.`,'',raToday(0));
   const cc=d.cite_check;
-  L.push('',`※ 작성 지원: 규정 제·개정 에이전트 — ${d.ai?`AI 회신(${d.model||'AI'})`:'규칙 기반 안내'}${cc&&cc.n?`, AI 인용 ${cc.n}건 중 ${cc.ok}건 원문 일치`:''} · 검토: ${raMe()||'          '}${d.reviewed?'':'(검토 확인 전)'}`);
+  L.push('',`※ 작성 지원: 규정 제·개정 에이전트 — ${d.ai?`AI 회신(${d.model||'AI'})`:'규칙 기반 안내'}${cc&&cc.n?`, AI 인용 ${cc.n}건 중 ${cc.ok}건 원문 일치`:''}${d.edited?', 담당자 수정':''} · 검토: ${raMe()||'          '}${d.reviewed&&raMe()?'':'(검토 확인 전)'}`);
   return L.join('\n');
 }
 function raAdvCopy(){ const d=RA.advise.res; if(!d) return; _copyText(raAdvText(d), ()=>_toast('회신을 복사했습니다.')); }
 function raAdvReviewed(on){ const d=RA.advise.res; if(!d) return; d.reviewed=!!on; _raSave(); }
+const RA_ADV_CONCL=['가능','불가','조건부 가능','해당 규정','규정 없음','확인 필요'];
+function raAdvEdit(on){ RA.advise.edit=!!on; _raSave(); raRerender('advise'); }
+// 회신을 고치면 “담당자 수정”으로 남기고, 이미 한 검토 확인은 푼다(고친 회신을 다시 확인)
+function raAdvTouched(d){ d.edited=true; if(d.reviewed){ d.reviewed=false; const c=document.getElementById('raAdvRv'); if(c) c.checked=false; } _raSave(); }
+function raAdvSet(k, v){ const d=RA.advise.res; if(!d) return;
+  if(k==='conditions'||k==='caveats') d[k]=String(v).split('\n').map(x=>x.trim()).filter(Boolean); else d[k]=String(v);
+  raAdvTouched(d); }
+function raAdvBasisDel(i){ const d=RA.advise.res; if(!d||!raArr(d.basis)[i]) return; d.basis.splice(i,1);
+  if(d.cite_check){ const ai=d.basis.filter(b=>b.verified!==undefined); d.cite_check={n:ai.length, ok:ai.filter(b=>b.verified).length}; }
+  raAdvTouched(d); raRerender('advise'); }
 function raAdvExport(fmt){ const d=RA.advise.res; if(!d) return;
   if(d.ai&&!(d.reviewed&&raMe())&&!confirm('AI 회신을 근거 조문과 대조해 검토했다는 확인(검토자 포함)이 없습니다. 그대로 저장할까요?')) return;
   const cc=d.cite_check||{};
   raSaveFile(fmt, `${RA_ORG.reg_word}자문회신_${d.question.slice(0,20)}`.replace(/[\\/:*?"<>|\s]+/g,'_'), [{t:'p',text:raAdvText(d),titleBold:1}], '자문 회신',
-    {kind:'advise', reg:((raArr(d.sources)[0])||{}).reg||'', ai:d.ai?(d.model||'AI'):'', cites:cc.n||0, cites_ok:cc.ok||0, reviewed:!!(d.reviewed&&raMe())}); }
+    {kind:'advise', reg:((raArr(d.sources)[0])||{}).reg||'', ai:d.ai?(d.model||'AI'):'', total:d.ai?1:0, edited:d.ai&&d.edited?1:0, cites:cc.n||0, cites_ok:cc.ok||0, reviewed:!!(d.reviewed&&raMe())}); }
 
 function raUpperView(){
   const U=RA.upper;
@@ -2914,7 +2958,7 @@ function raPlanExport(fmt){
   const outs=st.out.length?['해당 없음 단계',...st.out.map(s=>`  - ${s.t} — ${s.why.join(', ')}`)].join('\n'):'';
   const blocks=[{t:'p',text:head,titleBold:1},{t:'table',colWidths:[2800,11000,7600,7600,7400,7228,4000],rows}];
   if(outs) blocks.push({t:'p',text:''},{t:'p',text:outs});
-  raSaveFile(fmt, `${title}_추진계획표`.replace(/[\\/:*?"<>|]/g,'_'), blocks, '추진계획표', {kind:'plan', reg:title});
+  raSaveFile(fmt, `${title}_추진계획표`.replace(/[\\/:*?"<>|]/g,'_'), blocks, '추진계획표', {kind:'plan', reg:title, reviewed:!!raMe()});
 }
 
 // ── 절차 안내 대시보드 ────────────────────────────────────────────────────

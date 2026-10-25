@@ -523,3 +523,30 @@ test('AI 산출물 검토: 원문 대비 수정 집계·검토 확인·문서 �
   RA.enact.draft = { text: '제1조(목적) 가.', ai: '', template: true };
   assert.equal(c.raAiProv('enact'), null);                                   // 표준 골격(규칙 기반)은 AI 산출물이 아니다
 });
+
+test('AI 검토 보완: 사전검토 AI 의견·이유 수정 시 확인 해제·자문 회신 수정', () => {
+  const c = load();
+  const RA = c.__RA();
+  // 조문은 사람이 썼어도 AI 사전검토 의견을 쓰면 확인 대상
+  RA.amend.changes = [{ type: 'modify', no: '5', title: '일비', body: '일비는 3만원으로 한다.' }];
+  RA.amend.review = { model: 'gemini:x', rows: [{ id: 'need', t: '필요성', ref: '제8조', status: 'ok', items: [], ai: '필요성이 인정됨' }], overall: '적합' };
+  const pv = c.raAiProv('amend');
+  assert.equal(`${pv.total}/${pv.review}`, '0/gemini:x');
+  assert.match(c.raAiMarkText('amend', ['law', 'review']), /AI 사전검토 의견 활용\(gemini:x\)/);
+  assert.match(c.raAiMarkText('amend', ['law']), /규칙 기반/);                    // 의견서를 넣지 않으면 AI 표기 없음
+  assert.equal(c.raLedgerMeta('amend', 'amend', ['law', 'review']).ai, 'gemini:x');
+  // 확인 뒤 개정 이유를 고치면 확인이 풀린다
+  c.raMeSet('주임 홍길동'); c.raAiConfirm('amend', true);
+  assert.equal(c.raAiOk('amend'), true);
+  RA.amend.purpose = '이유를 고침';
+  assert.equal(c.raAiOk('amend'), false);
+  // 자문 회신: 고치면 담당자 수정으로 남고 검토 확인이 풀린다
+  RA.advise.res = { question: 'q', conclusion: '가능', answer: 'a [1]', ai: true, model: 'gemini:x', reviewed: true,
+    sources: [{ id: 1, reg: '여비규정', no: '15', title: '여비' }], basis: [{ src: 1, point: 'x', verified: false }, { src: 1, point: 'y', verified: true }], cite_check: { n: 2, ok: 1 } };
+  c.raAdvSet('answer', '고친 회신 [1]');
+  const d = RA.advise.res;
+  assert.equal(`${d.edited}/${d.reviewed}`, 'true/false');
+  c.raAdvBasisDel(0);
+  assert.equal(`${d.cite_check.n}/${d.cite_check.ok}`, '1/1');
+  assert.match(c.raAdvText(d), /담당자 수정 · 검토: 주임 홍길동\(검토 확인 전\)/);
+});
