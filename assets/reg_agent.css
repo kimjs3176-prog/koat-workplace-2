@@ -856,6 +856,11 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 .ra-adv-l{margin:10px 0;font-size:13.5px;line-height:1.75;}
 .ra-adv-l>b{display:block;font-size:12.5px;color:var(--tx2);margin-bottom:2px;}
 .ra-adv-l ul{margin:0;padding-left:18px;}
+.ra-adv-l ul.ra-expc{list-style:none;padding-left:0;}
+.ra-expc>li{padding:7px 0;border-bottom:1px solid var(--bd);}
+.ra-expc>li:last-child{border-bottom:0;}
+.ra-expc .ra-det{margin:4px 0;}
+.ra-expc .ra-chk{font-size:12.5px;}
 .ra-cite{font-size:11.5px;font-weight:800;color:var(--gd);text-decoration:none;vertical-align:1px;}
 .ra-cite:hover,.ra-cite:focus{text-decoration:underline;}
 .ra-adv-s{scroll-margin:80px;transition:box-shadow .3s;}
