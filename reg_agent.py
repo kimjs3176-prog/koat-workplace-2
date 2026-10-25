@@ -3700,7 +3700,7 @@ def ledger_summary(recs: list) -> list:
         m["kinds"][r.get("kind", "")] = m["kinds"].get(r.get("kind", ""), 0) + 1
         m["ai"] += 1 if r.get("ai") else 0
         m["reviewed"] += 1 if r.get("reviewed") else 0
-        for k in ("total", "edited", "cites", "cites_ok"):
+        for k in (("total", "edited") if r.get("ai") else ()) + ("cites", "cites_ok"):   # AI 조문 수는 AI 산출물에서만 센다
             m[k] += _clamp_int(r.get(k), 0, 9999, 0)
     return sorted(months.values(), key=lambda x: x["month"], reverse=True)
 

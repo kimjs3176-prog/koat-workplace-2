@@ -1751,7 +1751,9 @@ function raSubmitCheck(mode, B){
   add(String(B.c.addenda||'').trim()?'ok':'err',String(B.c.addenda||'').trim()?'부칙(시행일) 있음':'부칙(시행일)이 없습니다.');
   if(mode==='amend'&&!raEffChanges().length) add('err','개정 내용(수정안)이 없습니다.');
   const pv=raAiProv(mode);                                   // AI가 쓴 조문은 사람이 대조·확인한 뒤 낸다
-  if(pv) add(sub.aiOk&&raMe()?'ok':'err',sub.aiOk&&raMe()?`AI 작성 조문 ${pv.total}개 검토 확인 — ${raMe()}(원문 그대로 ${pv.same} · 고침 ${pv.edited})`
+  const aok=raAiOk(mode), stale=sub.aiOk&&!aok;
+  if(pv) add(aok&&raMe()?'ok':'err',aok&&raMe()?`AI 작성 조문 ${pv.total}개 검토 확인 — ${raMe()}(원문 그대로 ${pv.same} · 고침 ${pv.edited})`
+    :stale?`검토 확인 뒤 조문이 바뀌었습니다 — 바뀐 조문을 다시 검토하고 “AI 작성 조문 검토 확인”에 다시 체크하세요.`
     :`AI가 쓴 조문 ${pv.total}개(원문 그대로 ${pv.same} · 고침 ${pv.edited})를 현행·근거와 대조해 검토한 뒤 “AI 작성 조문 검토 확인”에 체크하세요.`);
   if(mode==='amend'){ const sc=raAmendScale(); if(sc.full&&!RA.amend.fullRev) add('warn',`조문의 ${Math.round(sc.ratio*100)}%를 고칩니다 — 3분의 2 이상이면 전부개정 방식입니다(「${raRules()}」 제6조).`); }
   const rel=raRelRegs(mode); if(rel.length&&!/다른\s*\S*\s*개정/.test(B.c.addenda||'')) add('warn',`다른 ${RA_ORG.reg_word} ${rel.length}건이 바뀌는 조문을 인용합니다 — 부칙에 “다른 ${RA_ORG.reg_word}의 개정”을 넣으세요.`);
@@ -1792,7 +1794,7 @@ function raSubmitPanel(mode, B){
     `<div class="ra-grid2">${openSel}${S.open==='비공개'?f('openWhy','비공개 사유','예) 「공공기관의 정보공개에 관한 법률」 제9조제1항제○호'):'<div></div>'}</div>`;
   const need=n.answered?`<div class="ra-hint">절차 답변 기준 필요 서식: 심의안건서·${B.c.mode==='enact'?'내규안':'개정문·신구조문대비표'}·이유서·의견수렴 결과${n.regul?'·자체 규제심사서':''}${n.corrupt?'·부패영향평가 기초자료':''} <button class="ra-link" onclick="raSubPickReq('${mode}')">패키지에 필요한 서식만 담기</button></div>`:'';
   const pv=raAiProv(mode);
-  const aiBox=`<div class="ra-aichk">${pv?`<label class="ra-chk"><input type="checkbox" ${S.aiOk?'checked':''} onchange="raSubSet('${mode}','aiOk',this.checked)"> AI 작성 조문 검토 확인 <span class="ra-sub">AI가 쓴 조문 ${pv.total}개 — 원문 그대로 ${pv.same} · 고침 ${pv.edited}</span></label>`:''}`+
+  const aiBox=`<div class="ra-aichk">${pv?`<label class="ra-chk"><input type="checkbox" ${raAiOk(mode)?'checked':''} onchange="raAiConfirm('${mode}',this.checked)"> AI 작성 조문 검토 확인 <span class="ra-sub">AI가 쓴 조문 ${pv.total}개 — 원문 그대로 ${pv.same} · 고침 ${pv.edited}</span></label>`:''}`+
     `<label class="ra-f ra-me"><span>검토자(직위·성명)</span><input class="ra-in" value="${_e(raMe())}" placeholder="예) 주임 홍길동" oninput="raMeSet(this.value);raSubRedraw('${mode}')"></label>`+
     `<label class="ra-chk"><input type="checkbox" ${RA[mode].aiMark!==false?'checked':''} onchange="raSet('${mode}.aiMark',this.checked)"> 문서 끝에 작성 지원·검토 표기 ${raTip('저장하는 문서 끝에 “작성 지원: AI 초안 활용(모델), 조문 N개 중 M개 담당자 수정 · 검토: 검토자(날짜)”를 붙입니다. AI를 쓰지 않았으면 규칙 기반 작성 지원으로 적습니다.')}</label></div>`;
   return `<details class="ra-det ra-subp" open><summary><b>${raIc('doc')}심의 제출 준비</b> <span class="ra-sub">「${_e(raRules())}」 [별지 제3호 서식] 심의안건서 기준</span></summary>`+
@@ -1821,15 +1823,21 @@ function raAiProv(mode){
   const items=raArr(RA.amend.changes).filter(c=>typeof c.ai==='string').map(c=>({no:c.no, same:raAiSame(c)}));
   return items.length?raProvSum(RA.amend.model,items):null;
 }
+// 검토 확인은 확인한 그 조문에만 유효하다 — 확인 뒤 조문(본문·부칙·이유)이 바뀌면 다시 확인해야 한다
+function raAiSig(mode){ const t=mode==='enact'?JSON.stringify([(RA.enact.draft||{}).text,(RA.enact.draft||{}).addenda])
+    :JSON.stringify(raArr(RA.amend.changes).map(c=>[c.type,c.no,c.title,c.body]).concat([RA.amend.addenda]));
+  let h=5381; const x=raNormT(t); for(let i=0;i<x.length;i++) h=((h<<5)+h+x.charCodeAt(i))|0; return (h>>>0).toString(36)+':'+x.length; }
+function raAiOk(mode){ const S=raSub_(mode); return !!(S.aiOk&&S.aiSig===raAiSig(mode)); }
+function raAiConfirm(mode, on){ const S=raSub_(mode); S.aiOk=!!on; S.aiSig=on?raAiSig(mode):''; _raSave(); raSubRedraw(mode); }
 function raAiProvLine(mode){ const pv=raAiProv(mode); return pv?`<span class="ra-sub">AI가 쓴 조문 ${pv.total}개 — 원문 그대로 ${pv.same} · 사람이 고침 ${pv.edited}</span>`:''; }
 function raAiMarkText(mode){
-  const pv=raAiProv(mode), who=raMe(), ok=raSub_(mode).aiOk;
+  const pv=raAiProv(mode), who=raMe(), ok=raAiOk(mode);
   const head=pv?`※ 작성 지원: 규정 제·개정 에이전트 — AI 초안 활용(${pv.model}), AI가 쓴 조문 ${pv.total}개 중 ${pv.edited}개 담당자 수정`:'※ 작성 지원: 규정 제·개정 에이전트(규칙 기반 점검·문서 작성)';
   return `${head} · 검토: ${who||'          '}${pv&&!ok?'(검토 확인 전)':''} (${raToday(0)})`;
 }
 function raAiMarkBlocks(mode){ return RA[mode].aiMark===false?[]:[{t:'p',text:''},{t:'p',text:raAiMarkText(mode)}]; }
 function raLedgerMeta(mode, kind){ const pv=raAiProv(mode);
-  return {kind, reg:raDocCtx(mode).title, ai:pv?pv.model:'', total:pv?pv.total:0, edited:pv?pv.edited:0, reviewed:!!(raMe()&&(!pv||raSub_(mode).aiOk))}; }
+  return {kind, reg:raDocCtx(mode).title, ai:pv?pv.model:'', total:pv?pv.total:0, edited:pv?pv.edited:0, reviewed:!!(raMe()&&(!pv||raAiOk(mode)))}; }
 function raNowStr(){ const d=new Date(), z=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`; }
 // 저장한 산출물 기록: 이 브라우저 대장에 남기고, 기관 대장(서버)에는 메타데이터만 보낸다(본문·질의·이름 제외)
 async function raLedgerAdd(meta){
@@ -2449,7 +2457,7 @@ function raBulkExport(fmt){
   const D=raBulkDocs(), R=RA.bulk.res; if(!D.regs.length){ _toast('정비할 내규를 체크하세요.'); return; }
   const rows=[[{t:'현 행',hd:1},{t:'개 정 안',hd:1}]]; D.cmp.forEach(r=>rows.push(r.reg?[{t:`「${r.reg}」`,cs:2,hd:1}]:[{t:r[2],r:raHtmlRuns(r[0])},{t:r[3],r:raHtmlRuns(r[1])}]));
   const blocks=[{t:'p',text:D.reason,titleBold:1},{t:'break'},{t:'p',text:D.amend,titleBold:1},{t:'break'},{t:'p',text:D.addenda,titleBold:1},{t:'break'},{t:'p',text:`“${R.old}” → “${R.new}” 일괄 정비 신구조문대비표`,titleBold:1},{t:'table',colWidths:[23814,23814],rows}];
-  raSaveFile(fmt, `일괄정비_${R.old}→${R.new}`.replace(/[\\/:*?"<>|→]/g,'_'), blocks, '일괄 정비 문서', {kind:'bulk', reg:`${R.old} → ${R.new}`, total:D.regs.length});
+  raSaveFile(fmt, `일괄정비_${R.old}→${R.new}`.replace(/[\\/:*?"<>|→]/g,'_'), blocks, '일괄 정비 문서', {kind:'bulk', reg:`${R.old} → ${R.new} (${D.regs.length}개 ${RA_ORG.reg_word})`});
 }
 
 // ══════════════════════════════════════════════════════════════════════════

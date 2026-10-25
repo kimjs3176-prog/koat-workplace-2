@@ -507,8 +507,13 @@ test('AI 산출물 검토: 원문 대비 수정 집계·검토 확인·문서 �
   assert.match(c.raAiChip(RA.amend.changes[1], 1), /사람이 고침/);
   assert.equal(c.raAiChip(RA.amend.changes[2], 2), '');
   assert.match(c.raAiMarkText('amend'), /AI가 쓴 조문 2개 중 1개 담당자 수정.*검토 확인 전/);
-  c.raMeSet('주임 홍길동'); c.raSub_('amend').aiOk = true;
+  c.raMeSet('주임 홍길동'); c.raAiConfirm('amend', true);
   assert.match(c.raAiMarkText('amend'), /검토: 주임 홍길동 \(/);
+  RA.amend.changes[0].body = '일비는 4만원으로 한다.';                          // 확인 뒤 조문을 고치면 확인이 풀린다
+  assert.equal(c.raAiOk('amend'), false);
+  assert.match(c.raAiMarkText('amend'), /검토 확인 전/);
+  c.raAiConfirm('amend', true);
+  assert.equal(c.raAiOk('amend'), true);
   RA.amend.aiMark = false;
   assert.equal(c.raAiMarkBlocks('amend').length, 0);
   // 제정: 초안 원문과 조별로 견준다

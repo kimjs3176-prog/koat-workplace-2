@@ -153,8 +153,10 @@ def test_ledger_record_and_summary(client, tmp_path, monkeypatch):
     m = s["months"][0]
     assert s["available"] and m["count"] == 3 and m["kinds"] == {"advise": 1, "amend": 2} and m["ai"] == 2 and m["reviewed"] == 3
     assert "reg" not in json.dumps(s["months"])                         # 기관 대장은 집계만 내준다
-    client.post("/api/regagent/ledger", json={"kind": "submit", "reg": "여비규정"})
-    assert client.get("/api/regagent/ledger").get_json()["months"][0]["count"] == 4     # 새 기록은 집계 캐시를 비운다
+    client.post("/api/regagent/ledger", json={"kind": "bulk", "reg": "여비규정", "total": 50})
+    m = client.get("/api/regagent/ledger").get_json()["months"][0]
+    assert m["count"] == 4                                              # 새 기록은 집계 캐시를 비운다
+    assert m["total"] == 8                                              # AI 조문 수는 AI 산출물(amend 2건 × 4)만
 
 
 def test_ledger_github_branch(client, monkeypatch):
