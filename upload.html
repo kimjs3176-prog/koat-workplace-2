@@ -137,6 +137,9 @@ body.dark .banner.ok{border-color:#065f46;}
 .q-status.uploading{background:var(--gl);color:var(--gd);}
 .q-status.done{background:var(--done-bg);color:var(--done-tx);}
 .q-status.error{background:var(--err-bg);color:var(--err-tx);}
+.q-sim{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+.q-sim-btn{font:inherit;font-size:11px;padding:2px 8px;border:1px solid var(--bd);border-radius:6px;background:var(--sf);color:inherit;cursor:pointer;}
+.q-sim-btn:hover{border-color:var(--gd);}
 .q-remove{border:none;background:none;color:var(--mu);cursor:pointer;font-size:14px;padding:2px 4px;}
 .q-remove:hover{color:#dc2626;}
 .q-check{width:16px;height:16px;cursor:pointer;accent-color:var(--g);}
@@ -742,6 +745,7 @@ function renderQueue(){
       (q.status==='uploading'?'<span class="spin" style="border-color:rgba(0,0,0,.2);border-top-color:var(--gd);width:10px;height:10px;margin-right:3px;"></span>':'')+
       esc(statusLabel)+'</span>'
       +(q.status==='error'&&q.result?'<div style="font-size:10px;color:var(--err-tx);margin-top:2px;">'+esc(q.result)+'</div>':'')
+      +(q.status==='error'&&q.similar?'<div class="q-sim"><button type="button" class="q-sim-btn" onclick="resolveSimilar('+i+',1)">「'+esc(q.similar)+'」 개정판으로</button><button type="button" class="q-sim-btn" onclick="resolveSimilar('+i+',0)">새 규정으로</button></div>':'')
       +(q.status==='done'&&q.result&&q.result.indexOf(' · ')>0?'<div style="font-size:10px;color:var(--mu);margin-top:2px;">'+esc(q.result.split(' · ').slice(1).join(' · '))+'</div>':'')
       +'</td>'
       +'<td data-label=""><button class="q-remove" onclick="removeQueueItem('+i+')" title="제거"'
@@ -756,6 +760,13 @@ function updateQueueField(i,field,val){
     _queue[i].category=guessCatForTitle(val);
     renderQueue();
   }
+}
+/* 이미 등록된 규정과 이름·본문 제목이 겹칠 때: 그 규정의 개정판으로 바꿔 올리거나, 새 규정으로 확인해 올린다 */
+function resolveSimilar(i,asRevision){
+  var q=_queue[i]; if(!q||!q.similar) return;
+  if(asRevision){ q.title=q.similar; q.category=guessCatForTitle(q.title); } else q.newOk=true;
+  q.similar=''; q.status='pending'; q.result=null;
+  renderQueue();
 }
 function toggleQueueItem(i,checked){_queue[i].checked=checked;}
 function toggleQueueAll(checked){
@@ -819,6 +830,7 @@ async function doBatchUpload(){
     fd.append('department',_queue[k].department.trim()||department);
     fd.append('uploader',uploader);
     if(token) fd.append('token',token);
+    if(_queue[k].newOk) fd.append('new_ok','1');
 
     try{
       var res=await fetch('/api/regs/upload',{method:'POST',body:fd});
@@ -841,6 +853,7 @@ async function doBatchUpload(){
         if(!res.ok||data.error){
           _queue[k].status='error';
           _queue[k].result=data.error||('업로드 실패 ('+res.status+')');
+          _queue[k].similar=(res.status===409&&data.similar)?data.similar:'';
           failures++;
         }else{
           _queue[k].status='done';

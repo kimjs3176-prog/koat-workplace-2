@@ -297,7 +297,7 @@ def test_plan_routes_questions_to_advise():
 
 # ── 기능점검: 자문 검색 정밀도·AI 근거 정리·라우팅 ─────────────────────────────
 def test_advise_query_cleanup_and_compounds(client):
-    q, toks, miss = ra._adv_query("연차휴가는 몇 일 받을 수 있나요?")
+    q, toks, miss, _ = ra._adv_query("연차휴가는 몇 일 받을 수 있나요?")
     assert "받을" not in toks and "있나요" not in toks and {"연차", "휴가"} <= set(toks)
     d = client.post("/api/regagent/advise", json={"question": "연차휴가는 몇 일 받을 수 있나요?"}).get_json()
     assert any(s["reg"] == "복무규정" and s["no"] == "27" for s in d["sources"])     # 원문 “연차유급휴가”
