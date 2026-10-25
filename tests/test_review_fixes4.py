@@ -54,7 +54,7 @@ def test_dup_regs_and_health():
     d = ra.dup_regs()
     assert any(o["slug"] == "직업창업규칙" for o in d.get("직원창업규칙", []))
     row = ra.health_row(ra.find_reg("직업창업규칙"), {}, "20261025")
-    assert row["counts"].get("dupreg") == 1 and row["issues"][0]["other"] == "직원창업규칙"
+    assert row["counts"].get("dupreg") == 1 and row["issues"][-1]["other"] == "직원창업규칙"   # 기존 문제 순번(화면 고른 상태)을 밀지 않게 뒤에
 
 
 def test_law_official_and_lint():
@@ -73,6 +73,8 @@ def test_template_enact_clause_sentences():
     bodies = {a["title"]: a["body"] for a in d["articles"]}
     assert bodies["신청"] == "직원은 1주 전까지 신청하여야 한다."
     assert bodies["복무관리"].startswith("근무상황의 기록은")
+    d = ra.template_enact({"title": "재택근무 운영지침", "purpose": "재택근무", "contents": "예외: 직원은 상급자의 승인을 받은 경우"})
+    assert "경우하여야" not in d["articles"][3]["body"]
 
 
 UPLOAD = textwrap.dedent(r'''

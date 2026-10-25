@@ -1137,6 +1137,13 @@ def _del_ref(d: dict) -> str:
     return f"「{d.get('law', '')}」 {art}".strip()
 
 
+# “직원은 1주 전까지 신청”처럼 끝이 이 말(…하다)이면 “…하여야 한다.”로 맺는다. “… 받은 경우”처럼 다른 말로 끝나면 맺지 않는다
+_ACT_NOUNS = {"신청", "승인", "제출", "보고", "기록", "통보", "통지", "결정", "지정", "관리", "운영", "작성", "보관", "심사", "검토",
+              "허가", "지급", "처리", "실시", "시행", "평가", "점검", "확인", "공개", "공고", "협의", "의결", "등록", "신고", "교육",
+              "감독", "조사", "요청", "위촉", "임명", "선정", "수립", "이행", "준수", "유지", "정산", "반납", "납부", "환수", "게시",
+              "설치", "구성", "개최", "소집", "집행", "부담", "지원", "추진", "보완", "제공", "배정", "배치", "회신", "결재"}
+
+
 def template_enact(b: dict) -> dict:
     """AI 없이 쓰는 표준 조문 골격."""
     title = (b.get("title") or "○○ 운영규칙").strip()
@@ -1177,8 +1184,7 @@ def template_enact(b: dict) -> dict:
         desc = (head[1].strip() if len(head) > 1 else line).rstrip(".")
         if re.search(r"(다|한다|된다|있다|없다)$", desc):          # 이미 완결된 문장
             body = desc + "."
-        elif re.match(r"^[가-힣]{2,}(?:은|는|이|가)\s+\S", desc) and re.search(r"\s[가-힣]{2,4}$", desc) \
-                and not re.search(r"(?:은|는|이|가|을|를|의|에|과|와|로|및|등)$", desc):
+        elif re.match(r"^[가-힣]{2,}(?:은|는|이|가)\s+\S", desc) and desc.rsplit(None, 1)[-1] in _ACT_NOUNS:
             body = f"{desc}하여야 한다."                          # “직원은 1주 전까지 신청” → “… 신청하여야 한다.”
         else:                                                 # “출장 신청” 같은 명사구 → 서술어를 갖춘 조문
             desc = re.sub(r"(?<=[가-힣])(?:을|를)\s+([가-힣]{2,6})$", r"의 \1", desc)   # “운영책임자를 지정” → “운영책임자의 지정”
@@ -2512,8 +2518,9 @@ def dup_regs() -> dict:
 def health_row(r: dict, law_info: dict, today: str) -> dict:
     iss = [i for i in lint_articles(r["articles"], r["addenda"], r["appendix"], r["title"], full=False)
            if i["code"] in _H_W]
-    for o in dup_regs().get(r["slug"], []):                  # 화면 목록 앞에 둔다(세부 문제는 30건까지만 보낸다)
-        iss.insert(0, {"level": "warn", "code": "dupreg", "no": "", "term": "", "other": o["slug"],
+    n_lint = len(iss)
+    for o in dup_regs().get(r["slug"], []):                  # 화면 고른 상태가 순번으로 저장되므로 기존 문제 뒤에 붙인다
+        iss.append({"level": "warn", "code": "dupreg", "no": "", "term": "", "other": o["slug"],
                     "msg": f"「{o['title']}」({o['revision'] or '개정 정보 없음'})과 조문 {round(o['ratio'] * 100)}%가 같습니다. "
                            f"파일명 오타 등으로 같은 {ORG['reg_word']}가 두 번 등록됐는지 확인하고, 맞으면 한쪽을 내규 등록 화면에서 정리하세요."})
     cnt = {}
@@ -2553,7 +2560,7 @@ def health_row(r: dict, law_info: dict, today: str) -> dict:
     grade = next(g for g, cut in _H_GRADE if score >= cut)
     by_no = {a["no"]: a for a in r["articles"]}
     detail = []
-    for i in iss[:30]:                    # 화면에서 바로 확인하도록 조 제목과 문제 부분 앞뒤 글을 붙인다
+    for i in iss[:min(n_lint, 30)] + iss[n_lint:]:   # 화면에서 바로 확인하도록 조 제목과 문제 부분 앞뒤 글을 붙인다(중복 등록 안내는 항상 포함)
         a = by_no.get(i["no"]) or {}
         body = a.get("body", "")
         k = body.find(i["term"]) if i.get("term") else -1
