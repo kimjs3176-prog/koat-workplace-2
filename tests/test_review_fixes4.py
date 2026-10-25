@@ -47,7 +47,7 @@ def test_advise_ai_gets_gap_caveat(client, monkeypatch):
     monkeypatch.setitem(ra._CTX, "ai_generate", gen)
     d = client.post("/api/regagent/advise", json={"question": "연차휴가 이월이 가능한가요?", "provider": "gemini", "api_key": "k"}).get_json()
     assert "“이월”을 직접 다룬 조문은 찾지 못했습니다" in seen["user"]
-    assert any("이월" in c for c in d["caveats"])
+    assert any("이월" in c for c in d["caveats"]) and d["conclusion"] == "확인 필요"
 
 
 def test_dup_regs_and_health():

@@ -3528,6 +3528,8 @@ def ai_advise(b: dict, S: dict):
            "model": f"{provider}:{mdl}"}
     if not out["answer"]:
         return None, "AI 회신이 비어 관련 조문 안내만 드립니다."
+    if gap and out["conclusion"] != "규정 없음":
+        out["conclusion"] = "확인 필요"                            # 핵심 낱말을 다룬 조문이 없으면 “가능·불가”로 단정하지 않는다
     if gap and not any(all(w in c for w in gap[:3]) for c in out["caveats"]):
         out["caveats"].append(f"질의의 “{'”, “'.join(gap[:3])}”{_josa(gap[:3][-1], ('을', '를'))} 직접 다룬 조문은 찾지 못했습니다. 소관 부서에 확인하세요.")
     if not out["basis"] and out["conclusion"] not in ("규정 없음", "확인 필요"):
