@@ -142,6 +142,7 @@ def test_ledger_record_and_summary(client, tmp_path, monkeypatch):
                           "body": "본문은 남기지 않는다", "who": "홍길동"})
     assert r["ai"] == "gemini:mscript" and r["edited"] == 3 and "body" not in r and "who" not in r
     monkeypatch.setenv("LEDGER_DIR", str(tmp_path))
+    monkeypatch.setenv("LEDGER_ENABLED", "1")
     monkeypatch.setattr(ra, "_ledger_gh", lambda: None)
     ra._LEDGER_RATE.clear()
     ra._LEDGER_SUM.update(at=0, v=None)
@@ -195,6 +196,7 @@ def test_ledger_github_branch(client, monkeypatch):
         raise AssertionError((method, path))
 
     fake = type("G", (), {"_gh": staticmethod(gh), "GITHUB_BRANCH": "main"})
+    monkeypatch.setenv("LEDGER_ENABLED", "1")
     monkeypatch.setattr(ra, "_ledger_gh", lambda: fake)
     monkeypatch.delenv("LEDGER_BRANCH", raising=False)
     ra._LEDGER_RATE.clear()
@@ -233,6 +235,7 @@ def test_advise_all_quotes_unverified_downgrades(client, monkeypatch):
 
 def test_ledger_retry_and_client_address(client, tmp_path, monkeypatch):
     monkeypatch.setenv("LEDGER_DIR", str(tmp_path))
+    monkeypatch.setenv("LEDGER_ENABLED", "1")
     monkeypatch.setattr(ra, "_ledger_gh", lambda: None)
     monkeypatch.setattr(ra, "_LEDGER_PER_HOUR", 2)
     ra._LEDGER_RATE.clear()
@@ -245,3 +248,18 @@ def test_ledger_retry_and_client_address(client, tmp_path, monkeypatch):
     old = (now - _dt.timedelta(days=2)).strftime("%Y-%m-%d %H:%M")
     assert ra.ledger_record({"kind": "advise", "at": old})["at"] == old  # 다시 보낸 기록은 저장한 때로
     assert ra.ledger_record({"kind": "advise", "at": "2001-01-01 00:00"})["at"] != "2001-01-01 00:00"
+
+
+
+def test_ledger_off_by_default(client, tmp_path, monkeypatch):
+    monkeypatch.delenv("LEDGER_ENABLED", raising=False)
+    monkeypatch.setenv("LEDGER_DIR", str(tmp_path))
+    ra._LEDGER_SUM.update(at=0, v=None)
+    d = client.post("/api/regagent/ledger", json={"kind": "advise", "reg": "여비규정"}).get_json()
+    assert d["disabled"] and not d["stored"] and "retry" not in d       # 기본은 서버에 남기지 않는다
+    assert not any(tmp_path.iterdir())
+    g = client.get("/api/regagent/ledger").get_json()
+    assert g["disabled"] and not g["available"]
+    assert client.get("/api/regagent/config").get_json()["ledger"] is False
+    monkeypatch.setenv("LEDGER_ENABLED", "1")
+    assert client.get("/api/regagent/config").get_json()["ledger"] is True

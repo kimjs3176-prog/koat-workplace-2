@@ -65,7 +65,7 @@ const RA_PAGE={
 // 기관 프로필(org_config.json) — 기관명·기관장·내규관리 규칙·절차·심의기준. 서버 /api/regagent/config
 let RA_ORG=null;
 async function raLoadOrg(){
-  try{ const d=await raGet('/api/regagent/config'); if(d&&d.org){ RA_ORG=d.org; RA_ORG._count=d.reg_count; } }catch(e){}
+  try{ const d=await raGet('/api/regagent/config'); if(d&&d.org){ RA_ORG=d.org; RA_ORG._count=d.reg_count; RA_ORG._ledger=!!d.ledger; } }catch(e){}
   if(!RA_ORG) RA_ORG={org_name:'○○기관',org_short:'기관',head:'기관장',deputy:'부기관장',reg_word:'내규',rules_name:'내규관리규칙',email_domain:'example.or.kr',notice_days:20,staff_days:7,rules_summary:[],review_criteria:[],procedure:{questions:[],steps:[]}};
   const sub=document.getElementById('orgSub'); if(sub){ sub.textContent=RA_ORG.org_name; sub.title=`${RA_ORG.org_name} ${RA_ORG.reg_word} 제정·개정 실무 지원`; }
   document.title=`규정 제·개정 에이전트 · ${RA_ORG.org_short}`;
@@ -1856,13 +1856,13 @@ function raNowStr(){ const d=new Date(), z=n=>String(n).padStart(2,'0'); return 
 // 저장한 산출물 기록: 이 브라우저 대장에 남기고, 기관 대장(서버)에는 메타데이터만 보낸다(본문·질의·이름 제외)
 async function raLedgerAdd(meta){
   const L=RA.ledger=Object.assign({items:[],srv:null},RA.ledger||{});
-  const rec=Object.assign({at:raNowStr(), who:raMe(), pending:true},meta); L.items=[rec,...raArr(L.items)].slice(0,500); _raSave();
+  const rec=Object.assign({at:raNowStr(), who:raMe(), pending:!!(RA_ORG&&RA_ORG._ledger)},meta); L.items=[rec,...raArr(L.items)].slice(0,500); _raSave();   // 기관 대장이 꺼져 있으면 서버로 보내지 않는다
   await raLedgerFlush();
 }
 // 기관 대장에 아직 못 보낸 기록(서버 혼잡·GitHub 오류·네트워크)을 다시 보낸다 — 실적이 조용히 빠지지 않게
 let _raLedgerBusy=false;
 async function raLedgerFlush(){
-  if(_raLedgerBusy) return; _raLedgerBusy=true;
+  if(_raLedgerBusy||!(RA_ORG&&RA_ORG._ledger)) return; _raLedgerBusy=true;
   try{ const L=RA.ledger||{}; let n=0, sent=0;
     for(const rec of raArr(L.items).filter(x=>x.pending).reverse()){
       if(n++>=20) break;
@@ -1892,15 +1892,15 @@ function raLedgerView(){
   const S=L.srv;
   if(!S) setTimeout(raLedgerSrv,0);
   if(items.some(x=>x.pending)) setTimeout(raLedgerFlush,0);
-  const srv=!S?raSpin('기관 대장을 불러오는 중...'):!S.available?`<div class="ra-note">${raIc('info')}<span>기관 전체 대장이 설정되지 않았습니다. 서버에 쓰기 권한이 있거나(로컬·VM) 내규 등록 자동 커밋(GITHUB_TOKEN·GITHUB_REPO)이 켜져 있으면 모든 사용자의 실적이 월별로 모입니다. 지금은 이 브라우저 대장만 남습니다.</span></div>`
+  const srv=!S?raSpin('기관 대장을 불러오는 중...'):S.disabled?`<div class="ra-note">${raIc('info')}<span>기관 전체 실적 대장은 꺼져 있습니다(기본). 이 브라우저 대장만 남고 서버로는 아무것도 보내지 않습니다. 기관 실적을 모으려면 관리자가 서버 환경변수 <code>LEDGER_ENABLED=1</code>을 설정하세요.</span></div>`:!S.available?`<div class="ra-note">${raIc('info')}<span>기관 전체 대장이 설정되지 않았습니다. 서버에 쓰기 권한이 있거나(로컬·VM) 내규 등록 자동 커밋(GITHUB_TOKEN·GITHUB_REPO)이 켜져 있으면 모든 사용자의 실적이 월별로 모입니다. 지금은 이 브라우저 대장만 남습니다.</span></div>`
     :raArr(S.months).length?`<div class="ra-tbl-w"><table class="ra-tbl"><thead><tr><th>월</th><th>산출물</th><th>종류</th><th>AI 활용</th><th>검토 확인</th><th>AI 작성분 수정</th><th>인용 원문 일치</th></tr></thead><tbody>`+
       S.months.map(m=>`<tr><td>${_e(m.month)}</td><td>${m.count}</td><td>${Object.entries(m.kinds||{}).map(([k,n])=>`${_e(RA_LEDGER_K[k]||k)} ${n}`).join(' · ')}</td><td>${m.ai}</td><td>${raPct(m.reviewed,m.count)}</td><td>${raPct(m.edited,m.total)}</td><td>${raPct(m.cites_ok,m.cites)}</td></tr>`).join('')+`</tbody></table></div>`
     :`<div class="ra-empty sm">기관 대장에 아직 기록이 없습니다.</div>`;
   return `<div class="ra-wide">${raSec(1,'내 작업 실적',raTip('AI가 만든 결과(초안·회신·검토의견)를 사람이 확인해 실제 업무 문서로 저장한 기록입니다. 문서를 한글·Word로 저장할 때 자동으로 남습니다.'),
       tiles+`<div class="ra-row"><label class="ra-f ra-me"><span>검토자(직위·성명)</span><input class="ra-in" value="${_e(raMe())}" placeholder="예) 주임 홍길동" oninput="raMeSet(this.value)"></label></div>`+table+acts)}`+
-    `${raSec(2,'기관 전체 실적(월별)',raTip('서버에는 산출물 종류·대상 내규명·AI 사용 여부·수정 조문 수·인용 일치 수·검토 확인 여부만 모입니다. 문서 본문·질의 내용·검토자 이름은 보내지 않습니다.'),srv)}</div>`;
+    `${raSec(2,'기관 전체 실적(월별)',raTip('켜 두면(LEDGER_ENABLED=1) 서버에 저장 시각·산출물 종류·형식·대상 내규명·AI 모델·작성분과 수정 수·인용 일치 수·검토 확인 여부만 모입니다. 문서 본문·질의 내용·검토자 이름은 보내지 않습니다.'),srv)}</div>`;
 }
-async function raLedgerSrv(){ const L=RA.ledger; try{ const d=await raGet('/api/regagent/ledger'); L.srv=d&&d.success?{available:!!d.available,months:raArr(d.months)}:{available:false,months:[]}; }catch(e){ L.srv={available:false,months:[]}; } if(RA.tab==='ledger') raRerender('ledger'); }
+async function raLedgerSrv(){ const L=RA.ledger; try{ const d=await raGet('/api/regagent/ledger'); L.srv=d&&d.success?{available:!!d.available,disabled:!!d.disabled,months:raArr(d.months)}:{available:false,months:[]}; }catch(e){ L.srv={available:false,months:[]}; } if(RA.tab==='ledger') raRerender('ledger'); }
 function raLedgerCsv(){
   const q=v=>`"${String(v==null?'':v).replace(/"/g,'""')}"`;
   const lines=[['일시','산출물','대상','AI','AI 작성분 전체','AI 작성분 수정','인용','인용 원문 일치','검토 확인','검토자','형식','기관 대장'].map(q).join(',')]
