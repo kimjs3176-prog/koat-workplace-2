@@ -618,3 +618,19 @@ test('곧 시행되는 상위법: 확인 전 안내·D-n·인용 내규·오래�
   RA.health.law = { '근로기준법': { ef: '20250101', at: Date.now() - 9 * 864e5 } };
   assert.match(c.raUpcomingView({ upcoming: [], today: '20261027' }, 1), /9일 지났습니다/);
 });
+
+test('유관기관 수치 비교: 개정안에서 항목·단위 추정, 통계·참고 문장', () => {
+  const c = load();
+  const RA = c.__RA();
+  vm.runInContext("_raArts={articles:[{no:'15',title:'일비',body:'① 국내여행자의 일비는 1일 2만원으로 한다.',deleted:false}]}", c);
+  RA.amend.changes = [{ type: 'modify', no: '15', title: '일비', body: '① 국내여행자의 일비는 1일 25,000원으로 한다.' }];
+  const g = c.raValGuess();
+  assert.equal(`${g.item}|${g.unit}|${g.val}|${g.old}`, '일비|원|25000|20000');
+  const st = c.raValStats([20000, 30000, 25000, 25000]);
+  assert.equal(`${st.n}|${st.min}|${st.max}|${st.med}`, '4|20000|30000|25000');
+  assert.equal(c.raValFmt(25000, '원'), '25,000원');
+  const B = { item: '일비', unit: '원', at: '2026. 10. 27.', rows: [
+    { org: '가기관', use: true, matches: [{ first: 20000 }] }, { org: '나기관', use: false, matches: [{ first: 90000 }] },
+    { org: '다기관', use: true, matches: [{ first: 30000 }] }, { org: '라기관', use: true, matches: [] }] };
+  assert.equal(c.raValText(B), '유관 기관 사규(알리오, 2026. 10. 27. 조회)의 일비: 2곳 중앙값 25,000원(20,000원~30,000원). 가기관 20,000원, 다기관 30,000원.');
+});
