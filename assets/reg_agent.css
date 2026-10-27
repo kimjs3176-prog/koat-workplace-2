@@ -301,7 +301,7 @@ b.lv-error{color:var(--bad);} b.lv-warn{color:var(--warn);} b.lv-info{color:var(
 @media (max-width:640px){ .ra-kpis{grid-template-columns:1fr 1fr;} .ra-kpi.hero{grid-column:span 2;} }
 .ra-kpi{background:transparent;border:none;border-left:var(--rule-hair) solid var(--color-rule);padding:var(--space-md) var(--space-lg);box-shadow:none;min-width:0;}
 .ra-kpi-l{font-size:var(--text-sm);font-weight:500;color:var(--color-muted);}
-.ra-kpi-v{font:500 var(--text-figure)/1.1 var(--font-outlier);letter-spacing:-0.03em;color:var(--color-ink);margin-top:var(--space-xs);font-variant-numeric:tabular-nums;}
+.ra-kpi-v{font:600 var(--text-figure)/1.1 var(--font-outlier);letter-spacing:-0.03em;color:var(--color-ink);margin-top:var(--space-xs);font-variant-numeric:tabular-nums;}
 .ra-kpi-v small{font:400 var(--text-sm) var(--font-body);color:var(--color-muted);margin-left:var(--space-2xs);letter-spacing:0;}
 .ra-kpi-s{display:flex;align-items:center;gap:var(--space-2xs);font-size:12px;color:var(--mu);margin-top:var(--space-xs);}
 .ra-kpi.hero .ra-kpi-v{font-size:48px;}
@@ -422,7 +422,7 @@ body.dark .ra-tip:hover::after,body.dark .ra-tip:focus::after{background:var(--c
 .ra-stat{display:flex;flex-direction:column;gap:var(--space-2xs);border:none;border-left:var(--rule-hair) solid var(--color-rule);padding:var(--space-sm) var(--space-md);background:transparent;min-width:0;}
 .ra-stat-ic{display:none;}
 .ra-stat-ic svg.ic{width:18px;height:18px;}
-.ra-stat b{display:block;font:500 22px/1.1 var(--font-outlier);color:var(--color-ink);font-variant-numeric:tabular-nums;letter-spacing:-0.02em;}
+.ra-stat b{display:block;font:600 22px/1.1 var(--font-outlier);color:var(--color-ink);font-variant-numeric:tabular-nums;letter-spacing:-0.02em;}
 .ra-stat div>span{display:block;font-size:var(--text-xs);color:var(--color-muted);line-height:1.35;}
 .ra-stat.t-ok .ra-stat-ic{background:var(--ok-l);color:var(--ok);}
 .ra-stat.t-warn .ra-stat-ic{background:var(--warn-l);color:var(--warn);}
@@ -900,7 +900,7 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 
 /* ══ Almanac 재질 보완 ═══════════════════════════════════════════════════
    지면(시트)은 슬레이트 위에 놓인 인쇄면: 머리에 2px 먹 괘선, 안은 1px 괘선, 그림자·둥근 모서리 없음.
-   숫자는 IBM Plex Mono(표 숫자), 조문·회신·문서는 명조(Noto Serif KR), 화면 글자는 Pretendard. */
+   글꼴은 Pretendard 한 가족(SIL OFL)으로 통일하고, 숫자는 표 숫자(tabular-nums)로 자릿수를 맞춘다. */
 .ra-h2>.ra-sec{margin-bottom:var(--space-lg);}
 .ra-gk.out{background:var(--color-accent);}
 .ra-vr{display:inline-block;width:1px;height:0.85em;background:var(--color-faint);margin:0 var(--space-xs);vertical-align:-0.08em;}

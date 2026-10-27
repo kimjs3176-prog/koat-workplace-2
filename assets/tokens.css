@@ -1,44 +1,44 @@
-/* Hallmark · v2.0.0 · redesign: full · scope: app · shape: app screen · theme: almanac (dealt 1/3, seed public-agency-tool-staff-2d8a·bc8b5609·2026-10-27·r0) · genre: editorial · posture: restrained · faces: Pretendard (UI·heads), Noto Serif KR (regulation text), IBM Plex Mono (figures only) · signature: the regulation printed on a pale sheet over slate, its articles and figures ruled like a reference book · built: the project */
+/* Hallmark · v2.0.0 · redesign: full · scope: app · shape: app screen · theme: almanac (dealt 1/3), recoloured for readability at the owner's request · genre: editorial · posture: restrained · faces: Pretendard only (SIL OFL 1.1, a Gothic face free for commercial use) · signature: the regulation on a white sheet, ruled like a reference book · built: the project */
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V4 · weakest: P, an app screen argues little; leaned on the sheet so every article, table and reply reads as the printed regulation rather than a dashboard card */
-/* Hallmark · kept: KRDS Pretendard as the Korean UI face (the project names it); dropped: the KRDS primary blue as the accent, replaced by the theme's chart magenta */
+/* Hallmark · kept: Pretendard (the project's KRDS face); changed at the owner's request: a bright neutral ground with white sheets and darker ink for readability, a blue accent for the magenta, one Gothic family (no serif or monospace) */
 
 :root{
-  --color-paper:oklch(86% 0.011 245);
-  --color-paper-2:oklch(82.5% 0.012 245);
-  --color-paper-3:oklch(78% 0.012 245);
-  --color-sheet:oklch(95% 0.007 245);
-  --color-sheet-2:oklch(91.5% 0.009 245);
-  --color-ink:oklch(17% 0.02 245);
-  --color-ink-2:oklch(25% 0.018 245);
-  --color-muted:oklch(40% 0.016 245);
-  --color-faint:oklch(55% 0.014 245);
-  --color-rule:oklch(80% 0.012 240);
-  --color-rule-2:oklch(32% 0.018 240);
-  --color-accent:oklch(45% 0.18 350);
-  --color-accent-2:oklch(37% 0.16 350);
-  --color-accent-ink:oklch(97% 0.006 245);
-  --color-accent-wash:oklch(92% 0.03 350);
-  --color-focus:oklch(46% 0.19 350);
-  --color-ok:oklch(41% 0.1 160);
-  --color-ok-wash:oklch(91% 0.035 160);
-  --color-warn:oklch(46% 0.1 70);
-  --color-warn-wash:oklch(92% 0.045 85);
-  --color-bad:oklch(46% 0.16 28);
-  --color-bad-wash:oklch(92% 0.035 28);
-  --color-mark:oklch(90% 0.09 95);
-  --color-scrim:oklch(17% 0.02 245 / 0.45);
-  --color-tooltip:oklch(17% 0.02 245);
-  --color-tooltip-ink:oklch(96% 0.006 245);
-  --tone-good:oklch(50% 0.07 165);
-  --tone-warning:oklch(68% 0.12 80);
-  --tone-serious:oklch(58% 0.13 45);
-  --tone-critical:oklch(46% 0.16 28);
-  --tone-neutral:oklch(72% 0.012 245);
+  --color-paper:oklch(96.6% 0.004 255);
+  --color-paper-2:oklch(98.6% 0.003 255);
+  --color-paper-3:oklch(93.5% 0.006 255);
+  --color-sheet:oklch(99.7% 0.002 255);
+  --color-sheet-2:oklch(97% 0.005 255);
+  --color-ink:oklch(20% 0.02 258);
+  --color-ink-2:oklch(27% 0.018 258);
+  --color-muted:oklch(44% 0.018 258);
+  --color-faint:oklch(57% 0.014 258);
+  --color-rule:oklch(89.5% 0.008 258);
+  --color-rule-2:oklch(36% 0.02 258);
+  --color-accent:oklch(49% 0.19 262);
+  --color-accent-2:oklch(42% 0.18 262);
+  --color-accent-ink:oklch(99% 0.004 262);
+  --color-accent-wash:oklch(95.5% 0.025 262);
+  --color-focus:oklch(55% 0.21 262);
+  --color-ok:oklch(43% 0.11 155);
+  --color-ok-wash:oklch(95.5% 0.03 155);
+  --color-warn:oklch(48% 0.11 65);
+  --color-warn-wash:oklch(96% 0.04 85);
+  --color-bad:oklch(48% 0.17 27);
+  --color-bad-wash:oklch(96% 0.025 27);
+  --color-mark:oklch(93% 0.1 98);
+  --color-scrim:oklch(20% 0.02 258 / 0.45);
+  --color-tooltip:oklch(22% 0.02 258);
+  --color-tooltip-ink:oklch(98% 0.004 258);
+  --tone-good:oklch(55% 0.12 155);
+  --tone-warning:oklch(72% 0.14 78);
+  --tone-serious:oklch(64% 0.15 45);
+  --tone-critical:oklch(52% 0.18 27);
+  --tone-neutral:oklch(84% 0.008 258);
 
-  --font-display:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
-  --font-body:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
-  --font-text:"Noto Serif KR","AppleMyungjo","Batang",ui-serif,serif;
-  --font-outlier:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  --font-display:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",system-ui,sans-serif;
+  --font-body:var(--font-display);
+  --font-text:var(--font-display);
+  --font-outlier:var(--font-display);
 
   --radius-card:0;
   --radius-ctl:2px;
@@ -50,9 +50,9 @@
   --tracking-display:-0.02em;
   --display-weight:600;
 
-  --text-xs:12px;
-  --text-sm:13px;
-  --text-md:14px;
+  --text-xs:12.5px;
+  --text-sm:13.5px;
+  --text-md:15px;
   --text-lg:16px;
   --text-title:18px;
   --text-head:22px;
@@ -93,11 +93,11 @@ body.dark{
   --color-faint:oklch(60% 0.014 245);
   --color-rule:oklch(34% 0.016 245);
   --color-rule-2:oklch(80% 0.012 245);
-  --color-accent:oklch(75% 0.13 350);
-  --color-accent-2:oklch(81% 0.11 350);
+  --color-accent:oklch(74% 0.13 262);
+  --color-accent-2:oklch(80% 0.11 262);
   --color-accent-ink:oklch(18% 0.02 245);
-  --color-accent-wash:oklch(30% 0.05 350);
-  --color-focus:oklch(78% 0.14 350);
+  --color-accent-wash:oklch(30% 0.06 262);
+  --color-focus:oklch(77% 0.14 262);
   --color-ok:oklch(78% 0.1 160);
   --color-ok-wash:oklch(29% 0.04 160);
   --color-warn:oklch(82% 0.11 85);
@@ -132,7 +132,7 @@ body.dark{
 /* 기본 — 바닥 규칙(가로 넘침·초점·움직임 줄이기·브라우저 표면) */
 html,body{overflow-x:clip;}
 html{-webkit-text-size-adjust:100%;scrollbar-color:var(--color-faint) var(--color-paper);}
-body{font-family:var(--font-body);background:var(--color-paper);color:var(--color-ink-2);caret-color:var(--color-accent);-webkit-font-smoothing:antialiased;line-height:1.55;}
+body{font-family:var(--font-body);font-variant-numeric:tabular-nums;background:var(--color-paper);color:var(--color-ink-2);caret-color:var(--color-accent);-webkit-font-smoothing:antialiased;line-height:1.55;}
 ::selection{background:var(--color-accent);color:var(--color-accent-ink);}
 :focus-visible{outline:2px solid var(--color-focus);outline-offset:2px;transition:none;}
 h1,h2,h3,h4{font-family:var(--font-display);font-weight:var(--display-weight);color:var(--color-ink);letter-spacing:var(--tracking-display);overflow-wrap:break-word;min-width:0;}
