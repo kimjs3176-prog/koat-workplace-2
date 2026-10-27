@@ -750,7 +750,8 @@ function raAmendView(){
   const nSel=Object.keys(A.sel||{}).length;
   const body=[
     ()=>s1+(_raArts?`<p class="ra-wiz-hint" id="raSelHint">${raSelHint()}</p>`:''),
-    ()=>s2+raStaleNote('amend')+`<div id="raSecChg">${s3}</div>`,
+    ()=>s2+raStaleNote('amend')+`<div id="raSecChg">${s3}</div>`+
+      raSub(`다른 기관은 얼마로 정했나 ${raTip('유관 기관(알리오 공시 사규)에서 같은 항목의 금액·일수 등을 찾아 견줍니다. 기관마다 표기가 달라 잘못 뽑힐 수 있으니 문장을 보고 포함 여부를 고르세요. 표로만 적힌 수치(별표 표)는 찾지 못할 수 있습니다.')}`,`<div id="raValBox">${raValView()}</div>`),
     ()=>raRunBar('amend')+raSub(`신구조문대비표 <span class="ra-leg"><u class="ra-d">삭제</u><u class="ra-i">추가</u></span>`,`<label class="ra-chk"><input type="checkbox" ${A.abbr?'checked':''} onchange="raSet('amend.abbr',this.checked);raRefreshCmp()"> 바뀌지 않은 항·호는 “(현행과 같음)”으로 줄이기</label><div id="raCmp">${raCmpView()}</div>`)+
       raPair(raSub('인용 영향',`<div class="ra-row"><button class="svc-btn" onclick="raImpact()">${raIc('search')}영향 범위 찾기</button>${raTip(`조 번호를 옮기는 경우 이동표(예: 7→8)를 넣으면 고칠 인용 표기를 함께 보여 줍니다.`)}<input id="raMoves" class="ra-in sm" style="max-width:180px" placeholder="이동표 예: 7→8, 9→10" value="${_e(A.moves||'')}" oninput="raSet('amend.moves',this.value)"></div><div id="raImpact">${raImpactView()}</div>`),
         raSub('형식 점검',`<div class="ra-row"><button class="svc-btn" onclick="raLint('amend')">${raIc('check')}점검 실행</button><label class="ra-chk"><input type="checkbox" id="raLintOnly" checked onchange="raLintRedraw()"> 고친 조문 관련만 보기</label></div><div id="raLint">${raLintView(A.lint, raLintOnlySet(), false, A.lintFixed)}</div>`))+
@@ -2070,7 +2071,7 @@ async function raAgAmend(P, step, fin, stop){
   const d=await raGet('/api/regagent/articles?slug='+encodeURIComponent(P.reg.slug));
   if(!d.success) stop(s,d.error||'불러오기 실패');
   _raArts=d;
-  Object.assign(A,{src:'reg',pasted:false,slug:d.slug,title:d.title,sel:{},changes:[],impact:null,lint:null,review:null,purpose:'',main:[],addenda:'',notes:[],intent:P.intent||RA.agent.req,refText:'',model:''});
+  Object.assign(A,{src:'reg',pasted:false,slug:d.slug,title:d.title,sel:{},changes:[],impact:null,lint:null,review:null,valcmp:null,cf:null,purpose:'',main:[],addenda:'',notes:[],intent:P.intent||RA.agent.req,refText:'',model:''});
   const tg=raArr(P.articles).map(a=>raOld(a.no)).filter(Boolean);
   tg.forEach(a=>A.sel[a.no]=true);
   fin(s,`${d.articles.length}개 조 중 ${tg.length?tg.map(a=>`${raLbl(a.no)}(${_e(a.title)})`).join(', '):'대상 조문 없음 — AI가 목차를 보고 고릅니다'}`+(raArr(P.missing).length?`<br>요청한 ${P.missing.map(raLbl).join(', ')}는 이 ${_e(RA_ORG.reg_word)}에 없어 내용이 가까운 조문을 골랐습니다.`:''), raArr(P.missing).length?'warn':'ok');
@@ -3131,6 +3132,89 @@ function raAl(mode){
 function raAlioSet(mode, q, R){
   Object.assign(raAl(mode),{q, res:{q, cat:'', total:R.orgs, searched:R.orgs, hits:R.hits, failed:[], timedOut:[], truncated:[]}, open:Object.fromEntries(R.opened.map(x=>[x.h.orgId+'|'+x.h.idx,{data:x.d}])), busy:false});
 }
+// ── 유관기관 수치 비교: 개정하는 항목의 금액·일수를 다른 기관 사규에서 찾아 분포로 ─────────────
+const RA_VAL_UNITS=['원','일','개월','년','시간','%','회'];
+function raValNum(m){ const n=parseFloat(String(m[1]).replace(/,/g,'')), u=String(m[2]).replace(/\s/g,''); return u==='만원'?n*10000:u==='천원'?n*1000:n; }
+function raValUnit(u){ u=String(u).replace(/\s/g,''); return /원$/.test(u)?'원':u==='퍼센트'?'%':u; }
+// 개정안에서 수치를 바꾼 첫 문장 → 항목 낱말·단위·현행/개정 값(담당자가 고칠 수 있다)
+function raValGuess(){
+  const Q=/(\d[\d,]*(?:\.\d+)?)\s*(만\s*원|천\s*원|원|일|개월|년|시간|퍼센트|%|회)(?![장칙본래격반비부자정괄련요급도의사계])/g;   // 조사는 붙어도 되고(2만원으로) 일비·원장·회의 같은 낱말만 뺀다
+  const stop=/^(다만|경우|이내|이상|이하|범위|매월|매년|지급|해당|각각|최대|최소|1인당|1박당|1일)$/;
+  for(const c of raCfChanges()){
+    const ov=[...String(c.old).matchAll(Q)].map(m=>m[0].replace(/\s/g,''));
+    for(const m of String(c.body).matchAll(Q)){
+      if(ov.includes(m[0].replace(/\s/g,''))) continue;
+      const words=String(c.body).slice(0,m.index).split(/[\s,·「」()]+/).filter(Boolean).reverse()
+        .map(w=>w.replace(/(은|는|이|가|을|를|의|에|으로|로|과|와|도|별)$/,''));
+      const item=words.find(w=>w.length>=2&&/^[가-힣]+$/.test(w)&&!stop.test(w))||'';
+      const old=[...String(c.old).matchAll(Q)].find(o=>raValUnit(o[2])===raValUnit(m[2]));
+      return {item, unit:raValUnit(m[2]), val:raValNum(m), old:old?raValNum(old):null, no:c.no};
+    }
+  }
+  return {item:'', unit:'원', val:null, old:null};
+}
+function raValFmt(v,u){ if(v==null||isNaN(v)) return '—'; return (u==='원'?Math.round(v).toLocaleString('ko-KR'):String(+(+v).toFixed(2)))+u; }
+function raValStats(vals){ const v=vals.filter(x=>typeof x==='number'&&isFinite(x)).sort((a,b)=>a-b); if(!v.length) return null;
+  const mid=v.length%2?v[(v.length-1)/2]:(v[v.length/2-1]+v[v.length/2])/2; return {n:v.length, min:v[0], max:v[v.length-1], med:mid}; }
+function raVal(){ const A=RA.amend; if(!A.valcmp){ const g=raValGuess(); A.valcmp={item:g.item, unit:g.unit, q:raAlioGuess('amend'), rows:null}; } return A.valcmp; }
+function raValSet(k,v){ raVal()[k]=v; _raSave(); }
+function raValRun(){ return raOnce('valcmp', _raBenchRun); }
+async function _raBenchRun(){
+  const B=raVal(), box=document.getElementById('raValBox'), A=RA.amend;
+  if(String(B.item).replace(/\s/g,'').length<2){ _toast('비교할 항목(예: 일비, 경조휴가)을 적으세요.'); return; }
+  if(!String(B.q||'').trim()){ _toast('찾을 규정명(예: 여비, 복무)을 적으세요.'); return; }
+  const prog=(t)=>{ if(box) box.innerHTML=raValForm(B)+raSpin(t); };
+  prog('유관 기관 사규를 찾는 중...');
+  let D; try{ D=await raAlioOrgs(); }catch(e){ if(box) box.innerHTML=raValForm(B)+raErr(e.message); return; }
+  const ids=raAlioScopeIds(D,'peer'), names=Object.fromEntries(D.orgs.map(o=>[o.id,o.name]));
+  if(!ids.length){ if(box) box.innerHTML=raValForm(B)+raErr('유관 기관이 설정되어 있지 않습니다(org_config.json alio.peer_depts).'); return; }
+  const hits=[], q=String(B.q).trim(), qk=q.replace(/\s+/g,'');
+  for(let i=0;i<ids.length;i+=D.batch||12){
+    const d=await raPost('/api/regagent/alio/search',{q, orgs:ids.slice(i,i+(D.batch||12))});
+    if(d.success) hits.push(...d.hits.filter(h=>!h.superseded));
+  }
+  const best={};                                             // 기관마다 규정명이 검색어로 시작하는(가장 최근) 하나
+  hits.sort((a,b)=>(alioBase(a.title).replace(/\s+/g,'').startsWith(qk)?0:1)-(alioBase(b.title).replace(/\s+/g,'').startsWith(qk)?0:1)||String(b.enf).localeCompare(String(a.enf)));
+  hits.forEach(h=>{ if(!best[h.orgId]) best[h.orgId]=h; });
+  const pick=Object.values(best).slice(0,15), rows=[];
+  let k=0;
+  const one=async h=>{ const d=await raPost('/api/regagent/bench/rule',{...h, item:B.item, unit:B.unit});
+    rows.push({org:h.org||names[h.orgId]||h.orgId, title:alioBase(h.title), url:d.url||'', matches:d.success?raArr(d.matches):[], error:d.success?'':(d.error||'조회 실패'), use:true});
+    k++; prog(`유관 기관 사규에서 “${B.item}” 수치를 찾는 중 ${k}/${pick.length}`); };
+  for(let i=0;i<pick.length;i+=3) await Promise.all(pick.slice(i,i+3).map(one));
+  if(A!==RA.amend) return;
+  rows.sort((a,b)=>(b.matches.length?1:0)-(a.matches.length?1:0)||a.org.localeCompare(b.org,'ko'));
+  Object.assign(B,{rows, orgs:ids.length, at:raToday(0), key:B.item+'|'+B.unit+'|'+q}); _raSave();
+  if(box) box.innerHTML=raValView();
+}
+function raValForm(B){
+  return `<div class="ra-grid2"><label class="ra-f"><span>항목</span><input class="ra-in" value="${_e(B.item||'')}" placeholder="예) 일비, 경조휴가, 당직비" oninput="raValSet('item',this.value)"></label>`+
+    `<div class="ra-grid2"><label class="ra-f"><span>단위</span><select class="ra-in" onchange="raValSet('unit',this.value)">${RA_VAL_UNITS.map(u=>`<option ${u===B.unit?'selected':''}>${u}</option>`).join('')}</select></label>`+
+    `<label class="ra-f"><span>찾을 규정명</span><input class="ra-in" value="${_e(B.q||'')}" placeholder="예) 여비" oninput="raValSet('q',this.value)"></label></div></div>`+
+    `<div class="ra-row"><button class="svc-btn" onclick="raValRun()">${raIc('search')}유관 기관 수치 비교</button></div>`;
+}
+function raValView(){
+  const B=raVal(), g=raValGuess();
+  let h=raValForm(B);
+  if(!B.rows) return h+`<div class="ra-hint">개정하는 항목을 유관 기관 사규와 견줍니다. 개정 이유서의 “다른 기관 사례” 근거로 쓸 수 있습니다.</div>`;
+  const found=B.rows.filter(r=>r.matches.length), used=found.filter(r=>r.use), st=raValStats(used.map(r=>r.matches[0].first));
+  const mine=g.val!=null&&g.unit===B.unit?`<span class="ra-sub">우리 기관 현행 ${raValFmt(g.old,B.unit)} → 개정안 ${raValFmt(g.val,B.unit)}</span>`:'';
+  h+=raStats([{v:B.rows.length,l:'조회한 기관 규정'},{v:found.length,l:`“${B.item}” 수치를 찾은 곳`,tone:found.length?'acc':'n'},
+    {v:st?raValFmt(st.med,B.unit):'—',l:'중앙값(포함한 곳)'},{v:st?`${raValFmt(st.min,B.unit)}~${raValFmt(st.max,B.unit)}`:'—',l:'범위'}])+(mine?`<div class="ra-row">${mine}</div>`:'');
+  if(found.length) h+=`<div class="ra-tbl-w"><table class="ra-tbl ra-valcmp"><thead><tr><th>포함</th><th>기관</th><th>규정·조문</th><th>수치</th><th>문장</th></tr></thead><tbody>`+
+    B.rows.map((r,i)=>r.matches.length?`<tr><td><input type="checkbox" aria-label="${_e(r.org)} 포함" ${r.use?'checked':''} onchange="raValUse(${i},this.checked)"></td><td>${_e(r.org)}</td>`+
+      `<td>${r.url?`<a class="ra-link" href="${_e(r.url)}" target="_blank" rel="noopener">${_e(r.title)}</a>`:_e(r.title)}<div class="ra-sub">${r.matches[0].no==='별표'?'별표':_e(raLbl(r.matches[0].no||''))}${r.matches[0].title?`(${_e(r.matches[0].title)})`:''}</div></td>`+
+      `<td class="num">${raValFmt(r.matches[0].first,B.unit)}</td><td><div class="ra-cf-t">${_e(r.matches[0].text)}</div></td></tr>`:'').join('')+`</tbody></table></div>`;
+  const miss=B.rows.filter(r=>!r.matches.length);
+  if(miss.length) h+=`<div class="ra-hint">찾지 못한 곳 ${miss.length}곳: ${miss.map(r=>_e(r.org)+(r.error?`(${_e(r.error)})`:'')).join(', ')}. 표로만 적은 수치는 찾지 못할 수 있습니다.</div>`;
+  if(st) h+=`<div class="ra-row"><button class="svc-btn" onclick="raValRef()">${raIc('doc')}참고 자료에 넣기</button><span class="ra-hint">고른 기관 ${st.n}곳의 수치를 개정 이유서 근거로 씁니다.</span></div>`;
+  return h;
+}
+function raValUse(i,on){ const B=raVal(); if(B.rows&&B.rows[i]){ B.rows[i].use=!!on; _raSave(); const box=document.getElementById('raValBox'); if(box) box.innerHTML=raValView(); } }
+function raValText(B){ if(!B||!B.rows) return ''; const used=B.rows.filter(r=>r.use&&r.matches.length), st=raValStats(used.map(r=>r.matches[0].first)); if(!st) return '';
+  return `유관 기관 사규(알리오, ${B.at} 조회)의 ${B.item}: ${st.n}곳 중앙값 ${raValFmt(st.med,B.unit)}(${raValFmt(st.min,B.unit)}~${raValFmt(st.max,B.unit)}). `+
+    used.map(r=>`${r.org} ${raValFmt(r.matches[0].first,B.unit)}`).join(', ')+'.'; }
+function raValRef(){ const t=raValText(raVal()); if(!t) return; const A=RA.amend; A.refText=(A.refText?A.refText.replace(/\s+$/,'')+'\n':'')+t; _raSave(); raRerender('amend'); _toast('참고 자료에 넣었습니다. 이유서에 인용하기 전에 각 기관 원문을 확인하세요.'); }
 async function raAlioOrgs(){
   if(_raAlioOrgs) return _raAlioOrgs;
   const d=await raGet('/api/regagent/alio/orgs'); if(!d.success) throw new Error(d.error||'알리오 기관 목록을 불러오지 못했습니다.');

@@ -3237,6 +3237,71 @@ def _alio_rank(arts: list, q: str, kw: str = "") -> list:
     return out
 
 
+# ── 유관기관 수치 비교 — 다른 기관 사규에서 같은 항목(일비·경조휴가 일수 등)의 수치를 뽑는다 ─────────────
+_BENCH_UNITS = {"원", "일", "개월", "년", "시간", "%", "회", "명", "배", "분"}
+
+
+def bench_extract(text: str, item: str, unit: str, cap: int = 4) -> list:
+    """사규 본문에서 항목 낱말과 그 단위의 수치가 함께 나오는 문장 → [{no, title, text, vals:[수], first}].
+    수치는 항목 낱말 뒤에 처음 나오는 같은 단위 값을 대표값(first)으로 한다(앞에만 있으면 가장 가까운 앞 값)."""
+    key = re.sub(r"\s", "", item or "")
+    if len(key) < 2 or unit not in _BENCH_UNITS:
+        return []
+    p = parse_text(text or "", clean=True)
+    srcs = [(a["no"], a["title"], a["body"]) for a in p["articles"] if not a["deleted"]]
+    if p.get("appendix"):
+        srcs.append(("별표", "", p["appendix"]))
+    if not srcs:
+        srcs = [("", "", text or "")]
+    out = []
+    for no, tt, body in srcs:
+        for cl in re.split(r"(?<=[다\.])\s+|\n|(?=[①-⑳])", body):
+            cl = cl.strip()
+            flat = re.sub(r"\s", "", cl)
+            if len(cl) < 6 or key not in flat or _CF_SKIP.search(cl):
+                continue
+            dates = [m.span() for m in _CF_DATE.finditer(cl)]
+            qs = []
+            for m in _CF_Q.finditer(cl):
+                if any(a <= m.start() < b for a, b in dates):
+                    continue
+                v = _cf_val(m)
+                mu = re.match(r"([\d.]+)(.*)", v)
+                if mu and mu.group(2) == unit:
+                    qs.append((m.start(), float(mu.group(1))))
+            if not qs:
+                continue
+            pos = cl.find(item) if item in cl else -1
+            after = [q for q in qs if q[0] > pos] if pos >= 0 else qs
+            first = (after or sorted(qs, key=lambda q: abs(q[0] - pos)))[0][1]
+            out.append({"no": no, "title": tt, "text": cl[:260], "vals": [q[1] for q in qs][:8], "first": first})
+            if len(out) >= cap:
+                return out
+    return out
+
+
+@bp.route("/api/regagent/bench/rule", methods=["POST"])
+def ra_bench_rule():
+    """유관기관 사규 하나에서 항목 수치 뽑기. body: {orgId, idx, category, table, idxName, mod, item, unit}"""
+    b = _body()
+    rule = {"orgId": str(b.get("orgId") or ""), "idx": str(b.get("idx") or ""), "category": str(b.get("category") or ""),
+            "table": str(b.get("table") or "COMM_RULE"), "idxName": str(b.get("idxName") or "RULE_NO"), "mod": str(b.get("mod") or "")}
+    item = re.sub(r"\s+", " ", str(b.get("item") or "")).strip()[:20]
+    unit = str(b.get("unit") or "")
+    if not re.fullmatch(r"[A-Za-z0-9]{2,12}", rule["orgId"]) or not re.fullmatch(r"\d{1,12}", rule["idx"]) \
+            or not re.fullmatch(r"[A-Z_]{1,30}", rule["table"]) or not re.fullmatch(r"[A-Z_]{1,30}", rule["idxName"]) \
+            or (rule["category"] and rule["category"] not in alio.CATEGORIES):
+        return jsonify({"success": False, "error": "규정 정보가 올바르지 않습니다."}), 400
+    if len(re.sub(r"\s", "", item)) < 2 or unit not in _BENCH_UNITS:
+        return jsonify({"success": False, "error": "비교할 항목(두 글자 이상)과 단위를 정하세요."}), 400
+    try:
+        r = alio.rule_text(rule)
+    except alio.AlioError as e:
+        return _alio_err(e)
+    return jsonify({"success": True, "matches": bench_extract(r["text"], item, unit), "url": alio.BASE + alio.detail_url(rule),
+                    "file": r["file"]})
+
+
 @bp.route("/api/regagent/alio/rule", methods=["POST"])
 def ra_alio_rule():
     """알리오 규정 현행본 → 조문. body: {orgId, idx, category, table, idxName, mod, q}"""
