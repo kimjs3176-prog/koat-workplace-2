@@ -2508,7 +2508,7 @@ def cited_rules(reg: dict) -> list:
 
 
 # 감점(건당, 상한). 점수 기준은 화면에도 그대로 안내한다
-_H_W = {"ref": (10, 30), "xref": (8, 24), "dup": (8, 16), "order": (8, 16), "regname": (6, 18), "stale": (5, 15), "dupreg": (10, 10)}
+_H_W = {"ref": (10, 30), "xref": (8, 24), "dup": (8, 16), "order": (8, 16), "regname": (6, 18), "stale": (5, 15), "dupreg": (10, 10), "conflict": (6, 12)}
 _H_GRADE = [("A", 95), ("B", 85), ("C", 75), ("D", 60), ("E", 0)]
 _DUPREG = {"key": None, "v": {}}
 
@@ -2539,10 +2539,212 @@ def dup_regs() -> dict:
     return out
 
 
+# ── 같은 문장, 다른 수치 — 내규 사이·본문과 별표 사이에서 문장은 같은데 숫자만 다른 곳 ─────────────
+# 단위 뒤에 조사가 와도 수치로 본다(2만원으로·10일 이내). 단위 글자로 시작하는 다른 낱말(일비·원장·회의·명칭 등)만 뺀다
+_CF_Q = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(만\s*원(?![장칙본래격])|천\s*원(?![장칙본래격])|원(?![장칙본래격])|일(?![반비부자정괄련요])|개월|월(?![급])|년(?![도])|시간|분(?![의할기])"
+                   r"|퍼센트|%|회(?![의사계])|배(?![상])|명(?![칭단예령의]))|(\d+)\s*분의\s*(\d+)")
+_CF_DATE = re.compile(r"\d{2,4}\s*년\s*\d{1,2}\s*월(?:\s*\d{1,2}\s*일)?|\d{1,2}\s*월\s*\d{1,2}\s*일")
+_CF_SKIP = re.compile(r"시행일|부\s*칙|경과조치|시행한다")
+_CF = {"key": None, "v": None}
+
+
+def _cf_val(m) -> str:
+    """수치 하나를 비교용 정규형으로: 2만원=20000원, 20퍼센트=20%, 10분의 3=3/10."""
+    if m.group(3):
+        return f"{m.group(4)}/{m.group(3)}"
+    n, u = m.group(1).replace(",", ""), re.sub(r"\s", "", m.group(2))
+    try:
+        f = float(n)
+    except ValueError:
+        return n + u
+    if u in ("만원", "천원"):
+        f, u = f * (10000 if u == "만원" else 1000), "원"
+    u = "%" if u == "퍼센트" else u
+    return f"{f:g}{u}"
+
+
+def _cf_clauses(r: dict) -> list:
+    """수치가 든 문장(항·호 단위) → {no, art, text, tpl, vals}. 날짜·부칙·시행일 문장은 뺀다."""
+    out = []
+    srcs = [(a["no"], a["title"], a["body"]) for a in r["articles"] if not a["deleted"]]
+    if r.get("appendix"):
+        srcs.append(("별표", "", r["appendix"]))
+    for no, tt, body in srcs:
+        for cl in re.split(r"(?<=[다\.])\s+|\n|(?=[①-⑳])|(?=\s\d{1,2}\.\s)", body):
+            cl = cl.strip()
+            if not (12 <= len(cl) <= 240) or _CF_SKIP.search(cl):
+                continue
+            dates = [m.span() for m in _CF_DATE.finditer(cl)]
+            ms = [m for m in _CF_Q.finditer(cl) if not any(a <= m.start() < b for a, b in dates)]
+            if not ms:
+                continue
+            parts, last = [], 0
+            for m in ms:
+                parts += [cl[last:m.start()], "#" + ("%" if (m.group(2) or "").strip() in ("%", "퍼센트") else re.sub(r"\s|만|천", "", m.group(2) or "분의"))]
+                last = m.end()
+            parts.append(cl[last:])
+            tpl = re.sub(r"^[①-⑳\d]+\.?|[\s「」『』“”\"'·ㆍ･,()（）※\-]", "", "".join(parts))
+            if len(re.sub(r"#\S{0,2}", "", tpl)) < 16:
+                continue
+            out.append({"no": no, "art": tt, "text": cl, "tpl": tpl, "vals": [_cf_val(m) for m in ms]})
+    return out
+
+
+def _cf_grams(tpl: str) -> set:
+    return {tpl[k:k + 6] for k in range(max(1, len(tpl) - 5))}
+
+
+def _cf_same(t1: str, t2: str) -> float:
+    """두 문장 틀이 숫자 자리만 빼고 같으면 유사도, 아니면 0(다른 부분에 숫자가 끼면 다른 문장)."""
+    sm = difflib.SequenceMatcher(None, t1, t2, autojunk=False)
+    r = sm.ratio()
+    if r < 0.9 or any(re.search(r"[\d#]", t1[a1:a2] + t2[b1:b2]) for op, a1, a2, b1, b2 in sm.get_opcodes() if op != "equal"):
+        return 0.0
+    return r
+
+
+def _cf_index():
+    """전체 내규의 수치 문장 색인(내규 목록이 바뀌면 다시 만든다)."""
+    regs = all_regs()
+    if _CF.get("ikey") == id(regs):
+        return _CF["idx"]
+    items = []
+    for r in regs:
+        for c in _cf_clauses(r):
+            items.append({**c, "slug": r["slug"], "title": r["title"]})
+    grams, inv = [], {}
+    for i, it in enumerate(items):
+        g = _cf_grams(it["tpl"])
+        grams.append(g)
+        for x in g:
+            inv.setdefault(x, []).append(i)
+    _CF.update(ikey=id(regs), idx=(items, grams, inv))
+    return _CF["idx"]
+
+
+def _cf_find(tpl: str, g: set, skip=None) -> list:
+    """틀이 같은(숫자만 다를 수 있는) 문장들의 색인 번호."""
+    items, grams, inv = _cf_index()
+    cnt = {}
+    for x in g:
+        lst = inv.get(x, ())
+        if len(lst) > 60:
+            continue
+        for j in lst:
+            cnt[j] = cnt.get(j, 0) + 1
+    return [j for j, c in cnt.items() if c >= 0.6 * min(len(g), len(grams[j])) and (skip is None or not skip(items[j]))
+            and _cf_same(tpl, items[j]["tpl"])]
+
+
+def _cf_rel() -> set:
+    """서로 관련된 내규 쌍: 인용 관계, 규정과 그 시행세칙·운영지침."""
+    regs = all_regs()
+    G = citation_graph()
+    sl = [n["slug"] for n in G["nodes"]]
+    rel = set()
+    for e in G["edges"]:
+        rel |= {(sl[e["s"]], sl[e["t"]]), (sl[e["t"]], sl[e["s"]])}
+    nk = {r["slug"]: _nk(r["title"]) for r in regs}
+    for a in regs:
+        for b in regs:
+            if a is not b and nk[b["slug"]].startswith(nk[a["slug"]]) and re.search(r"(시행세칙|시행규칙|세칙|운영지침)$", nk[b["slug"]]):
+                rel |= {(a["slug"], b["slug"]), (b["slug"], a["slug"])}
+    return rel
+
+
+def _cf_side(x: dict) -> dict:
+    return {"slug": x["slug"], "title": x["title"], "no": x["no"], "art": x["art"], "text": x["text"][:240], "vals": x["vals"]}
+
+
+def conflicts() -> dict:
+    """같은 문장인데 수치만 다른 곳.
+    · mismatch: 같은 내규 안(다른 조·본문과 별표), 규정과 그 시행세칙, 서로 인용하는 내규 사이 — 한쪽을 고치고 다른 쪽을 빠뜨린 것으로 의심
+    · differ: 관계없는 내규 사이 — 오류는 아닐 수 있으나 기관 안 기준이 다른 곳(통일 검토)
+    대응 쪽 같은 자리에 같은 수치의 문장이 따로 있으면(본문 두 경우를 별표가 둘 다 적은 경우 등) 불일치로 보지 않는다."""
+    regs = all_regs()
+    if _CF["key"] == id(regs):
+        return _CF["v"]
+    items, grams, _ = _cf_index()
+    dup = {k: {d["slug"] for d in v} for k, v in dup_regs().items()}
+    rel = _cf_rel()
+    cand = {}
+    for i, it in enumerate(items):
+        skip = lambda x, it=it: (x["slug"] == it["slug"] and x["no"] == it["no"]) or x["slug"] in dup.get(it["slug"], ())
+        for j in _cf_find(it["tpl"], grams[i], skip):
+            cand.setdefault((i, items[j]["slug"], items[j]["no"]), []).append(j)
+    seen, mism, diff = set(), [], []
+    for (i, slug, no), js in cand.items():
+        it = items[i]
+        if any(items[j]["vals"] == it["vals"] for j in js):
+            continue                              # 대응 쪽에 같은 수치 문장이 따로 있다
+        jt = items[js[0]]
+        key = tuple(sorted([(it["slug"], it["no"], it["text"]), (jt["slug"], jt["no"], jt["text"])]))
+        if key in seen:
+            continue
+        seen.add(key)
+        row = {"a": _cf_side(it), "b": _cf_side(jt), "same_reg": it["slug"] == jt["slug"], "related": (it["slug"], jt["slug"]) in rel}
+        (mism if row["same_reg"] or row["related"] else diff).append(row)
+    v = {"mismatch": mism, "differ": diff}
+    _CF.update(key=id(regs), v=v)
+    return v
+
+
+def conflict_check(slug: str, changes: list) -> list:
+    """개정안이 수치를 바꾸는 문장이 다른 곳(같은 내규의 다른 조·별표, 시행세칙, 다른 내규)에도 그대로 있으면 '함께 고칠 곳'.
+    changes: [{no, old, body}] → [{no, old_vals, new_vals, text, places:[side + related]}]"""
+    reg = find_reg(slug, "") if slug else None
+    rel = _cf_rel() if reg else set()
+    out = []
+    for ch in changes[:40]:
+        no = str(ch.get("no") or "")
+        old_c = _cf_clauses({"articles": [{"no": no, "title": "", "body": str(ch.get("old") or "")[:8000], "deleted": False}], "appendix": ""})
+        new_c = _cf_clauses({"articles": [{"no": no, "title": "", "body": str(ch.get("body") or "")[:8000], "deleted": False}], "appendix": ""})
+        for oc in old_c:
+            nc = next((c for c in new_c if _cf_same(oc["tpl"], c["tpl"])), None)
+            if not nc or nc["vals"] == oc["vals"]:
+                continue                          # 이 문장의 수치를 바꾸지 않았다
+            skip = lambda x: reg is not None and x["slug"] == reg["slug"] and x["no"] == no
+            js = _cf_find(oc["tpl"], _cf_grams(oc["tpl"]), skip)
+            items = _cf_index()[0]
+            places = [{**_cf_side(items[j]), "same_reg": bool(reg) and items[j]["slug"] == reg["slug"],
+                       "related": bool(reg) and (reg["slug"], items[j]["slug"]) in rel,
+                       "same_as_old": items[j]["vals"] == oc["vals"]} for j in js]
+            places = [p for p in places if p["vals"] != nc["vals"]]
+            if places:
+                places.sort(key=lambda p: (not p["same_reg"], not p["related"], not p["same_as_old"]))
+                out.append({"no": no, "old_vals": oc["vals"], "new_vals": nc["vals"], "text": nc["text"][:240], "places": places[:12]})
+    return out
+
+
+@bp.route("/api/regagent/conflicts", methods=["GET"])
+def ra_conflicts():
+    """같은 문장, 다른 수치 — 불일치 의심(같은·관련 내규)과 기준 차이(관계없는 내규)."""
+    v = conflicts()
+    return jsonify({"success": True, **v, "counts": {"mismatch": len(v["mismatch"]), "differ": len(v["differ"])}})
+
+
+@bp.route("/api/regagent/conflicts/check", methods=["POST"])
+def ra_conflicts_check():
+    """개정안이 바꾸는 수치 문장이 다른 곳에도 있는지. body: {slug, changes:[{no, old, body}]}"""
+    b = _body()
+    ch = b.get("changes") if isinstance(b.get("changes"), list) else []
+    ch = [c for c in ch if isinstance(c, dict)]
+    return jsonify({"success": True, "items": conflict_check(str(b.get("slug") or ""), ch)})
+
+
 def health_row(r: dict, law_info: dict, today: str) -> dict:
     iss = [i for i in lint_articles(r["articles"], r["addenda"], r["appendix"], r["title"], full=False)
            if i["code"] in _H_W]
     n_lint = len(iss)
+    for c in conflicts()["mismatch"]:                        # 같은 문장인데 수치가 다른 곳(다른 쪽을 고치다 빠뜨린 것으로 의심)
+        for me, other in ((c["a"], c["b"]), (c["b"], c["a"])):
+            if me["slug"] != r["slug"]:
+                continue
+            where = "같은 " + ORG["reg_word"] + "의 " + (art_label(other["no"]) if other["no"] != "별표" else "별표") if c["same_reg"] else f"「{other['title']}」 " + (art_label(other["no"]) if other["no"] != "별표" else "별표")
+            iss.append({"level": "warn", "code": "conflict", "no": me["no"] if me["no"] != "별표" else "", "term": "",
+                        "other": other["slug"], "msg": f"{where}와 문장은 같은데 수치가 다릅니다({', '.join(me['vals'])} ↔ {', '.join(other['vals'])}). 한쪽만 고쳐졌는지 확인하세요.",
+                        "this_text": me["text"], "other_text": other["text"], "other_title": other["title"], "other_no": other["no"]})
+            break
     for o in dup_regs().get(r["slug"], []):                  # 화면 고른 상태가 순번으로 저장되므로 기존 문제 뒤에 붙인다
         iss.append({"level": "warn", "code": "dupreg", "no": "", "term": "", "other": o["slug"],
                     "msg": f"「{o['title']}」({o['revision'] or '개정 정보 없음'})과 조문 {round(o['ratio'] * 100)}%가 같습니다. "
@@ -2552,7 +2754,8 @@ def health_row(r: dict, law_info: dict, today: str) -> dict:
         cnt[i["code"]] = cnt.get(i["code"], 0) + 1
     pen, reasons = 0, []
     labels = {"ref": "없는 조문 인용", "xref": "다른 내규의 없는·삭제된 조문 인용", "dup": "조 번호 중복", "order": "조 번호 순서 오류",
-              "regname": "현행 목록에 없는 내규명 인용", "stale": "옛 기관명·직위", "dupreg": "중복 등록 의심"}
+              "regname": "현행 목록에 없는 내규명 인용", "stale": "옛 기관명·직위", "dupreg": "중복 등록 의심",
+              "conflict": "같은 문장 다른 수치"}
     for code, n in cnt.items():
         w, cap = _H_W[code]
         pen += min(n * w, cap)
