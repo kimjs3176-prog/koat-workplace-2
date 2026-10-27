@@ -634,3 +634,17 @@ test('유관기관 수치 비교: 개정안에서 항목·단위 추정, 통계�
     { org: '다기관', use: true, matches: [{ first: 30000 }] }, { org: '라기관', use: true, matches: [] }] };
   assert.equal(c.raValText(B), '유관 기관 사규(알리오, 2026. 10. 27. 조회)의 일비: 2곳 중앙값 25,000원(20,000원~30,000원). 가기관 20,000원, 다기관 30,000원.');
 });
+
+test('조문 연혁: 이전 판이 없을 때 안내, 바뀐 판은 이전·이 판 비교', () => {
+  const c = load();
+  vm.runInContext(`_raHist={'s|15':{success:true,rows:[{label:'현행',exists:true,title:'일비',body:'일비는 3만원',changed:false}]}}`, c);
+  assert.match(c.raHistView('s', '15'), /이전 판이 없습니다/);
+  vm.runInContext(`_raHist={'s|15':{success:true,rows:[
+    {label:'현행 2026년 개정',date:'',exists:true,title:'일비',body:'일비는 3만원으로 한다.',changed:true},
+    {label:'개정 전 보관본',date:'2026-01-01',exists:true,title:'일비',body:'일비는 2만원으로 한다.',changed:false},
+    {label:'처음 판',date:'2025-01-01',exists:false,title:'',body:'',changed:false}]}}`, c);
+  const v = c.raHistView('s', '15');
+  assert.match(v, /바뀜/);
+  assert.match(v, /신설/);
+  assert.match(v, /이전 판[\s\S]*ra-d[\s\S]*이 판[\s\S]*ra-i/);
+});

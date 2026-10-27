@@ -2335,7 +2335,25 @@ function raRegArtBody(r, a){
   const q=String(RA.regs.q||'').trim();
   return `<div class="ra-regs-ab" id="raRegArtBody"><div class="ra-regs-abh"><b>${_e(raLbl(a.no))}${a.title?`(${_e(a.title)})`:''}</b>`+
     `<button class="svc-btn sm" onclick="raRegsAmendArt('${_a(r.slug)}','${_a(r.title)}','${_a(a.no)}')">${raIc('amend')}이 조문 개정</button>`+
-    `<button class="ra-link" onclick="raRegsShowArt('${_a(r.slug)}','${_a(a.no)}')">닫기</button></div><div class="ra-regs-abb">${q.length>=2?body.split(_e(q)).join(`<mark>${_e(q)}</mark>`):body}</div></div>`;
+    `<button class="svc-btn sm${RA.regs.hist===r.slug+'|'+a.no?' yes':''}" onclick="raHistToggle('${_a(r.slug)}','${_a(a.no)}')">${raIc('ledger')}조문 연혁</button>`+
+    `<button class="ra-link" onclick="raRegsShowArt('${_a(r.slug)}','${_a(a.no)}')">닫기</button></div><div class="ra-regs-abb">${q.length>=2?body.split(_e(q)).join(`<mark>${_e(q)}</mark>`):body}</div>`+
+    (RA.regs.hist===r.slug+'|'+a.no?`<div class="ra-hist" id="raHist">${raHistView(r.slug,a.no)}</div>`:'')+`</div>`;
+}
+// 조문 연혁: 업로드로 바뀐 판마다 이 조문(현행부터). 판은 내규 등록 화면으로 개정본을 올릴 때 쌓인다
+let _raHist={};
+function raHistToggle(slug, no){ const k=slug+'|'+no; RA.regs.hist=RA.regs.hist===k?'':k; _raSave(); raRegsRedraw(); }
+function raHistView(slug, no){
+  const k=slug+'|'+no, d=_raHist[k];
+  if(!d){ if(d!==0){ _raHist[k]=0; raGet('/api/regagent/history?slug='+encodeURIComponent(slug)+'&no='+encodeURIComponent(no)).then(x=>{ _raHist[k]=x&&x.success?x:{error:(x&&x.error)||'연혁을 불러오지 못했습니다'}; const el=document.getElementById('raHist'); if(el&&RA.regs.hist===k) el.innerHTML=raHistView(slug,no); }); } return raSpin('이전 판을 찾는 중...'); }
+  if(d.error) return raErr(d.error);
+  const rows=raArr(d.rows);
+  if(rows.length<2) return `<div class="ra-hint">이 ${_e(RA_ORG.reg_word)}의 이전 판이 없습니다. 내규 등록 화면으로 개정본을 올리면 판마다 쌓여 조문별로 비교할 수 있습니다.</div>`;
+  const art=x=>({no, title:x.title, body:x.body});
+  return `<ol class="ra-hist-l">`+rows.map((x,i)=>{ const prev=rows[i+1];
+    const tag=!x.exists?'<span class="ra-chip">없음</span>':x.deleted?'<span class="ra-chip hi">삭제</span>':prev&&!prev.exists?'<span class="ra-chip warn">신설</span>':x.changed?'<span class="ra-chip warn">바뀜</span>':prev?'<span class="ra-chip">같음</span>':'<span class="ra-chip">가장 옛 판</span>';
+    let diff='';
+    if(prev&&x.exists&&prev.exists&&x.changed&&!x.deleted){ const c=raCmpCell(art(prev),art(x),true); diff=`<div class="ra-hist-d"><div><div class="ra-lab">이전 판</div>${c[0]}</div><div><div class="ra-lab">이 판</div>${c[1]}</div></div>`; }
+    return `<li><div class="ra-hist-h"><b>${_e(x.label||'')}</b>${x.date?`<span class="ra-sub">${_e(x.date)}</span>`:''}${tag}</div>${diff}</li>`; }).join('')+`</ol>`;
 }
 // ── 관계·법령: 인용하는/인용받는 내규, 인용 법령(법제처 바로가기·관련 법령), 준용·피준용 ──
 let _raRel={}, _raLawRel={};

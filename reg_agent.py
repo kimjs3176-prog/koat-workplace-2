@@ -3164,6 +3164,131 @@ def citation_graph() -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# 조문 연혁 — 업로드로 바뀐 판(되돌리기 보관본·git 이력·GitHub 커밋)을 모아 조문별 변경을 보여 준다
+# ══════════════════════════════════════════════════════════════════════════
+_HIST_CACHE: dict = {}
+_HIST_TTL = 600
+
+
+def _hist_backups(slug: str) -> list:
+    """업로드 화면이 개정본으로 덮기 전에 남긴 보관본(regulations/.backup/<slug>__YYYYmmdd-HHMMSS-…)."""
+    base = os.path.join(reg_chunks.REG_DIR, ".backup")
+    out = []
+    if not os.path.isdir(base):
+        return out
+    for name in sorted(os.listdir(base), reverse=True):
+        m = re.fullmatch(re.escape(slug) + r"__(\d{8})-(\d{6})(?:-\d+)?", name)
+        p = os.path.join(base, name, "text.txt")
+        if m and os.path.exists(p):
+            with open(p, encoding="utf-8", errors="replace") as f:
+                d = m.group(1)
+                out.append({"date": f"{d[:4]}-{d[4:6]}-{d[6:]}", "label": "개정 전 보관본", "text": f.read(), "src": "backup"})
+    return out[:20]
+
+
+def _hist_git(slug: str) -> list:
+    """로컬 저장소 git 이력(개발·자체 서버). 얕은 복제면 있는 만큼만."""
+    import shutil
+    import subprocess
+    root = os.path.dirname(os.path.abspath(__file__))
+    if not os.path.isdir(os.path.join(root, ".git")) or not shutil.which("git"):
+        return []
+    path = os.path.relpath(os.path.join(reg_chunks.REG_DIR, slug, "text.txt"), root)
+    try:
+        log = subprocess.run(["git", "log", "-n", "20", "--format=%H%x09%cs%x09%s", "--", path], cwd=root,
+                             capture_output=True, text=True, timeout=5).stdout
+        out = []
+        for line in log.splitlines():
+            sha, date, subj = (line.split("\t") + ["", ""])[:3]
+            t = subprocess.run(["git", "show", f"{sha}:{path}"], cwd=root, capture_output=True, text=True, timeout=5)
+            if t.returncode == 0:
+                out.append({"date": date, "label": subj[:80], "text": t.stdout, "src": "git"})
+        return out
+    except Exception as e:                                     # git 이 없거나 느리면 다른 출처만 쓴다
+        print(f"[hist] git 이력 실패({slug}): {e}")
+        return []
+
+
+def _hist_github(slug: str) -> list:
+    """읽기 전용 배포(Vercel): GITHUB_TOKEN·GITHUB_REPO 가 있으면 GitHub 커밋 이력에서 판을 받는다."""
+    try:
+        import reg_upload as ru
+        if not ru._gh_enabled():
+            return []
+        path = f"regulations/{slug}/text.txt"
+        cs = ru._gh("GET", "/commits", params={"path": path, "sha": ru.GITHUB_BRANCH, "per_page": 12})
+        out = []
+        for c in cs if isinstance(cs, list) else []:
+            raw = ru._gh_file(path, c.get("sha", ""))
+            if raw is None:
+                continue
+            cm = c.get("commit") or {}
+            out.append({"date": str(((cm.get("committer") or {}).get("date") or ""))[:10],
+                        "label": (cm.get("message") or "").split("\n")[0][:80], "text": raw.decode("utf-8", "replace"), "src": "github"})
+        return out
+    except Exception as e:
+        print(f"[hist] GitHub 이력 실패({slug}): {e}")
+        return []
+
+
+def reg_versions(slug: str) -> list:
+    """현행을 뺀 과거 판 [{date, label, text, src}] — 최근 판부터. 같은 본문은 한 번만."""
+    c = _HIST_CACHE.get(slug)
+    if c and time.time() - c["at"] < _HIST_TTL:
+        return c["v"]
+    cur = re.sub(r"\s+", "", _reg_raw_text(slug))
+    seen, out = {cur}, []
+    for v in sorted(_hist_backups(slug) + _hist_git(slug) + _hist_github(slug), key=lambda x: x["date"], reverse=True):
+        k = re.sub(r"\s+", "", v["text"])
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        out.append(v)
+    _HIST_CACHE[slug] = {"at": time.time(), "v": out[:20]}
+    return out[:20]
+
+
+def _hist_art(arts: list, no: str):
+    k = art_key(no)
+    return next((a for a in arts if art_key(a["no"]) == k), None)
+
+
+@bp.route("/api/regagent/history")
+def ra_history():
+    """조문 연혁. ?slug=…&no=15 → 판마다 그 조문 [{date, label, title, body, deleted, exists, changed}] (현행부터).
+    no 가 없으면 판마다 바뀐 조 번호 목록."""
+    slug = (request.args.get("slug") or "").strip()
+    no = (request.args.get("no") or "").strip()
+    r = find_reg(slug, "") if slug else None
+    if not r:
+        return jsonify({"success": False, "error": "내규를 찾을 수 없습니다."}), 404
+    vers = reg_versions(r["slug"])
+    norm = lambda a: re.sub(r"\s+", "", (a["title"] + a["body"]) if a and not a["deleted"] else "")
+    seq = [{"date": "", "label": "현행 " + (r.get("revision") or ""), "arts": r["articles"], "src": "current"}] + \
+          [{"date": v["date"], "label": v["label"], "arts": parse_text(v["text"])["articles"], "src": v["src"]} for v in vers]
+    if not no:
+        out = []
+        for i in range(len(seq) - 1):
+            new, old = seq[i]["arts"], seq[i + 1]["arts"]
+            nk = {art_key(a["no"]): a for a in new}
+            ok_ = {art_key(a["no"]): a for a in old}
+            changed = [a["no"] for k, a in nk.items() if k in ok_ and norm(a) != norm(ok_[k])]
+            added = [a["no"] for k, a in nk.items() if k not in ok_ and not a["deleted"]]
+            removed = [a["no"] for k, a in ok_.items() if (k not in nk or nk[k]["deleted"]) and not a["deleted"]]
+            out.append({"date": seq[i]["date"], "label": seq[i]["label"], "changed": changed, "added": added, "removed": removed})
+        return jsonify({"success": True, "slug": r["slug"], "title": r["title"], "versions": out, "count": len(vers)})
+    rows = []
+    for v in seq:
+        a = _hist_art(v["arts"], no)
+        rows.append({"date": v["date"], "label": v["label"], "src": v["src"], "exists": a is not None,
+                     "title": (a or {}).get("title", ""), "body": (a or {}).get("body", "")[:6000], "deleted": bool(a and a["deleted"])})
+    for i, x in enumerate(rows):                       # 바로 앞 판(더 옛것)과 견줘 바뀌었는지
+        nxt = rows[i + 1] if i + 1 < len(rows) else None
+        x["changed"] = bool(nxt) and re.sub(r"\s+", "", x["title"] + x["body"]) != re.sub(r"\s+", "", nxt["title"] + nxt["body"])
+    return jsonify({"success": True, "slug": r["slug"], "title": r["title"], "no": no, "rows": rows, "count": len(vers)})
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # 다른 기관 사규(알리오) — 기관 목록·규정 검색·본문(조문) 참고
 # ══════════════════════════════════════════════════════════════════════════
 def _alio_err(e):
