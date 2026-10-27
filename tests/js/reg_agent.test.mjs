@@ -585,3 +585,20 @@ test('건강검진: 시행일 확인 대상은 법령과 행정규칙 등', () =
   assert.equal(c.raHealthNorms({ laws: ['국가공무원법'], rules: ['종자관리요강'] }).join(','), '국가공무원법,종자관리요강');
   assert.equal(c.raHealthNorms({ laws: ['국가공무원법'] }).join(','), '국가공무원법');
 });
+
+test('같은 문장 찾기: 결과 표시와 수정안이 바뀌면 다시 찾으라는 안내', () => {
+  const c = load();
+  const RA = c.__RA();
+  RA.amend.changes = [{ type: 'modify', no: '9', title: '회의', body: '개최 14일 전까지 통보한다.' }];
+  assert.match(c.raCfView(), /다른 곳에도 있는지 찾습니다/);
+  RA.amend.cf = { sig: c.raCfSig(), items: [{ no: '9', old_vals: ['10일'], new_vals: ['14일'], text: 't',
+    places: [{ slug: 's', title: '가규칙 시행세칙', no: '2', art: '회의', text: '개최 10일 전까지', vals: ['10일'], same_reg: false, related: true }] }] };
+  const v = c.raCfView();
+  assert.match(v, /10일<\/span> → <span class="ra-val">14일/);
+  assert.match(v, /관련 내규/);
+  assert.doesNotMatch(v, /다시 찾으세요/);
+  RA.amend.changes[0].body = '개최 21일 전까지 통보한다.';
+  assert.match(c.raCfView(), /다시 찾으세요/);
+  RA.amend.cf = { sig: c.raCfSig(), items: [] };
+  assert.match(c.raCfView(), /같은 문장을 가진 다른 곳이 없습니다/);
+});

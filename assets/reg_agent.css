@@ -983,3 +983,13 @@ a.ra-link[target="_blank"][href^="http"]::after,a.ra-pill[target="_blank"][href^
   .ra-regs-a .svc-btn.sm{height:var(--ctl-h-sm);padding:0 var(--space-xs);}
   .ra-regs-a .ra-link{white-space:nowrap;}
 }
+/* 같은 문장, 다른 수치 */
+.ra-val{font:500 var(--text-sm) var(--font-outlier);font-variant-numeric:tabular-nums;color:var(--color-ink);}
+.ra-cf{border-top:var(--rule-hair) solid var(--color-rule-2);padding:var(--space-sm) 0;}
+.ra-cf-h{font-size:var(--text-md);margin-bottom:var(--space-xs);}
+.ra-cf-l{list-style:none;margin:0;padding:0;}
+.ra-cf-l>li{padding:var(--space-xs) 0;border-top:var(--rule-hair) solid var(--color-rule);}
+.ra-cf-l>li:first-child{border-top:none;}
+.ra-cf-t{font:var(--text-md)/1.8 var(--font-text);color:var(--color-ink-2);margin-top:var(--space-2xs);max-width:72ch;}
+.ra-cfp{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-lg);}
+@media (max-width:760px){ .ra-cfp{grid-template-columns:1fr;gap:var(--space-sm);} }
