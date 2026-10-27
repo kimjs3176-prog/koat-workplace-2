@@ -956,3 +956,30 @@ b.sl-ok{color:var(--ok);} b.sl-warn{color:var(--warn);} b.sl-bad{color:var(--bad
 .ra-adv-l ul:not(.ra-expc) li{font:var(--text-md)/1.8 var(--font-text);color:var(--color-ink-2);}
 .ra-adv-l ul:not(.ra-expc) li .ra-cite,.ra-adv-l ul:not(.ra-expc) li .ra-chip{font-family:var(--font-outlier);}
 .ra-adv-l ul:not(.ra-expc) li .ra-chip{font-family:var(--font-body);}
+/* 마무리 검토 반영 */
+.ra-nw{white-space:nowrap;}
+/* 링크: 테마대로 1px 자홍 밑줄, 새 창으로 여는 링크는 작은 바깥 표시 */
+.ra-link{text-decoration-color:var(--color-accent);text-decoration-thickness:1px;}
+.ra-link:hover,.ra-link:focus-visible{text-decoration-thickness:2px;}
+a.ra-link[target="_blank"][href^="http"]::after,a.ra-pill[target="_blank"][href^="http"]::after,a.svc-btn[target="_blank"][href^="http"]::after{content:"";display:inline-block;width:0.7em;height:0.7em;margin-left:var(--space-3xs);background:currentColor;opacity:.7;vertical-align:0.05em;
+  -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='black' stroke-width='1.6'%3E%3Cpath d='M4 2h6v6M10 2 3 9'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='black' stroke-width='1.6'%3E%3Cpath d='M4 2h6v6M10 2 3 9'/%3E%3C/svg%3E") center/contain no-repeat;}
+/* 상태 꼬리표: 채움 없이 색 괘선과 색 글자 */
+.ra-chip.hi,.ra-chip.btn.hi,.ra-nota .ra-chip.btn.hi{background:transparent;border-color:var(--color-bad);color:var(--color-bad);}
+.ra-chip.warn,.ra-chip.btn.warn,.ra-nota .ra-chip.btn.warn{background:transparent;border-color:var(--color-warn);color:var(--color-warn);}
+/* 수정안 구성 막대: 자홍 띠가 되지 않게 먹 4px */
+.ra-stack-b{height:4px;}
+.ra-stack-b i.t-acc,.ra-stack-l .t-acc i{background:var(--color-ink-2);}
+/* 회신 근거 목록도 72자 폭 */
+.ra-adv-l{max-width:72ch;}
+.ra-adv-l:has(ul.ra-expc){max-width:none;}
+/* 절차 지도: 휴대폰에서 첫 열(행위 주체) 고정, 오른쪽이 더 있다는 표시 */
+.ra-pm-a{position:sticky;left:0;z-index:1;}
+.ra-pmap>.ra-pm-h:first-child{position:sticky;left:0;z-index:2;background:var(--color-sheet);}
+@media (max-width:640px){
+  .ra-map-w{-webkit-mask-image:linear-gradient(to right,var(--color-ink) 88%,transparent);mask-image:linear-gradient(to right,var(--color-ink) 88%,transparent);}
+  /* 내규 목록: 동작 다섯 개를 한 줄로 */
+  .ra-regs-a{padding-left:0;gap:var(--space-sm);flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;}
+  .ra-regs-a .svc-btn.sm{height:var(--ctl-h-sm);padding:0 var(--space-xs);}
+  .ra-regs-a .ra-link{white-space:nowrap;}
+}

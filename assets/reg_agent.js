@@ -1946,7 +1946,7 @@ function raAgentView(){
   const ex=RA_AG_EX.map(([k,t])=>`<button class="ra-ag-ex" onclick="raAgentEx('${_a(t)}')"><span class="ra-ag-ex-k">${raIc(mic[k]||'spark')}${_e(k)}</span><span class="ra-ag-ex-t">${_e(t)}</span></button>`).join('');
   const tip=`요청을 제정·개정·일괄 정비·상위법 영향 중 하나로 판단하고, 대상 ${RA_ORG.reg_word}와 조문을 찾아 초안 → 인용 영향 → 점검 → 심의 사전검토 → 절차 판단 → 문서 세트까지 이어서 수행합니다. `+(raHasAi()?'AI가 계획과 초안을 씁니다.':'AI 키가 없으면 규칙 기반으로 계획하고, 조문 문장은 결과 화면에서 직접 고칩니다.')+' (Ctrl+Enter로 실행)';
   return `<div class="ra-wide">`+
-    `<section class="ra-ag-hero"><div class="ra-ag-label"><label for="raAgIn">무엇을 하고 싶으세요?</label>${raTip(tip)}</div>`+
+    `<section class="ra-ag-hero"><div class="ra-ag-label"><label for="raAgIn">내규 작업을 한 문장으로 지시하세요</label>${raTip(tip)}</div>`+
     `<div class="ra-ag-box"><textarea id="raAgIn" class="ra-ag-in" rows="2" placeholder="예) 여비규정 제15조의 일비를 3만원으로 올려줘" oninput="raSet('agent.req',this.value)" onkeydown="if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();raAgentRun();}">${_e(G.req)}</textarea>`+
     `<button class="svc-btn yes ra-ag-go" onclick="raAgentRun()" ${G.running?'disabled':''}>${raIc('spark')}${G.running?'진행 중…':'에이전트 실행'}</button></div>`+
     `<div class="ra-ag-exs">${ex}</div>${raAiKeyNote('AI 키가 없으면 규칙 기반으로 계획하고 조문 문장은 직접 고칩니다. 키를 넣으면 AI가 계획·초안·검토의견을 씁니다.')}</section>`+
@@ -2249,7 +2249,7 @@ function raRegsListView(){
   return `<div class="ra-meta" aria-live="polite">${list.length}건${pend}</div><ul class="ra-regs">`+list.map(r=>{ const h=H[r.slug], x=hits[r.slug], open=S.open===r.slug;
     return `<li class="${open?'on':''}"><div class="ra-regs-r"><span class="ra-regs-cat">${_e(r.category||'기타')}</span>`+
       `<div class="ra-regs-t"><a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener"><b>${_e(r.title)}</b></a>`+
-      `<div class="ra-sub">${_e(r.revision||'')}${RA_VR}${r.live}개 조${h?`${RA_VR}<span class="ra-gr g-${RA_GRADE[h.grade][1]}" title="건강 점수 ${h.score}점">${h.grade}</span>`:''}</div>`+
+      `<div class="ra-sub">${_e(r.revision||'')}${RA_VR}<span class="ra-nw">${r.live}개 조${h?`${RA_VR}<span class="ra-gr g-${RA_GRADE[h.grade][1]}" title="건강 점수 ${h.score}점">${h.grade}</span>`:''}</span></div>`+
       (x&&x.first?`<ul class="ra-regs-hits">${raArr(x.arts||[x.first]).slice(0,3).map(t=>`<li><button class="ra-link" onclick="raRegsShowArt('${_a(r.slug)}','${_a(t.no)}')">${_e(raLbl(t.no))}${t.title?`(${_e(t.title)})`:''}</button> ${raMark(t.snip,S.q)}</li>`).join('')}</ul><div class="ra-hint">${x.hits}곳${(x.n_arts||0)>3?`${RA_VR}맞는 조문 ${x.n_arts}개 중 3개`:''}</div>`:'')+`</div>`+
       `<div class="ra-regs-a"><button class="ra-link" aria-expanded="${open&&S.view!=='rel'}" onclick="raRegsOpen('${_a(r.slug)}','arts')">조문 ${open&&S.view!=='rel'?'접기':'보기'}</button>`+
       `<button class="ra-link" aria-expanded="${open&&S.view==='rel'}" onclick="raRegsOpen('${_a(r.slug)}','rel')">관계·법령</button>`+
