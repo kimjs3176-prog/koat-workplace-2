@@ -602,3 +602,19 @@ test('같은 문장 찾기: 결과 표시와 수정안이 바뀌면 다시 찾�
   RA.amend.cf = { sig: c.raCfSig(), items: [] };
   assert.match(c.raCfView(), /같은 문장을 가진 다른 곳이 없습니다/);
 });
+
+test('곧 시행되는 상위법: 확인 전 안내·D-n·인용 내규·오래된 확인 경고', () => {
+  const c = load();
+  const RA = c.__RA();
+  assert.match(c.raUpcomingView({ upcoming: [] }, 0), /아직 법제처에서 확인하지 않았습니다/);
+  RA.health.law = { '근로기준법': { ef: '20250101', at: Date.now() } };
+  assert.match(c.raUpcomingView({ upcoming: [], today: '20261027' }, 1), /180일 안에 시행되는/);
+  const v = c.raUpcomingView({ today: '20261027', upcoming: [{ law: '근로기준법', ef: '20261126', anc: '20261001', type: '일부개정', kind: 'law',
+    regs: [{ slug: 'a', title: '가규정' }, { slug: 'b', title: '나규정' }, { slug: 'c', title: '다' }, { slug: 'd', title: '라' }, { slug: 'e', title: '마' }] }] }, 1);
+  assert.match(v, /D-30/);
+  assert.match(v, /2026\. 11\. 26\./);
+  assert.match(v, /외 1개/);
+  assert.equal(c.raDday('20261231', '20261027'), 65);
+  RA.health.law = { '근로기준법': { ef: '20250101', at: Date.now() - 9 * 864e5 } };
+  assert.match(c.raUpcomingView({ upcoming: [], today: '20261027' }, 1), /9일 지났습니다/);
+});

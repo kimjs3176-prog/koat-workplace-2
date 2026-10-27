@@ -2194,7 +2194,7 @@ async function _raHealthLaws(){
     if(bar) bar.innerHTML=`<div class="ra-prog"><i style="width:${Math.round((i)/names.length*100)}%"></i></div><div class="ra-row"><span class="ra-meta">법제처에서 상위법·행정규칙 시행일 확인 중 ${i}/${names.length}</span><button class="svc-btn ghost sm" onclick="raHealthLaws.stop=true;this.disabled=true;this.textContent='중지하는 중…'">중지</button></div>`;
     const d=await raPost('/api/regagent/health/laws',{names:chunk});
     if(!d.success){ stopped=d.error||'법령 조회 실패'; break; }
-    let ok=0; Object.entries(d.laws).forEach(([k,v])=>{ if(v.error) fail++; else { H.law[k]={ef:v.ef,found:v.found,status:v.status,kind:v.kind,at:Date.now()}; done++; ok++; } });
+    let ok=0; Object.entries(d.laws).forEach(([k,v])=>{ if(v.error) fail++; else { H.law[k]={ef:v.ef,found:v.found,status:v.status,kind:v.kind,next:v.next||null,at:Date.now()}; done++; ok++; } });
     _raSave();                                                // 확인한 만큼은 남긴다
     if(!ok){ stopped='법제처가 응답하지 않아 멈췄습니다. 잠시 뒤 다시 시도하세요'; break; }   // 한 묶음이 모두 실패하면 나머지도 실패할 가능성이 높다
   }
@@ -2233,7 +2233,8 @@ function raHealthView(){
     raMeter(lawN/nTot,'acc')+`<div class="ra-meta" style="margin-top:6px">법제처 확인 ${Math.round(lawN/nTot*100)}%</div>`;
   return `<div class="ra-wide" id="raHealth">${tiles}`+
     `<div class="ra-grid2 ra-h2">${raSec(1,'등급 분포',raTip('막대를 누르면 아래 목록을 거릅니다'),dist+rule)}${raSec(2,'상위법·행정규칙 최신성','법제처 현행 법령·행정규칙 기준',lawSec)}</div>`+
-    raSec(3,'정비 우선순위 Top 10','점수 낮은 순',prio)+
+    raSec(3,'곧 시행되는 상위법·행정규칙',raTip('공포됐지만 아직 시행 전인 상위법·행정규칙입니다(180일 안). 시행 전에 인용한 '+RA_ORG.reg_word+'를 미리 정비할 수 있습니다. “상위법·행정규칙 최신성 확인”을 누르면 함께 찾습니다.'),raUpcomingView(d,lawN))+
+    raSec(4,'정비 우선순위 Top 10','점수 낮은 순',prio)+
     raSec(4,`전체 ${_e(RA_ORG.reg_word)} 진단표`,'',table)+
     raSec(5,'유관 기관 규정 체계 비교',raTip('알리오에 공시된 유관 기관(같은 주무부처 등)의 내부규정 목록과 우리 기관 내규를 견줍니다. 여러 기관이 두고 있는데 우리에게 없는 규정은 제정을 검토할 만합니다.'),`<div id="raBench">${raBenchView()}</div>`)+
     `<div class="ra-foot"><button class="svc-btn ghost sm" onclick="_raHealth=null;raHealthLoad()">다시 진단</button></div></div>`;
@@ -2444,6 +2445,23 @@ function raHealthToAmend(slug){
     refText:'[건강검진에서 찾은 문제]\n'+sel.map(x=>`- ${x.msg}`+(x.snip?`\n  문맥: ${x.snip}`:'')).join('\n').slice(0,3000)});
 }
 function raHealthCheckOne(title){ RA.check.reg=title; _raSave(); raTab('check'); setTimeout(()=>{ if(typeof raCheckOne==='function') raCheckOne(); },80); }
+// 곧 시행되는 상위법: 시행일이 가까운 순, D-n, 인용하는 내규, 영향 조문 찾기
+function raYmdDot(s){ s=String(s||''); return s.length===8?`${s.slice(0,4)}. ${+s.slice(4,6)}. ${+s.slice(6)}.`:''; }
+function raDday(s, today){ const d=x=>Date.UTC(+x.slice(0,4),+x.slice(4,6)-1,+x.slice(6,8)); return Math.round((d(String(s))-d(String(today)))/864e5); }
+function raUpcomingView(d, lawN){
+  const U=raArr(d.upcoming);
+  if(!lawN) return `<div class="ra-hint">아직 법제처에서 확인하지 않았습니다. 위 “상위법·행정규칙 최신성 확인”을 누르면 공포됐지만 시행 전인 법령도 함께 찾습니다.</div>`;
+  const ats=Object.values(RA.health.law||{}).map(x=>x&&x.at).filter(Boolean), age=ats.length?Math.floor((Date.now()-Math.min(...ats))/864e5):0;
+  const old=age>=7?`<div class="ra-stale">${raIc('info')}법제처 확인이 ${age}일 지났습니다. 새로 공포된 법령을 보려면 다시 확인하세요. <button class="ra-link" onclick="raHealthLaws()">다시 확인</button></div>`:'';
+  if(!U.length) return old+`<div class="ra-ok">${raIc('tick')}180일 안에 시행되는 상위법·행정규칙 개정이 없습니다.</div>`;
+  return old+`<div class="ra-tbl-w"><table class="ra-tbl ra-upc"><thead><tr><th>시행일</th><th>법령·행정규칙</th><th>공포·구분</th><th>인용하는 ${_e(RA_ORG.reg_word)}</th><th></th></tr></thead><tbody>`+
+    U.map(u=>{ const n=raDday(u.ef,d.today), rs=raArr(u.regs);
+      return `<tr><td class="num"><b class="${n<=30?'sl-warn':''}">D-${n}</b><div class="ra-sub">${raYmdDot(u.ef)}</div></td>`+
+        `<td>${u.kind==='rule'?`「${_e(u.law)}」 <span class="ra-chip">행정규칙</span>`:raLawLink(u.law)}</td>`+
+        `<td><span class="ra-sub">${u.anc?raYmdDot(u.anc)+' 공포':''}${u.type?`<br>${_e(u.type)}`:''}</span></td>`+
+        `<td>${rs.slice(0,4).map(r=>`<a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener">${_e(r.title)}</a>`).join(', ')}${rs.length>4?` 외 ${rs.length-4}개`:''}</td>`+
+        `<td><button class="svc-btn sm" onclick="raHealthUpper('${_a(u.law)}')">${raIc('search')}영향 조문 찾기</button></td></tr>`; }).join('')+`</tbody></table></div>`;
+}
 function raHealthUpper(law){ Object.assign(RA.upper,{law,arts:'',old:'',neu:'',res:null}); _raSave(); raTab('upper'); setTimeout(()=>{ if(typeof raUpperRun==='function') raUpperRun(); },80); }
 function raHealthF(k,v){ const H=RA.health; H.f=H.f||{q:'',g:''}; H.f[k]=(k==='g'&&H.f.g===v)?'':v; _raSave();
   if(k==='q'){ clearTimeout(raHealthF._t); raHealthF._t=setTimeout(()=>{   // 입력란은 그대로 두고 표만 바꾼다(한글 조합 중 다시 그리면 글자가 겹친다)

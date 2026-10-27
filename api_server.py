@@ -328,6 +328,7 @@ def _lookup_law(law_name: str, target: str = "law") -> dict:
             return ""
 
         best_key = None
+        nxt = None                 # 공포됐지만 아직 시행 전인 판(시행예정) 중 가장 먼저 시행되는 것
         for it in items:
             nm = _txt(it, *_NAME_TAGS)
             n = _norm_key(nm)
@@ -339,6 +340,8 @@ def _lookup_law(law_name: str, target: str = "law") -> dict:
             ef = re.sub(r"\D", "", _txt(it, "시행일자"))[:8]
             anc = re.sub(r"\D", "", _txt(it, "공포일자", "발령일자"))[:8]
             cur = 0 if (status == "현행" or (not status and (not ef or ef <= today))) else 1
+            if rank <= 1 and ef and ef > today and (nxt is None or ef < nxt["ef"]):
+                nxt = {"ef": ef, "anc": anc, "type": _txt(it, "제개정구분명"), "status": status, "name": nm}
             # 작은 값이 우선: 일치도 → 현행 → (시행일이 오늘 이전인) 최신 시행일 → 최신 공포일
             key = (rank, cur, 0 if (ef and ef <= today) else 1,
                    -int(ef or 0) if ef and ef <= today else 0, -int(anc or 0))
@@ -347,6 +350,8 @@ def _lookup_law(law_name: str, target: str = "law") -> dict:
                 out = {"mst": _mst_of(it),
                        "id": _txt(it, "법령ID", "행정규칙ID"),
                        "name": nm, "rank": rank, "status": status, "ef": ef}
+        if nxt:
+            out["next"] = nxt
         if out["mst"]:
             print(f"[MST] '{law_name}'({target}) → MST={out['mst']} ID={out['id']} "
                   f"(선택:'{out['name']}' 일치도={out['rank']} 상태={out.get('status')} 시행={out.get('ef')})")
