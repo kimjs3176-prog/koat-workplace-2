@@ -993,3 +993,7 @@ a.ra-link[target="_blank"][href^="http"]::after,a.ra-pill[target="_blank"][href^
 .ra-cf-t{font:var(--text-md)/1.8 var(--font-text);color:var(--color-ink-2);margin-top:var(--space-2xs);max-width:72ch;}
 .ra-cfp{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-lg);}
 @media (max-width:760px){ .ra-cfp{grid-template-columns:1fr;gap:var(--space-sm);} }
+/* 곧 시행되는 상위법 표 */
+.ra-upc td:first-child,.ra-upc td:nth-child(3){white-space:nowrap;}
+.ra-upc td:nth-child(2){min-width:220px;}
+.ra-upc td:last-child{text-align:right;}

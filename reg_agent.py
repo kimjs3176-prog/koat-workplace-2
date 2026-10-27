@@ -2783,6 +2783,16 @@ def health_row(r: dict, law_info: dict, today: str) -> dict:
         if rd and len(ef) == 8 and rd < ef <= today:
             # 「…규정」이라도 법제처에서 법령(대통령령 등)으로 찾았으면 상위법, 훈령·예규·고시 등이면 행정규칙
             stale_laws.append({"law": nm, "ef": ef, "kind": "law" if nm in laws or info.get("kind") == "law" else "rule"})
+    upcoming = []                                            # 공포됐지만 아직 시행 전(180일 안) — 미리 개정 준비
+    lim = _days_after(today, 180)
+    for nm in laws + rules:
+        info = law_info.get(nm) or lk.get(_nk(nm))
+        nx = info.get("next") if isinstance(info, dict) and isinstance(info.get("next"), dict) else None
+        ef = re.sub(r"\D", "", str((nx or {}).get("ef") or ""))[:8]
+        if nx and len(ef) == 8 and today < ef <= lim and not (isinstance(info, dict) and info.get("found") is False):
+            upcoming.append({"law": nm, "ef": ef, "anc": re.sub(r"\D", "", str(nx.get("anc") or ""))[:8],
+                             "type": str(nx.get("type") or "")[:20], "kind": "law" if nm in laws or info.get("kind") == "law" else "rule"})
+    upcoming.sort(key=lambda x: x["ef"])
     if stale_laws:
         pen += min(len(stale_laws) * 8, 32)
         nr = sum(1 for x in stale_laws if x["kind"] == "rule")
@@ -2800,7 +2810,7 @@ def health_row(r: dict, law_info: dict, today: str) -> dict:
         detail.append({**i, "art_title": a.get("title", ""), "snip": snip})
     return {"slug": r["slug"], "title": r["title"], "category": r["category"], "revision": r.get("revision", ""),
             "rev_date": rd, "age": age, "score": score, "grade": grade, "counts": cnt,
-            "issues": detail, "laws": laws, "rules": rules, "stale_laws": stale_laws, "reasons": reasons,
+            "issues": detail, "laws": laws, "rules": rules, "stale_laws": stale_laws, "upcoming": upcoming, "reasons": reasons,
             "n_articles": len(r["articles"])}
 
 
@@ -2830,7 +2840,22 @@ def ra_health():
                     "issue_total": sum(sum(x["counts"].values()) for x in rows),
                     "stale_regs": sum(1 for x in rows if x["stale_laws"]),
                     "old_regs": sum(1 for x in rows if (x["age"] or 0) >= 3),
-                    "laws": all_laws, "rules": all_rules, "law_checked": len(law_info), "rows": rows})
+                    "laws": all_laws, "rules": all_rules, "law_checked": len(law_info), "upcoming": upcoming_laws(rows), "rows": rows})
+
+
+def _days_after(ymd: str, n: int) -> str:
+    import datetime as _dt
+    return (_dt.datetime.strptime(ymd, "%Y%m%d") + _dt.timedelta(days=n)).strftime("%Y%m%d")
+
+
+def upcoming_laws(rows: list) -> list:
+    """곧 시행되는 상위법·행정규칙 → 인용하는 내규 목록. 시행일이 가까운 순."""
+    by = {}
+    for r in rows:
+        for u in r.get("upcoming") or []:
+            x = by.setdefault(u["law"], {**u, "regs": []})
+            x["regs"].append({"slug": r["slug"], "title": r["title"], "revision": r.get("revision", "")})
+    return sorted(by.values(), key=lambda x: (x["ef"], x["law"]))
 
 
 _LAW_FRESH: dict = {}
@@ -2863,9 +2888,11 @@ def ra_health_laws():
                 v = (look_law if is_law else look_rule)(nm) or {}
                 if v.get("error"):
                     return nm, {"error": str(v["error"])[:120]}
+                nx = v.get("next") if isinstance(v.get("next"), dict) else None
                 return nm, {"ef": v.get("ef", ""), "status": v.get("status", ""), "name": v.get("name", ""),
                             "kind": "law" if is_law or v.get("kind") == "law" else "admrul",
-                            "found": bool(v.get("mst") or v.get("id")) and v.get("rank", 99) <= 1}
+                            "found": bool(v.get("mst") or v.get("id")) and v.get("rank", 99) <= 1,
+                            **({"next": {k: str(nx.get(k) or "")[:40] for k in ("ef", "anc", "type")}} if nx else {})}
             except Exception as e:
                 return nm, {"error": str(e)[:120]}
         # 서버리스 시간 제한 안에서 끝내도록 전체 대기 시간을 제한한다(늦은 건은 실패로 돌려 다시 시도하게 함)
