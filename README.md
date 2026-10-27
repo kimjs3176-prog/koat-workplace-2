@@ -78,7 +78,7 @@ node --test tests/js/*.test.mjs
 
 ### 구조
 ```
-index.html, assets/        화면
+index.html, assets/        화면(색·글꼴·간격은 assets/tokens.css 한 곳에서)
 reg_agent.py               에이전트 API(/api/regagent/*)
 api_server.py              Flask 서버(법령 조회·AI)
 reg_upload.py, upload.html 내규 등록

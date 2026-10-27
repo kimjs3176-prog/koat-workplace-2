@@ -1,0 +1,143 @@
+/* Hallmark · v2.0.0 · redesign: full · scope: app · shape: app screen · theme: almanac (dealt 1/3, seed public-agency-tool-staff-2d8a·bc8b5609·2026-10-27·r0) · genre: editorial · posture: restrained · faces: Pretendard (UI·heads), Noto Serif KR (regulation text), IBM Plex Mono (figures only) · signature: the regulation printed on a pale sheet over slate, its articles and figures ruled like a reference book · built: the project */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V4 · weakest: P, an app screen argues little; leaned on the sheet so every article, table and reply reads as the printed regulation rather than a dashboard card */
+/* Hallmark · kept: KRDS Pretendard as the Korean UI face (the project names it); dropped: the KRDS primary blue as the accent, replaced by the theme's chart magenta */
+
+:root{
+  --color-paper:oklch(86% 0.011 245);
+  --color-paper-2:oklch(82.5% 0.012 245);
+  --color-paper-3:oklch(78% 0.012 245);
+  --color-sheet:oklch(95% 0.007 245);
+  --color-sheet-2:oklch(91.5% 0.009 245);
+  --color-ink:oklch(17% 0.02 245);
+  --color-ink-2:oklch(25% 0.018 245);
+  --color-muted:oklch(40% 0.016 245);
+  --color-faint:oklch(55% 0.014 245);
+  --color-rule:oklch(80% 0.012 240);
+  --color-rule-2:oklch(32% 0.018 240);
+  --color-accent:oklch(45% 0.18 350);
+  --color-accent-2:oklch(37% 0.16 350);
+  --color-accent-ink:oklch(97% 0.006 245);
+  --color-accent-wash:oklch(92% 0.03 350);
+  --color-focus:oklch(46% 0.19 350);
+  --color-ok:oklch(41% 0.1 160);
+  --color-ok-wash:oklch(91% 0.035 160);
+  --color-warn:oklch(46% 0.1 70);
+  --color-warn-wash:oklch(92% 0.045 85);
+  --color-bad:oklch(46% 0.16 28);
+  --color-bad-wash:oklch(92% 0.035 28);
+  --color-mark:oklch(90% 0.09 95);
+  --color-scrim:oklch(17% 0.02 245 / 0.45);
+  --color-tooltip:oklch(17% 0.02 245);
+  --color-tooltip-ink:oklch(96% 0.006 245);
+  --tone-good:oklch(50% 0.07 165);
+  --tone-warning:oklch(68% 0.12 80);
+  --tone-serious:oklch(58% 0.13 45);
+  --tone-critical:oklch(46% 0.16 28);
+  --tone-neutral:oklch(72% 0.012 245);
+
+  --font-display:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+  --font-body:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+  --font-text:"Noto Serif KR","AppleMyungjo","Batang",ui-serif,serif;
+  --font-outlier:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+
+  --radius-card:0;
+  --radius-ctl:2px;
+  --radius-pill:2px;
+  --rule-hair:1px;
+  --rule-bar:2px;
+  --shadow-card:none;
+  --shadow-pop:0 6px 18px oklch(17% 0.02 245 / 0.18);
+  --tracking-display:-0.02em;
+  --display-weight:600;
+
+  --text-xs:12px;
+  --text-sm:13px;
+  --text-md:14px;
+  --text-lg:16px;
+  --text-title:18px;
+  --text-head:22px;
+  --text-page:28px;
+  --text-figure:30px;
+
+  --space-3xs:2px;
+  --space-2xs:4px;
+  --space-xs:8px;
+  --space-sm:12px;
+  --space-md:16px;
+  --space-lg:24px;
+  --space-xl:40px;
+  --space-2xl:64px;
+
+  --dur-micro:90ms;
+  --dur-short:160ms;
+  --ease-out:cubic-bezier(0.22,1,0.36,1);
+  --ctl-h:36px;
+  --ctl-h-sm:30px;
+  --z-sticky:200;
+  --z-sticky-nav:300;
+  --z-modal:400;
+  --z-toast:500;
+  --z-tooltip:600;
+}
+
+/* 다크 모드 — 같은 슬레이트 계열을 어둡게 내린 것(뒤집지 않음) */
+body.dark{
+  --color-paper:oklch(19% 0.016 245);
+  --color-paper-2:oklch(16.5% 0.016 245);
+  --color-paper-3:oklch(14.5% 0.015 245);
+  --color-sheet:oklch(23.5% 0.016 245);
+  --color-sheet-2:oklch(27% 0.016 245);
+  --color-ink:oklch(95% 0.007 245);
+  --color-ink-2:oklch(87% 0.01 245);
+  --color-muted:oklch(73% 0.014 245);
+  --color-faint:oklch(60% 0.014 245);
+  --color-rule:oklch(34% 0.016 245);
+  --color-rule-2:oklch(80% 0.012 245);
+  --color-accent:oklch(75% 0.13 350);
+  --color-accent-2:oklch(81% 0.11 350);
+  --color-accent-ink:oklch(18% 0.02 245);
+  --color-accent-wash:oklch(30% 0.05 350);
+  --color-focus:oklch(78% 0.14 350);
+  --color-ok:oklch(78% 0.1 160);
+  --color-ok-wash:oklch(29% 0.04 160);
+  --color-warn:oklch(82% 0.11 85);
+  --color-warn-wash:oklch(30% 0.045 85);
+  --color-bad:oklch(76% 0.12 28);
+  --color-bad-wash:oklch(30% 0.05 28);
+  --color-mark:oklch(40% 0.07 95);
+  --color-scrim:oklch(8% 0.01 245 / 0.6);
+  --color-tooltip:oklch(94% 0.007 245);
+  --color-tooltip-ink:oklch(18% 0.02 245);
+  --tone-good:oklch(70% 0.08 165);
+  --tone-warning:oklch(78% 0.11 85);
+  --tone-serious:oklch(70% 0.12 45);
+  --tone-critical:oklch(66% 0.15 28);
+  --tone-neutral:oklch(40% 0.014 245);
+  --shadow-pop:0 6px 18px oklch(5% 0.01 245 / 0.5);
+}
+
+/* 이전 이름(index.html·upload.html·reg_agent.css가 쓰던 변수) → 새 토큰 */
+:root,body.dark{
+  --g:var(--color-accent);--gd:var(--color-accent);--gp:var(--color-accent-2);--gl:var(--color-accent-wash);--g-ring:var(--color-focus);
+  --bg:var(--color-paper);--sf:var(--color-sheet);--sf2:var(--color-sheet-2);--bd:var(--color-rule);--bd2:var(--color-faint);
+  --tx:var(--color-ink);--tx2:var(--color-ink-2);--mu:var(--color-muted);--ht:var(--color-faint);
+  --ok:var(--color-ok);--ok-l:var(--color-ok-wash);--warn:var(--color-warn);--warn-l:var(--color-warn-wash);--bad:var(--color-bad);--bad-l:var(--color-bad-wash);
+  --err-fg:var(--color-bad);--err-bg:var(--color-bad-wash);
+  --shadow:none;--shadow-lg:var(--shadow-pop);
+  --r:var(--radius-card);--rs:var(--radius-ctl);
+  --font:var(--font-body);
+  --c-ok:var(--tone-good);--c-warn:var(--tone-warning);--c-serious:var(--tone-serious);--c-bad:var(--tone-critical);--c-acc:var(--color-accent);--c-n:var(--tone-neutral);
+}
+
+/* 기본 — 바닥 규칙(가로 넘침·초점·움직임 줄이기·브라우저 표면) */
+html,body{overflow-x:clip;}
+html{-webkit-text-size-adjust:100%;scrollbar-color:var(--color-faint) var(--color-paper);}
+body{font-family:var(--font-body);background:var(--color-paper);color:var(--color-ink-2);caret-color:var(--color-accent);-webkit-font-smoothing:antialiased;line-height:1.55;}
+::selection{background:var(--color-accent);color:var(--color-accent-ink);}
+:focus-visible{outline:2px solid var(--color-focus);outline-offset:2px;transition:none;}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:var(--display-weight);color:var(--color-ink);letter-spacing:var(--tracking-display);overflow-wrap:break-word;min-width:0;}
+a{color:inherit;text-decoration-color:var(--color-accent);text-underline-offset:0.15em;}
+a:hover{text-decoration-thickness:2px;}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:1ms !important;animation-iteration-count:1 !important;transition-duration:1ms !important;scroll-behavior:auto !important;}
+}
