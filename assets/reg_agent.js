@@ -22,6 +22,7 @@ const RA_IC={
   spark:'<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/>',
   search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   regs:'<path d="M4 5h2M4 12h2M4 19h2"/><path d="M9 5h11M9 12h11M9 19h11"/>',
+  terms:'<path d="M4 4h11a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z"/><path d="M4 17a3 3 0 0 1 3-3h11M8 8h6M8 11h4"/>',
   advise:'<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.3 2.4c-.5.2-.8.6-.8 1.1V14M12 17h.01"/>',
   doc:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
   info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
@@ -41,6 +42,7 @@ const RA_TABS=[
   ['health','건강검진','기관 내규 진단·정비 우선순위'],
   ['regs','내규 목록','등록된 내규 찾아보기·바로 작업'],
   ['advise','내규 자문','질의에 근거 조문으로 답변'],
+  ['terms','용어 사전','정의·동의어·내규 간 정의 불일치'],
   ['enact','제정','새 내규 초안 · 심의 사전검토 · 문서 세트'],
   ['amend','개정','수정안 · 신구조문대비표 · 인용 정정'],
   ['bulk','일괄 정비','바뀐 용어·명칭을 모든 내규에 반영'],
@@ -55,6 +57,7 @@ const RA_PAGE={
   agent:['에이전트에게 맡기기',[['spark','한 문장 지시'],['search','대상 찾기'],['amend','초안'],['bulk','인용 영향'],['check','점검·심의'],['doc','문서 세트']]],
   regs:['내규 목록',[['search','찾기'],['doc','원문·조문'],['amend','개정'],['check','점검']]],
   advise:['내규 자문',[['advise','질의'],['search','근거 조문'],['doc','회신'],['amend','개정 연계']]],
+  terms:['용어 사전',[['terms','정의 모음'],['search','동의어'],['alert','정의 불일치'],['amend','정비 착수']]],
   health:['규정 건강검진',[['search','전체 진단'],['health','점수·등급'],['upper','상위법·행정규칙 최신성'],['amend','정비 착수']]],
   enact:['새 내규 제정',[['info','기본 정보'],['upper','위임 조항'],['search','유사 규정'],['spark','조문 초안'],['check','점검·심의'],['doc','문서 세트']]],
   amend:['내규 개정',[['search','조문 선택'],['spark','수정안'],['doc','대비표'],['bulk','인용 영향'],['check','점검·심의'],['doc','문서 세트']]],
@@ -89,6 +92,7 @@ function _raBlank(){
     check:{res:null,reg:'',one:null},
     regs:{q:'',cat:'',sort:'name',open:'',view:'arts',art:''},
     advise:{q:'',scope:'',res:null,hist:[],thread:[]},
+    terms:{q:'',f:'all',open:'',syn:{}},
     graph:{sel:''},
     proc:{ans:{},chk:{},plan:{}},
     me:{name:''},
@@ -113,7 +117,7 @@ function _raLoad(){
   try{ const o=JSON.parse(localStorage.getItem(RA_KEY)||'null'); if(o&&typeof o==='object') return _raNormalize(o); }catch(e){}
   return _raBlank();
 }
-let RA=_raLoad(); RA.agent=Object.assign({req:'',steps:[],plan:null,done:null},RA.agent||{},{running:false}); (RA.agent.steps||[]).forEach(s=>{ if(s.st==='run') s.st='err'; }); RA.health=Object.assign({law:{},f:{q:'',g:''}},RA.health||{}); RA.advise=Object.assign({q:'',scope:'',res:null,hist:[],thread:[]},RA.advise||{}); RA.ledger.srv=null;   // 기관 대장 집계는 열 때마다 새로 받는다
+let RA=_raLoad(); RA.agent=Object.assign({req:'',steps:[],plan:null,done:null},RA.agent||{},{running:false}); (RA.agent.steps||[]).forEach(s=>{ if(s.st==='run') s.st='err'; }); RA.health=Object.assign({law:{},f:{q:'',g:''}},RA.health||{}); RA.advise=Object.assign({q:'',scope:'',res:null,hist:[],thread:[]},RA.advise||{}); RA.terms=Object.assign({q:'',f:'all',open:'',syn:{}},RA.terms||{}); RA.ledger.srv=null;   // 기관 대장 집계는 열 때마다 새로 받는다
 setTimeout(()=>{ if(raArr((RA.ledger||{}).items).some(x=>x.pending)) raLedgerFlush(true); },3000);   // 지난번에 못 보낸 실적
 let _raArtsErr='', _raArts=null, _raCatalog=null, _raSaveT=null, _raBusy={};
 function _raSave(){ clearTimeout(_raSaveT); _raSaveT=setTimeout(()=>{ try{ localStorage.setItem(RA_KEY, raStateJson()); }catch(e){ if(typeof _toast==='function') _toast('작업 내용을 저장하지 못했습니다(브라우저 저장 공간 부족).'); } },300); }
@@ -405,6 +409,7 @@ function raRender(){
   else if(t==='health') b.innerHTML=raHealthView();
   else if(t==='regs') b.innerHTML=raRegsView();
   else if(t==='advise') b.innerHTML=raAdviseView();
+  else if(t==='terms') b.innerHTML=raTermsView();
   else if(t==='upper') b.innerHTML=raUpperView();
   else if(t==='check') b.innerHTML=raCheckView();
   else if(t==='graph') b.innerHTML=raGraphView();
@@ -2038,7 +2043,7 @@ async function raAgentRun(){
 // 자문: 근거 조문을 찾아 회신하고 자문 탭에 결과를 둔다
 async function raAgAdvise(P, step, fin, stop){
   let s=step('근거 조문 찾기·회신 작성');
-  const d=await raPost('/api/regagent/advise',{question:P.question||P.request, ...raAi()});
+  const d=await raPost('/api/regagent/advise',{question:P.question||P.request, synonyms:(RA.terms||{}).syn||{}, ...raAi()});
   if(!d.success) stop(s,d.error||'자문 실패');
   const V=RA.advise; Object.assign(V,{q:d.question, scope:'', res:d, thread:[{q:d.question,a:String(d.answer||'').slice(0,500)}]});
   V.hist=[{q:d.question, scope:'', c:d.conclusion, res:d}, ...V.hist.filter(h=>!(h.q===d.question&&!h.scope))].slice(0,6);
@@ -2570,7 +2575,7 @@ function raBulkExport(fmt){
 // 내규 자문 — 질의 → 근거 조문(관련·인용·준용·시행세칙·별표) → 회신
 // ══════════════════════════════════════════════════════════════════════════
 const RA_ADV_EX=['국내 출장 숙박비 상한액은 얼마인가요?','육아휴직 기간도 승진소요 최저 근무연수에 포함되나요?','직원이 다른 직무를 겸하려면 누구의 허가를 받아야 하나요?','징계 감경 대상이 되는 공적은 무엇인가요?'];
-const RA_ADV_ROLE={main:'관련 조문',ref:'인용 조문',jun:'준용',child:'시행세칙',appx:'별표'};
+const RA_ADV_ROLE={main:'관련 조문',ref:'인용 조문',jun:'준용',child:'시행세칙',appx:'별표',def:'정의'};
 const RA_ADV_TONE={'가능':'ok','불가':'bad','조건부 가능':'warn','해당 규정':'n','규정 없음':'warn','확인 필요':'warn'};
 function raAdviseView(){
   const V=RA.advise;
@@ -2598,7 +2603,7 @@ async function _raAdvRun(follow){
   if(V.scope.trim()){ const regs=await raCatalog(), k=x=>x.replace(/\s+/g,''); const r=regs.find(x=>k(x.title)===k(V.scope)); if(!r){ _toast(`「${V.scope}」${raEul(V.scope)} ${RA_ORG.reg_word} 목록에서 찾지 못했습니다.`); return; } slug=r.slug; }
   if(typeof follow!=='string'&&!(V.res&&V.thread.length)) V.thread=[];
   const box=document.getElementById('raAdv'); if(box) box.innerHTML=raSpin('근거 조문을 찾아 회신을 쓰는 중...');
-  const d=await raPost('/api/regagent/advise',{question:V.q.trim(), slug, history:V.thread.slice(-3), ...raAi()});
+  const d=await raPost('/api/regagent/advise',{question:V.q.trim(), slug, history:V.thread.slice(-3), synonyms:RA.terms.syn||{}, ...raAi()});
   if(!d.success){ if(box) box.innerHTML=raErr(d.error||'자문 실패'); return; }
   V.res=d; V.edit=false; V.thread.push({q:d.question, a:String(d.answer||'').slice(0,500)}); V.thread=V.thread.slice(-5);
   V.hist=[{q:d.question, scope:V.scope, c:d.conclusion, res:d}, ...V.hist.filter(h=>!(h.q===d.question&&(h.scope||'')===(V.scope||'')))].slice(0,6);
@@ -2618,6 +2623,7 @@ function raAdvResView(d){
   const head=`<div class="ra-adv-h"><span class="ra-adv-c ${RA_ADV_TONE[d.conclusion]||'n'}">${_e(d.conclusion)}</span><span class="ra-pill subtle">${d.ai?'AI 회신':'규칙 기반 안내'}</span>${d.scope?`<span class="ra-pill">「${_e((src[0]||{}).reg||d.scope)}」에서</span>`:''}</div>`+
     `<div class="ra-adv-q">${raIc('advise')}${_e(d.question)}</div>`+(d.notice?`<div class="ra-note">${raIc('info')}${_e(d.notice)}</div>`:'')+
     (raArr(d.unmatched).length?`<div class="ra-hint">원문에 그대로 나오지 않는 말: ${d.unmatched.map(w=>`<span class="ra-chip">${_e(w)}</span>`).join('')} — 다른 표현(예: 출장비 → 여비)으로도 물어보세요.</div>`:'')+
+    (raArr(d.term_conflicts).length?`<div class="ra-note warn">${raIc('alert')}<span>${d.term_conflicts.map(t=>`“${_e(t)}”`).join(', ')}의 뜻이 ${_e(RA_ORG.reg_word)}마다 다르게 정의되어 있습니다. 근거의 ‘정의’ 조문을 견주어 보세요. <button class="ra-link" onclick="raTermsGo('${_a(d.term_conflicts[0])}')">용어 사전에서 보기</button></span></div>`:'')+
     (Object.keys(d.mapped||{}).length?`<div class="ra-hint">${_e(RA_ORG.reg_word)} 용어로도 찾았습니다: ${Object.entries(d.mapped).map(([w,ws])=>`${_e(w)} → ${raArr(ws).map(x=>`<span class="ra-chip">${_e(x)}</span>`).join('')}`).join(''+RA_VR+'')}</div>`:'');
   const ed=!!RA.advise.edit;                                  // 검토자가 회신을 직접 고친다(근거 번호 [n]은 그대로 쓸 수 있음)
   const ta=(k,v,rows)=>`<textarea class="ra-ta" rows="${rows}" oninput="raAdvSet('${k}',this.value)">${_e(v)}</textarea>`;
@@ -2705,6 +2711,64 @@ function raAdvExport(fmt){ const d=RA.advise.res; if(!d) return;
   const cc=d.cite_check||{};
   raSaveFile(fmt, `${RA_ORG.reg_word}자문회신_${d.question.slice(0,20)}`.replace(/[\\/:*?"<>|\s]+/g,'_'), [{t:'p',text:raAdvText(d),titleBold:1}], '자문 회신',
     {kind:'advise', reg:((raArr(d.sources)[0])||{}).reg||'', ai:d.ai?(d.model||'AI'):'', total:d.ai?1:0, edited:d.ai&&d.edited?1:0, cites:cc.n||0, cites_ok:cc.ok||0, reviewed:!!(d.reviewed&&raMe())}); }
+
+// ══════════════════════════════════════════════════════════════════════════
+// 용어 사전(규정 온톨로지 1단계) — 내규에서 정의한 용어·약칭 모음, 동의어, 내규 간 정의 불일치
+// ══════════════════════════════════════════════════════════════════════════
+let _raTerms=null, _raTermItem={};
+function raTermsView(){
+  const T=RA.terms;
+  if(!_raTerms||_raTerms.key!==JSON.stringify([T.q,T.f,T.syn])){ raTermsLoad(); return `<div class="ra-wide">${raSpin('용어 사전을 만드는 중...')}</div>`; }
+  const d=_raTerms.d; if(!d.success) return `<div class="ra-wide">${raErr(d.error||'용어 사전을 불러오지 못했습니다.')}</div>`;
+  const st=d.stats||{};
+  const fb=(k,l,n)=>`<button class="ra-chip btn${T.f===k?' on':''}" aria-pressed="${T.f===k}" onclick="raTermsSet('f','${k}')">${l}${n!=null?` <b>${n}</b>`:''}</button>`;
+  const bar=`<div class="ra-regs-bar"><input class="ra-in" id="raTermsQ" type="search" aria-label="용어 찾기" placeholder="용어·동의어로 찾기 (예: 임직원, 보수, 출장비)" value="${_e(T.q)}" oninput="raTermsQ(this.value)">`+
+    `<a class="svc-btn ghost sm" href="/api/regagent/ontology" download="reg_glossary.jsonld" title="SKOS 개념(JSON-LD)으로 내보내기">${raIc('doc')}내보내기(JSON-LD)</a></div>`+
+    `<div class="ra-regs-cats">${fb('all','전체',st.terms)}${fb('conflict','정의 불일치',st.conflict)}${fb('def','정의 조문')}${fb('abbr','약칭만')}</div>`;
+  const list=raArr(d.items).length?`<div class="ra-meta" aria-live="polite">${d.count}개${d.count>raArr(d.items).length?` 중 ${d.items.length}개 표시`:''}</div><ul class="ra-terms">`+d.items.map(x=>{ const open=T.open===x.term;
+    return `<li class="${open?'on':''}"><div class="ra-terms-r"><button class="ra-link ra-terms-t" aria-expanded="${open}" onclick="raTermsOpen('${_a(x.term)}')"><b>${_e(x.term)}</b></button>`+
+      (x.conflict?`<span class="ra-chip hi" title="같은 용어를 ${_e(RA_ORG.reg_word)}마다 다른 뜻으로 정의">정의 ${x.variants}가지</span>`:'')+(x.abbr?`<span class="ra-chip">약칭</span>`:'')+
+      `<span class="ra-sub">${x.regs.length}개 ${_e(RA_ORG.reg_word)}</span>`+
+      (raArr(x.synonyms).length?`<span class="ra-sub">· 동의어 ${x.synonyms.slice(0,4).map(w=>`<span class="ra-chip">${_e(w)}</span>`).join('')}</span>`:'')+
+      (raArr(x.full).length&&x.abbr?`<span class="ra-sub">· 정식 명칭 ${x.full.slice(0,2).map(_e).join(', ')}</span>`:'')+`</div>`+
+      (open?`<div class="ra-terms-b" id="raTermBody">${raTermBodyView(x.term)}</div>`:'')+`</li>`; }).join('')+`</ul>`
+    :`<div class="ra-empty sm">${raIc('search')}${T.q?`“${_e(T.q)}”${raEul(T.q)} 정의한 ${_e(RA_ORG.reg_word)}가 없습니다.`:'용어가 없습니다.'}</div>`;
+  const syn=Object.entries(T.syn||{});
+  const synBox=raSub('동의어 더하기',`<div class="ra-hint">직원이 쓰는 말과 ${_e(RA_ORG.reg_word)} 용어를 이어 두면 내규 자문이 그 용어로도 찾습니다(이 브라우저에 저장). 기본 동의어 ${st.synonyms||0}개는 기관 프로필(<code>org_config.json</code>의 synonyms)에서 고칠 수 있습니다.</div>`+
+    `<div class="ra-row"><input class="ra-in sm" id="raSynW" placeholder="직원이 쓰는 말 (예: 출장수당)" aria-label="직원이 쓰는 말" style="max-width:200px"><span>→</span><input class="ra-in sm" id="raSynT" placeholder="${_e(RA_ORG.reg_word)} 용어 (예: 일비)" aria-label="내규 용어" style="max-width:200px"><button class="svc-btn sm" onclick="raSynAdd()">더하기</button></div>`+
+    (syn.length?`<div class="ra-regs-cats">${syn.map(([w,ts])=>`<span class="ra-chip">${_e(w)} → ${raArr(ts).map(_e).join('·')} <button class="ra-link" aria-label="${_e(w)} 동의어 지우기" onclick="raSynDel('${_a(w)}')">×</button></span>`).join('')}</div>`:''));
+  return `<div class="ra-wide">${raSec(1,'용어 사전',raTip(`${RA_ORG.reg_word}의 정의 조항(“○○”이란 …을 말한다)과 약칭(이하 “○○”이라 한다)을 모았습니다. 같은 용어를 ${RA_ORG.reg_word}마다 다른 뜻으로 정의하면 ‘정의 불일치’로 표시합니다.`),bar+list)}${raSec(2,'동의어','',synBox)}</div>`;
+}
+let _raTermsT=0;
+async function raTermsLoad(){
+  const T=RA.terms, key=JSON.stringify([T.q,T.f,T.syn]); if(raTermsLoad._k===key) return; raTermsLoad._k=key;
+  const d=await raPost('/api/regagent/terms',{q:T.q, filter:T.f, synonyms:T.syn||{}});
+  raTermsLoad._k=''; _raTerms={key, d}; if(RA.tab==='terms') raKeepFocus(()=>raRerender('terms'), '#raTermsQ');
+}
+function raTermsSet(k,v){ RA.terms[k]=v; RA.terms.open=''; _raSave(); raRerender('terms'); }
+function raTermsQ(v){ RA.terms.q=v; _raSave(); clearTimeout(_raTermsT); _raTermsT=setTimeout(()=>{ raTermsLoad().then(()=>{ const el=document.getElementById('raTermsQ'); if(el&&document.activeElement!==el){ el.focus(); el.setSelectionRange(el.value.length,el.value.length); } }); },300); }
+function raTermsGo(t){ Object.assign(RA.terms,{q:t,f:'all',open:t}); _raSave(); raTab('terms'); }
+function raTermsOpen(t){ RA.terms.open=RA.terms.open===t?'':t; _raSave(); raKeepFocus(()=>raRerender('terms')); }
+function raTermBodyView(t){
+  const d=_raTermItem[t]; if(!d){ raTermLoadOne(t); return raSpin('정의를 불러오는 중...'); }
+  if(!d.success) return raErr(d.error||'정의를 불러오지 못했습니다.');
+  const x=d.item, defs=raArr(x.defs);
+  return `<ul class="ra-terms-defs">`+defs.map(f=>`<li><div><b>「${_e(f.reg)}」 ${_e(raLbl(f.no))}</b>${f.title?`(${_e(f.title)})`:''} ${f.kind==='abbr'?'<span class="ra-chip">약칭</span>':''}</div>`+
+    `<div class="ra-terms-def">${_e(f.text).replace(/\n/g,'<br>')}</div><div class="ra-row" style="margin:4px 0 0"><a class="ra-link" href="${raRegUrl(f.slug)}" target="_blank" rel="noopener">원문↗</a>`+
+    `<button class="ra-link" onclick="raAdvOpenReg('${_a(f.slug)}','${_a(f.reg)}','${_a(f.no)}')">내규 목록에서 보기</button><button class="ra-link" onclick="raRegsAmendArt('${_a(f.slug)}','${_a(f.reg)}','${_a(f.no)}')">${raIc('amend')}이 정의 개정</button></div></li>`).join('')+`</ul>`+
+    (x.conflict?`<div class="ra-note">${raIc('tip')}<span>같은 용어를 ${x.variants}가지 뜻으로 씁니다. 같은 대상을 가리키면 정의를 맞추거나 상위 ${_e(RA_ORG.reg_word)}의 정의를 따르게(“…「○○규정」 제○조에 따른 ○○을 말한다”) 정비하고, 범위가 정말 다르면 용어를 구별해 쓰는 것을 검토하세요.</span></div>`:'')+
+    `<div class="ra-row"><button class="svc-btn sm" onclick="raAdvAskTerm('${_a(t)}')">${raIc('advise')}이 용어로 자문</button></div>`;
+}
+async function raTermLoadOne(t){
+  if(_raTermItem[t]===0) return; _raTermItem[t]=0;
+  const d=await raPost('/api/regagent/terms',{term:t, synonyms:RA.terms.syn||{}}); _raTermItem[t]=d;
+  const el=document.getElementById('raTermBody'); if(el&&RA.terms.open===t) el.innerHTML=raTermBodyView(t);
+}
+function raAdvAskTerm(t){ Object.assign(RA.advise,{q:`${t}의 범위는 어떻게 되나요?`, scope:'', thread:[]}); _raSave(); raTab('advise'); }
+function raSynAdd(){ const w=(document.getElementById('raSynW')||{}).value||'', t=(document.getElementById('raSynT')||{}).value||'';
+  const a=w.trim(), b=t.trim(); if(a.length<2||b.length<2||a===b){ _toast('두 글자 이상의 서로 다른 말을 넣으세요.'); return; }
+  const S=RA.terms.syn=RA.terms.syn||{}; S[a]=[...new Set([...(S[a]||[]),b])].slice(0,6); _raSave(); _raTerms=null; raRerender('terms'); _toast(`“${a}” → “${b}”를 더했습니다. 내규 자문에 바로 쓰입니다.`); }
+function raSynDel(w){ delete RA.terms.syn[w]; _raSave(); _raTerms=null; raRerender('terms'); }
 
 function raUpperView(){
   const U=RA.upper;
