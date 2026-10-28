@@ -1019,3 +1019,11 @@ a.ra-link[target="_blank"][href^="http"]::after,a.ra-pill[target="_blank"][href^
 .ra-terms-def{margin-top:4px;line-height:1.75;color:var(--tx);overflow-wrap:anywhere;}
 .ra-note.warn{display:flex;gap:8px;align-items:flex-start;color:var(--warn);background:var(--warn-l);border-color:transparent;}
 .ra-note.warn svg.ic{width:16px;height:16px;flex:none;margin-top:2px;}
+.ra-org-h{display:flex;align-items:center;gap:6px;margin:12px 0 2px;font-size:13px;color:var(--mu);}
+.ra-org .ra-org-sub{padding:0 0 0 18px;border-bottom:none;}
+.ra-org .ra-org-sub>.ra-terms{border-top:none;margin:0;border-left:2px solid var(--bd);}
+.ra-org-dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:0 0 6px;font-size:13px;}
+.ra-org-dl dt{color:var(--mu);}
+.ra-org-dl dd{margin:0;overflow-wrap:anywhere;}
+.ra-org-dl ol{margin:0;padding-left:18px;}
+@media (max-width:560px){.ra-org-dl{grid-template-columns:1fr;}.ra-org .ra-org-sub{padding-left:8px;}}
