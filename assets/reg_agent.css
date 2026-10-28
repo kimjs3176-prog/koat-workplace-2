@@ -1005,3 +1005,17 @@ a.ra-link[target="_blank"][href^="http"]::after,a.ra-pill[target="_blank"][href^
 .ra-hist-h{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-xs);font-size:var(--text-sm);}
 .ra-hist-d{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-md);margin-top:var(--space-xs);font:var(--text-sm)/1.8 var(--font-text);}
 @media (max-width:760px){ .ra-hist-d{grid-template-columns:1fr;} }
+
+/* ── 용어 사전 ── */
+.ra-terms{list-style:none;margin:6px 0 0;padding:0;border-top:1px solid var(--bd);}
+.ra-terms>li{border-bottom:1px solid var(--bd);padding:8px 2px;}
+.ra-terms>li.on{background:var(--sf2);}
+.ra-terms-r{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;}
+.ra-terms-t{font-size:14px;padding:0;}
+.ra-terms-b{padding:8px 4px 4px 12px;}
+.ra-terms-defs{list-style:none;margin:0;padding:0;}
+.ra-terms-defs>li{padding:8px 0;border-bottom:1px dashed var(--bd);font-size:13px;}
+.ra-terms-defs>li:last-child{border-bottom:none;}
+.ra-terms-def{margin-top:4px;line-height:1.75;color:var(--tx);overflow-wrap:anywhere;}
+.ra-note.warn{display:flex;gap:8px;align-items:flex-start;color:var(--warn);background:var(--warn-l);border-color:transparent;}
+.ra-note.warn svg.ic{width:16px;height:16px;flex:none;margin-top:2px;}

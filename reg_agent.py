@@ -853,6 +853,11 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
         # (8-2) 용어 정의 — 중복 정의·쓰지 않는 용어·정의 전 사용
         for lv, tno, msg in term_check(arts):
             add(lv, "term", tno, msg)
+        # (8-2-1) 정의 불일치 — 다른 내규가 같은 용어를 다른 뜻으로 정의했으면 알린다(용어 사전)
+        for dno, t, others in def_conflicts(arts, title)[:5]:
+            add("info", "defconf", dno, f"{art_label(dno)}의 “{t}” 정의가 다른 {ORG['reg_word']} {len(others)}곳"
+                f"({', '.join('「' + x + '」' for x in others[:2])}{' 등' if len(others) > 2 else ''})과 다릅니다. "
+                f"같은 뜻이면 표현을 맞추고, 다르면 이 {ORG['reg_word']}에서의 범위를 분명히 하세요.", term=t)
         # (8-3) 시행세칙 위임 — 이 내규가 “시행세칙으로 정한다”고 맡긴 사항을 시행세칙이 받았는지
         for dg in delegation_check(title, arts):
             if not dg["covered"]:
@@ -3704,11 +3709,12 @@ _ADV_GENERIC = {"기간", "절차", "방법", "대상", "지급", "사용", "신
                 "얼마나", "며칠", "가능", "여부", "규정", "경우", "최대", "최소", "이상", "이하", "이내", "수준"}
 
 
-def _adv_query(q: str):
+def _adv_query(q: str, user_syn=None):
     """질의 → (검색 문장, 검색어, 어디에도 없는 검색어, 낱말 묶음). 묻는 말을 빼고, 본문에 없는 4자 이상 복합어는 두 글자씩 나눠 본다
     (“연차휴가” → 연차·휴가: 원문은 “연차유급휴가”). 일상어는 내규 용어를 더한다(“출장비” → 여비).
     낱말 묶음 [{w, alts, generic, syn}]은 근거 조문이 질의의 핵심 낱말을 함께 다루는지 볼 때 쓴다."""
     corpus = _corpus_text()
+    usyn = _user_syn(user_syn)
     words, miss = [], []
     for w in re.findall(r"[가-힣A-Za-z0-9]+", q or ""):
         w2 = _ADV_HA.sub("", w) if len(w) > 3 and len(_ADV_HA.sub("", w)) >= 2 else w
@@ -3722,7 +3728,7 @@ def _adv_query(q: str):
     for w in words:
         parts = [w[i:i + 2] for i in range(0, len(w) - 1, 2)] if re.fullmatch(r"[가-힣]{4,}", w) else []
         parts = [p for p in parts if p in corpus and p not in _ADV_QSTOP]
-        syn = _syn(w)
+        syn = _syn(w) + [x for x in usyn.get(w, []) if re.sub(r"\s+", "", x) in corpus and x not in _syn(w)]   # 화면에서 더한 동의어
         if w not in corpus and not syn:
             miss.append(w)                                    # 원문에 그대로는 없는 말(“가족수당”) — 쪼갠 말로 찾아도 단정하지 않는다
         use = parts if parts and (w not in corpus or len(w) >= 4) else []
@@ -3742,9 +3748,10 @@ def _adv_cover(text: str, groups: list) -> int:
 _ADV_WEAK_TITLE = re.compile(r"^(?:목적|정의|용어의\s*정의|기타|적용\s*범위)$")
 
 
-def advise_sources(q: str, slug: str = "", cap: int = 10) -> dict:
-    """질의 → 근거 후보 조문(주 조문 + 그 조문이 인용·준용하는 조문 + 시행세칙의 관련 조문 + 인용한 별표)."""
-    query, toks, miss, groups = _adv_query(q)
+def advise_sources(q: str, slug: str = "", cap: int = 10, syn=None) -> dict:
+    """질의 → 근거 후보 조문(주 조문 + 그 조문이 인용·준용하는 조문 + 시행세칙의 관련 조문 + 인용한 별표
+    + 질의에 든 용어의 정의 조문)."""
+    query, toks, miss, groups = _adv_query(q, syn)
     core = sum(1 for g in groups if not g["generic"])
     regs = {r["slug"]: r for r in all_regs()}
     names = _reg_names()
@@ -3874,9 +3881,29 @@ def advise_sources(q: str, slug: str = "", cap: int = 10) -> dict:
             t = re.sub(r"\s+", "", bx["title"] + bx["body"])
             gap = [g["w"] for g in groups if not g["generic"] and not any(re.sub(r"\s+", "", a) in t for a in g["alts"])]
             gap = gap or [g["w"] for g in groups if not g["generic"]]
+    # 질의에 든 용어를 내규에서 정의했으면 그 정의 조문도 근거로 — 내규마다 뜻이 다르면 알린다(“임직원에 계약직도 포함되나요?”)
+    terms = []
+    gl = glossary()["terms"]
+    qn = re.sub(r"\s+", "", q or "")
+    cap += 4                                                  # 정의 조문은 주 조문이 자리를 다 채워도 넣는다
+    for t, e in sorted(gl.items(), key=lambda x: -len(x[0])):
+        tn = re.sub(r"\s+", "", t)
+        if len(tn) < 2 or t in _GLOSS_GENERIC or tn not in qn or any(tn in re.sub(r"\s+", "", x) for x in terms):
+            continue
+        dd = [d for d in e["defs"] if d["kind"] == "def" and (not slug or d["slug"] == slug)]
+        if not dd:
+            continue
+        terms.append(t)
+        for d in dd[:4]:
+            src = add(d["slug"], d["no"], "def", f"“{t}”의 정의")
+            if src:
+                src["keys"] = [f"“{t}”{_josa(t, ('이란', '란'))} {d['text'].split(chr(10))[0][:200]}"]
+        if len(terms) >= 2:
+            break
+    conf = [t for t in terms if gl[t]["conflict"] and not slug]
     return {"tokens": toks, "unmatched": miss, "semantic": res.get("semantic", False), "sources": out,
             "laws": list(laws.values())[:6], "scoped": bool(slug), "core": [g["w"] for g in groups if not g["generic"]],
-            "gap": gap, "mapped": {g["w"]: g["syn"] for g in groups if g["syn"]}}
+            "gap": gap, "mapped": {g["w"]: g["syn"] for g in groups if g["syn"]}, "terms": terms, "term_conflicts": conf}
 
 
 def _adv_rule_answer(q: str, S: dict) -> dict:
@@ -3909,7 +3936,9 @@ def _adv_rule_answer(q: str, S: dict) -> dict:
             ans += f" 금액·기준은 {', '.join('「' + x['reg'] + '」 ' + x['appx'] for x in ap[:2])}에 있습니다."
         if extra:
             ans += f" 이 조문이 인용·준용하는 조문과 세부 기준 {len(extra)}건도 함께 보세요."
-    return {"conclusion": "확인 필요" if weak else "해당 규정", "answer": ans, "basis": basis, "conditions": [], "caveats": [], "followups": []}
+    cav = [f"“{t}”의 뜻이 {ORG['reg_word']}마다 다르게 정의되어 있습니다(근거의 ‘정의’ 조문 참조). 어느 {ORG['reg_word']}가 적용되는지 확인하세요."
+           for t in S.get("term_conflicts") or []]
+    return {"conclusion": "확인 필요" if weak else "해당 규정", "answer": ans, "basis": basis, "conditions": [], "caveats": cav, "followups": []}
 
 
 _ADV_CITE_GROUP = re.compile(r"\[\s*([0-9]+(?:\s*[,~\-–]\s*[0-9]+)+)\s*\]")
@@ -3979,6 +4008,8 @@ def ai_advise(b: dict, S: dict):
     gap = S.get("gap") or []
     note = (f"\n※ 검색 참고: 질의의 “{'”, “'.join(gap[:3])}”{_josa(gap[:3][-1], ('을', '를'))} 직접 다룬 조문은 찾지 못했습니다. "
             "근거 조문에 없으면 단정하지 말 것.\n") if gap else ""
+    note += "".join(f"\n※ “{t}”는 {ORG['reg_word']}마다 정의가 다르다(근거의 ‘정의’ 조문). 어느 {ORG['reg_word']}의 정의가 적용되는지 구분해 답할 것.\n"
+                    for t in S.get("term_conflicts") or [])
     user = f"{hist}질의: {b.get('question', '')}\n{note}\n[근거 조문]\n{blocks}"
     text, err = _CTX["ai_generate"](provider, key, mdl, system, user, max_tokens=2500, temperature=0.1, json_mode=True)
     if err:
@@ -4039,7 +4070,7 @@ def ra_advise():
     slug = (b.get("slug") or "").strip()
     if slug and not find_reg(slug, ""):
         return jsonify({"success": False, "error": "지정한 내규를 찾을 수 없습니다."}), 404
-    S = advise_sources(q, slug)
+    S = advise_sources(q, slug, syn=b.get("synonyms"))
     ans, notice = ai_advise(b, S)
     hint = ""
     if not ans:
@@ -4050,7 +4081,8 @@ def ra_advise():
     return jsonify({"success": True, "question": q, "scope": slug, "ai": "model" in ans, "notice": notice or hint,
                     "semantic": S["semantic"], "tokens": S["tokens"], "unmatched": S.get("unmatched", []),
                     "gap": S.get("gap", []), "mapped": S.get("mapped", {}),
-                    "sources": S["sources"], "laws": S["laws"], **ans})
+                    "sources": S["sources"], "laws": S["laws"], "terms": S.get("terms", []),
+                    "term_conflicts": S.get("term_conflicts", []), **ans})
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -4389,3 +4421,201 @@ def ra_ledger_sum():
         ok, recs = _ledger_lines()
         _LEDGER_SUM.update(at=time.time(), v={"available": ok, "months": ledger_summary(recs) if ok else []})
     return jsonify({"success": True, "kinds": _LEDGER_KINDS, **_LEDGER_SUM["v"]})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 용어 사전(규정 온톨로지 1단계) — 내규에서 정의한 용어·약칭을 개념으로 모으고,
+# 동의어(일상어↔내규 용어 _SYN·기관 프로필 synonyms + 약칭↔정식 명칭)와 내규 사이 정의 불일치를 계산한다.
+# 내보내기는 SKOS 개념(prefLabel·altLabel·definition) 꼴의 JSON-LD.
+# ══════════════════════════════════════════════════════════════════════════
+_GLOSS = {"key": None, "v": None}
+_GLOSS_GENERIC = _TERM_GENERIC | {"법", "영", "시행령", "규정", "이 규정", "이 규칙", "기관", "본부", "센터", "협의회", "사업", "과제",
+                                   "본원", "지침", "세칙", "매뉴얼", "요령", "기준", "계획", "신청인", "신청자"}
+
+
+def _def_text(body: str, m) -> str:
+    """정의 줄 + 그 아래 목(가. 나.) — “…다음 각 목의 어느 하나에 해당하는 자를 말한다.”까지 함께."""
+    lines = body[m.end():].split("\n")
+    out = [lines[0].strip()]
+    for ln in lines[1:]:
+        s = ln.strip()
+        if not re.match(r"^[가-하]\.\s", s):
+            break
+        out.append(s)
+    return "\n".join(x for x in out if x)[:600]
+
+
+def _def_key(t: str) -> str:
+    """정의 비교용 정규화: 띄어쓰기·괄호·인용·기관명·“…을 말한다” 차이는 같은 뜻으로 본다."""
+    t = re.sub(r"\([^)]{0,40}\)|<[^>]{0,40}>|[「」『』“”\"'‘’·,.\s]", "", t or "")
+    for w in [ORG.get("org_name"), ORG.get("org_short")]:
+        if w:
+            t = t.replace(re.sub(r"\s+", "", w), "")
+    return re.sub(r"(?:을|를)?말한다$", "", t)
+
+
+def _user_syn(extra) -> dict:
+    """화면에서 더한 동의어 {일상어: [내규 용어…]} 정리(브라우저에 저장된 것을 요청마다 보낸다)."""
+    out = {}
+    for k, v in (extra.items() if isinstance(extra, dict) else []):
+        k = str(k).strip()[:30]
+        vs = [str(x).strip()[:30] for x in (v if isinstance(v, list) else [v]) if isinstance(x, (str, int)) and str(x).strip()][:6]
+        if k and vs and len(out) < 200:
+            out[k] = vs
+    return out
+
+
+def glossary() -> dict:
+    """{terms: {용어: {term, defs:[{reg, slug, no, title, kind, text, key}], full:[정식 명칭], conflict, groups}}}"""
+    regs = all_regs()
+    if _GLOSS["key"] == id(regs):
+        return _GLOSS["v"]
+    terms = {}
+
+    def put(t, d):
+        t = re.sub(r"\s+", " ", t).strip()
+        if not t or len(t) > 30 or re.search(r"[○△□◇]", t):
+            return
+        e = terms.setdefault(t, {"term": t, "defs": [], "full": []})
+        if not any(x["slug"] == d["slug"] and x["no"] == d["no"] and x["kind"] == d["kind"] for x in e["defs"]):
+            e["defs"].append(d)
+    for r in regs:
+        for a in r["articles"]:
+            if a["deleted"]:
+                continue
+            body = a["body"]
+            base = {"reg": r["title"], "slug": r["slug"], "no": a["no"], "title": a["title"]}
+            for m in _DEF_LINE.finditer(body):
+                t = re.sub(r"\s+", " ", m.group(1)).strip()
+                if m.group(0).rstrip().endswith("함은"):
+                    t = re.sub(r"(?<=[가-힣]{2})(?:이|라)$", "", t)
+                txt = _def_text(body, m)
+                put(t, dict(base, kind="def", text=txt, key=_def_key(txt.split("\n")[0])))
+            for m in _ABBR_DEF.finditer(body):
+                fm = re.search(r"([^\s,.(（「」]{2,20}(?:\s[^\s,.(（「」]{1,12}){0,3})\s*$", body[max(0, m.start() - 60):m.start()])
+                full = re.sub(r"^(?:및|또는|그|이|각|등|의)\s+", "", fm.group(1)).strip() if fm else ""
+                put(m.group(1), dict(base, kind="abbr", text=f"{full}(약칭)" if full else "약칭", key="", full=full))
+                if full and full != m.group(1):
+                    e = terms[re.sub(r"\s+", " ", m.group(1)).strip()]
+                    if full not in e["full"]:
+                        e["full"].append(full)
+    for t, e in terms.items():
+        dd = [d for d in e["defs"] if d["kind"] == "def"]
+        reps = []                                         # 뜻이 같은 정의끼리 묶는다(표현이 조금 달라도 같은 뜻)
+        for d in dd:
+            for rp in reps:
+                if difflib.SequenceMatcher(None, rp[0]["key"], d["key"]).ratio() >= 0.85:
+                    rp.append(d)
+                    break
+            else:
+                reps.append([d])
+        e["variants"] = len(reps)
+        e["regs"] = sorted({d["reg"] for d in e["defs"]})
+        e["conflict"] = len(reps) > 1 and len({d["reg"] for d in dd}) > 1 and t not in _GLOSS_GENERIC
+    _GLOSS.update(key=id(regs), v={"terms": terms})
+    return _GLOSS["v"]
+
+
+def synonyms(word: str, extra=None) -> list:
+    """동의어: 일상어↔내규 용어(_SYN·기관 프로필 synonyms·화면에서 더한 것) + 약칭↔정식 명칭
+    (약칭의 정식 명칭이 하나뿐일 때만 — 내규마다 다른 약칭은 묶지 않는다)."""
+    w = (word or "").strip()
+    m = dict(_SYN)
+    for k, v in _user_syn(extra).items():
+        m[k] = list(dict.fromkeys(list(m.get(k, [])) + v))
+    out = list(m.get(w, [])) + [k for k, v in m.items() if w in v]
+    e = glossary()["terms"].get(w)
+    if e and len(e["full"]) == 1 and len(e["full"][0]) <= 20:
+        out.append(e["full"][0])
+    for t, e2 in glossary()["terms"].items():
+        if len(e2["full"]) == 1 and e2["full"][0] == w and t not in _GLOSS_GENERIC:
+            out.append(t)
+    return [x for i, x in enumerate(out) if x and x != w and x not in out[:i]][:8]
+
+
+def def_conflicts(arts: list, title: str = "") -> list:
+    """이 조문들에서 정의한 용어가 다른 내규의 정의와 뜻이 다른지 → [(no, term, [다른 내규명])]"""
+    g = glossary()["terms"]
+    out = []
+    for a in arts:
+        if a.get("deleted"):
+            continue
+        for m in _DEF_LINE.finditer(a.get("body", "")):
+            t = re.sub(r"\s+", " ", m.group(1)).strip()
+            e = g.get(t)
+            if not e or t in _GLOSS_GENERIC:
+                continue
+            k = _def_key(_def_text(a["body"], m).split("\n")[0])
+            others = [d for d in e["defs"] if d["kind"] == "def" and _nk(d["reg"]) != _nk(title)]
+            if others and not any(difflib.SequenceMatcher(None, k, d["key"]).ratio() >= 0.85 for d in others):
+                out.append((a["no"], t, sorted({d["reg"] for d in others})))
+    return out
+
+
+def _gloss_row(e: dict, extra=None, full: bool = False) -> dict:
+    row = {"term": e["term"], "regs": e["regs"], "n_defs": len(e["defs"]), "variants": e.get("variants", 0),
+           "conflict": e["conflict"], "abbr": all(d["kind"] == "abbr" for d in e["defs"]), "full": e["full"][:3],
+           "synonyms": synonyms(e["term"], extra)}
+    if full:
+        row["defs"] = [{k: d[k] for k in ("reg", "slug", "no", "title", "kind", "text")} for d in e["defs"]]
+    return row
+
+
+@bp.route("/api/regagent/terms", methods=["POST"])
+def ra_terms():
+    """용어 사전. body: {q?, filter?: all|conflict|abbr|def, term?(한 용어 상세), synonyms?:{일상어: [내규 용어]}}"""
+    b = _body()
+    extra = _user_syn(b.get("synonyms"))
+    g = glossary()["terms"]
+    if (b.get("term") or "").strip():
+        e = g.get(b["term"].strip())
+        if not e:
+            return jsonify({"success": False, "error": "그 용어를 정의한 내규가 없습니다."}), 404
+        return jsonify({"success": True, "item": _gloss_row(e, extra, True)})
+    q = re.sub(r"\s+", "", (b.get("q") or "").strip())[:30]
+    f = (b.get("filter") or "all").strip()
+    rows = []
+    for t, e in g.items():
+        if q and q not in t.replace(" ", "") and not any(q in s for s in synonyms(t, extra)) \
+                and not any(q in re.sub(r"\s+", "", x) for x in e["full"]):
+            continue
+        if f == "conflict" and not e["conflict"]:
+            continue
+        if f == "abbr" and not all(d["kind"] == "abbr" for d in e["defs"]):
+            continue
+        if f == "def" and not any(d["kind"] == "def" for d in e["defs"]):
+            continue
+        rows.append(_gloss_row(e, extra))
+    rows.sort(key=lambda x: (not x["conflict"], -len(x["regs"]), x["term"]))
+    allv = list(g.values())
+    return jsonify({"success": True, "total": len(allv), "count": len(rows), "items": rows[:400],
+                    "stats": {"terms": len(allv), "conflict": sum(1 for e in allv if e["conflict"]),
+                              "multi": sum(1 for e in allv if len(e["regs"]) > 1),
+                              "synonyms": len(_SYN) + len(extra)}})
+
+
+@bp.route("/api/regagent/ontology")
+def ra_ontology():
+    """용어 사전 내보내기 — SKOS 개념(JSON-LD). 내규·조문은 dcterms:source 로 가리킨다."""
+    g = glossary()["terms"]
+    base = "urn:koat-reg:"
+    concepts = []
+    for t, e in sorted(g.items()):
+        c = {"@id": base + "term/" + t.replace(" ", "_"), "@type": "skos:Concept", "skos:prefLabel": {"@value": t, "@language": "ko"}}
+        alts = synonyms(t) + e["full"]
+        if alts:
+            c["skos:altLabel"] = [{"@value": x, "@language": "ko"} for x in dict.fromkeys(alts)]
+        defs = [d for d in e["defs"] if d["kind"] == "def"]
+        if defs:
+            c["skos:definition"] = [{"@value": d["text"], "@language": "ko", "dcterms:source": f"{base}reg/{d['slug']}#{d['no']}",
+                                     "rdfs:comment": f"「{d['reg']}」 {art_label(d['no'])}"} for d in defs]
+        if e["conflict"]:
+            c["skos:note"] = f"내규마다 정의가 다름({e['variants']}가지)"
+        concepts.append(c)
+    doc = {"@context": {"skos": "http://www.w3.org/2004/02/skos/core#", "dcterms": "http://purl.org/dc/terms/",
+                        "rdfs": "http://www.w3.org/2000/01/rdf-schema#"},
+           "@id": base + "scheme", "@type": "skos:ConceptScheme", "dcterms:title": f"{ORG['org_name']} {ORG['reg_word']} 용어 사전",
+           "skos:hasTopConcept": concepts}
+    resp = jsonify(doc)
+    resp.headers["Content-Disposition"] = "attachment; filename=reg_glossary.jsonld"
+    return resp
