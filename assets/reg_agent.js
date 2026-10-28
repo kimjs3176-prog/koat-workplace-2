@@ -22,6 +22,7 @@ const RA_IC={
   spark:'<path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/>',
   search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   regs:'<path d="M4 5h2M4 12h2M4 19h2"/><path d="M9 5h11M9 12h11M9 19h11"/>',
+  org:'<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-4h12v4"/>',
   terms:'<path d="M4 4h11a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z"/><path d="M4 17a3 3 0 0 1 3-3h11M8 8h6M8 11h4"/>',
   advise:'<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.3 2.4c-.5.2-.8.6-.8 1.1V14M12 17h.01"/>',
   doc:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
@@ -43,6 +44,7 @@ const RA_TABS=[
   ['regs','내규 목록','등록된 내규 찾아보기·바로 작업'],
   ['advise','내규 자문','질의에 근거 조문으로 답변'],
   ['terms','용어 사전','정의·동의어·내규 간 정의 불일치'],
+  ['org','조직·위원회','조직도·위원회 구성·직위와 근거 조문'],
   ['enact','제정','새 내규 초안 · 심의 사전검토 · 문서 세트'],
   ['amend','개정','수정안 · 신구조문대비표 · 인용 정정'],
   ['bulk','일괄 정비','바뀐 용어·명칭을 모든 내규에 반영'],
@@ -58,6 +60,7 @@ const RA_PAGE={
   regs:['내규 목록',[['search','찾기'],['doc','원문·조문'],['amend','개정'],['check','점검']]],
   advise:['내규 자문',[['advise','질의'],['search','근거 조문'],['doc','회신'],['amend','개정 연계']]],
   terms:['용어 사전',[['terms','정의 모음'],['search','동의어'],['alert','정의 불일치'],['amend','정비 착수']]],
+  org:['조직·위원회',[['org','조직도'],['advise','위원회 구성'],['search','나온 조문'],['bulk','옛 이름 정비']]],
   health:['규정 건강검진',[['search','전체 진단'],['health','점수·등급'],['upper','상위법·행정규칙 최신성'],['amend','정비 착수']]],
   enact:['새 내규 제정',[['info','기본 정보'],['upper','위임 조항'],['search','유사 규정'],['spark','조문 초안'],['check','점검·심의'],['doc','문서 세트']]],
   amend:['내규 개정',[['search','조문 선택'],['spark','수정안'],['doc','대비표'],['bulk','인용 영향'],['check','점검·심의'],['doc','문서 세트']]],
@@ -93,6 +96,7 @@ function _raBlank(){
     regs:{q:'',cat:'',sort:'name',open:'',view:'arts',art:''},
     advise:{q:'',scope:'',res:null,hist:[],thread:[]},
     terms:{q:'',f:'all',open:'',syn:{}},
+    org:{v:'units',q:'',open:''},
     graph:{sel:''},
     proc:{ans:{},chk:{},plan:{}},
     me:{name:''},
@@ -117,7 +121,7 @@ function _raLoad(){
   try{ const o=JSON.parse(localStorage.getItem(RA_KEY)||'null'); if(o&&typeof o==='object') return _raNormalize(o); }catch(e){}
   return _raBlank();
 }
-let RA=_raLoad(); RA.agent=Object.assign({req:'',steps:[],plan:null,done:null},RA.agent||{},{running:false}); (RA.agent.steps||[]).forEach(s=>{ if(s.st==='run') s.st='err'; }); RA.health=Object.assign({law:{},f:{q:'',g:''}},RA.health||{}); RA.advise=Object.assign({q:'',scope:'',res:null,hist:[],thread:[]},RA.advise||{}); RA.terms=Object.assign({q:'',f:'all',open:'',syn:{}},RA.terms||{}); RA.ledger.srv=null;   // 기관 대장 집계는 열 때마다 새로 받는다
+let RA=_raLoad(); RA.agent=Object.assign({req:'',steps:[],plan:null,done:null},RA.agent||{},{running:false}); (RA.agent.steps||[]).forEach(s=>{ if(s.st==='run') s.st='err'; }); RA.health=Object.assign({law:{},f:{q:'',g:''}},RA.health||{}); RA.advise=Object.assign({q:'',scope:'',res:null,hist:[],thread:[]},RA.advise||{}); RA.terms=Object.assign({q:'',f:'all',open:'',syn:{}},RA.terms||{}); RA.org=Object.assign({v:'units',q:'',open:''},RA.org||{}); RA.ledger.srv=null;   // 기관 대장 집계는 열 때마다 새로 받는다
 setTimeout(()=>{ if(raArr((RA.ledger||{}).items).some(x=>x.pending)) raLedgerFlush(true); },3000);   // 지난번에 못 보낸 실적
 let _raArtsErr='', _raArts=null, _raCatalog=null, _raSaveT=null, _raBusy={};
 function _raSave(){ clearTimeout(_raSaveT); _raSaveT=setTimeout(()=>{ try{ localStorage.setItem(RA_KEY, raStateJson()); }catch(e){ if(typeof _toast==='function') _toast('작업 내용을 저장하지 못했습니다(브라우저 저장 공간 부족).'); } },300); }
@@ -410,6 +414,7 @@ function raRender(){
   else if(t==='regs') b.innerHTML=raRegsView();
   else if(t==='advise') b.innerHTML=raAdviseView();
   else if(t==='terms') b.innerHTML=raTermsView();
+  else if(t==='org') b.innerHTML=raOrgView();
   else if(t==='upper') b.innerHTML=raUpperView();
   else if(t==='check') b.innerHTML=raCheckView();
   else if(t==='graph') b.innerHTML=raGraphView();
@@ -2769,6 +2774,100 @@ function raSynAdd(){ const w=(document.getElementById('raSynW')||{}).value||'', 
   const a=w.trim(), b=t.trim(); if(a.length<2||b.length<2||a===b){ _toast('두 글자 이상의 서로 다른 말을 넣으세요.'); return; }
   const S=RA.terms.syn=RA.terms.syn||{}; S[a]=[...new Set([...(S[a]||[]),b])].slice(0,6); _raSave(); _raTerms=null; raRerender('terms'); _toast(`“${a}” → “${b}”를 더했습니다. 내규 자문에 바로 쓰입니다.`); }
 function raSynDel(w){ delete RA.terms.syn[w]; _raSave(); _raTerms=null; raRerender('terms'); }
+// ── 조직·위원회(규정 온톨로지 2단계): 조직도·위원회 구성·직위·기능 부서와 나온 조문 ──
+let _raOrg=null, _raOrgItem={};
+function raOrgView(){
+  const O=RA.org;
+  if(!_raOrg){ raOrgLoad(); return `<div class="ra-wide">${raSpin('조직·위원회를 모으는 중...')}</div>`; }
+  const d=_raOrg; if(!d.success) return `<div class="ra-wide">${raErr(d.error||'조직 정보를 불러오지 못했습니다.')}</div>`;
+  const st=d.stats||{};
+  const vb=(k,l,n)=>`<button class="ra-chip btn${O.v===k?' on':''}" aria-pressed="${O.v===k}" onclick="raOrgSet('${k}')">${l}${n!=null?` <b>${n}</b>`:''}</button>`;
+  const bar=`<div class="ra-regs-bar"><input class="ra-in" id="raOrgQ" type="search" aria-label="이름 찾기" placeholder="부서·위원회·직위 이름으로 찾기 (예: 인사, 본부장)" value="${_e(O.q||'')}" oninput="raOrgQ(this.value)"></div>`+
+    `<div class="ra-regs-cats">${vb('units','조직도',st.units)}${vb('cmts','위원회',st.committees)}${vb('roles','직위',st.roles)}${vb('depts','기능 부서',st.depts)}${st.unknown?vb('unknown','확인 필요',st.unknown):''}</div>`;
+  return `<div class="ra-wide">${raSec(1,'조직·위원회',raTip(`직제 조문으로 조직도를, “…위원회를 둔다” 같은 설치 조문으로 위원회의 구성·위원장·심의 사항을 모았습니다. 이름을 누르면 그 이름이 나온 ${RA_ORG.reg_word} 조문을 보여 줍니다.`),bar+`<div id="raOrgList" aria-live="polite">${raOrgListView(d)}</div>`)}</div>`;
+}
+// 목록만 다시 그린다(찾기 입력란은 그대로 — 입력 중 초점을 잃지 않게)
+function raOrgListView(d){
+  const O=RA.org, q=(O.q||'').replace(/\s+/g,''), hit=s=>!q||String(s||'').replace(/\s+/g,'').includes(q);
+  const row=(kind,id,head,meta,open)=>`<li class="${open?'on':''}"><div class="ra-terms-r"><button class="ra-link ra-terms-t" aria-expanded="${open}" onclick="raOrgOpen('${kind}','${_a(id)}')">${head}</button>${meta}</div>`+
+    (open?`<div class="ra-terms-b" id="raOrgBody">${raOrgBodyView(kind,id)}</div>`:'')+`</li>`;
+  const isOpen=(k,id)=>O.open===k+':'+id;
+  const cnt=(n,r)=>`<span class="ra-sub">${r}개 ${_e(RA_ORG.reg_word)} · ${n}회</span>`;
+  let body='';
+  if(O.v==='units'){
+    const U=raArr(d.units), by={}; U.forEach(u=>{ (by[u.parent||'']=by[u.parent||'']||[]).push(u); });
+    const node=u=>row('unit',u.name,`<b>${_e(u.name)}</b>`,`<span class="ra-chip">${_e(u.kind||'조직')}</span>${cnt(u.n,u.regs)}`,isOpen('unit',u.name))+
+      (raArr(by[u.name]).length?`<li class="ra-org-sub"><ul class="ra-terms">${by[u.name].filter(c=>hit(c.name)||raArr(by[c.name]).some(g=>hit(g.name))).map(node).join('')}</ul></li>`:'');
+    const tops=[d.head,d.deputy].map(h=>({h, us:raArr(by[h]).filter(u=>hit(u.name)||raArr(by[u.name]).some(c=>hit(c.name)||raArr(by[c.name]).some(g=>hit(g.name))))}));
+    body=U.length?tops.filter(t=>t.us.length).map(t=>`<div class="ra-org-h">${raIc('regs')}<b>${_e(t.h)}</b> 밑</div><ul class="ra-terms ra-org">${t.us.map(node).join('')}</ul>`).join('')||`<div class="ra-empty sm">찾는 이름이 없습니다.</div>`
+      :`<div class="ra-empty sm">${raIc('search')}직제 조문(“○○ 밑에 △△을 둔다”, “1. ○○본부 : △△실, □□팀”)을 찾지 못했습니다.</div>`;
+  }else if(O.v==='cmts'){
+    const C=raArr(d.committees).filter(c=>hit(c.name)||hit(c.reg));
+    body=`<ul class="ra-terms">`+C.map(c=>row('committee',c.id,`<b>${_e(c.name)}</b>`+(c.generic?`<small class="ra-sub">「${_e(c.reg)}」</small>`:''),
+      (c.size?`<span class="ra-chip">${_e(c.size)}</span>`:'')+(c.chair?`<span class="ra-chip">위원장 ${_e(c.chair)}</span>`:'')+(c.verb?`<span class="ra-chip">${_e(c.verb)}</span>`:'')+
+      `<span class="ra-sub">근거 「${_e(c.reg)}」 ${_e(raLbl(c.no))}${c.rules?` · 운영 「${_e(c.rules.reg)}」`:''}</span>`,isOpen('committee',c.id))).join('')+`</ul>`;
+    if(!C.length) body=`<div class="ra-empty sm">찾는 위원회가 없습니다.</div>`;
+  }else if(O.v==='roles'){
+    const R=raArr(d.roles).filter(r=>hit(r.name));
+    body=`<ul class="ra-terms">`+R.map(r=>row('role',r.name,`<b>${_e(r.name)}</b>`,`<span class="ra-chip">${_e(r.kind)}</span>${cnt(r.n,r.regs)}`,isOpen('role',r.name))).join('')+`</ul>`;
+  }else if(O.v==='depts'){
+    const D=raArr(d.depts).filter(x=>hit(x.name));
+    body=`<div class="ra-hint">“인사담당부서”처럼 부서 이름 대신 역할로 가리킨 말입니다. 정의가 없으면 어느 부서인지 ${_e(RA_ORG.reg_word)}마다 달리 읽힐 수 있습니다.</div><ul class="ra-terms">`+
+      D.map(x=>row('dept',x.name,`<b>${_e(x.name)}</b>`,(x.def?`<span class="ra-chip">정의 있음</span>`:`<span class="ra-chip warn">정의 없음</span>`)+cnt(x.n,x.regs),isOpen('dept',x.name))).join('')+`</ul>`;
+  }else{
+    const X=raArr(d.unknown).filter(x=>hit(x.name));
+    body=`<div class="ra-note">${raIc('tip')}<span>직제(조직도)에 없는 본부·팀 이름입니다. 조직 개편 전의 이름이면 <b>일괄 정비</b>로 현재 이름으로 바꾸고, 사업·시험을 위한 한시 조직이면 그대로 두세요.</span></div><ul class="ra-terms">`+
+      X.map(x=>row('unknown',x.name,`<b>${_e(x.name)}</b>`,`<span class="ra-sub">${x.regs.length}개 ${_e(RA_ORG.reg_word)} · ${x.n}회</span>`,isOpen('unknown',x.name))).join('')+`</ul>`;
+  }
+  return body;
+}
+async function raOrgLoad(){
+  if(raOrgLoad._b) return; raOrgLoad._b=true;
+  const d=await raGet('/api/regagent/org'); raOrgLoad._b=false; _raOrg=d; if(RA.tab==='org') raRerender('org');
+}
+let _raOrgT=0;
+function raOrgSet(v){ RA.org.v=v; RA.org.open=''; _raSave(); raRerender('org'); }
+function raOrgQ(v){ RA.org.q=v; _raSave(); clearTimeout(_raOrgT); _raOrgT=setTimeout(()=>{ const el=document.getElementById('raOrgList'); if(el&&_raOrg) el.innerHTML=raOrgListView(_raOrg); else raRerender('org'); },200); }
+function raOrgOpen(kind,id){ const k=kind+':'+id; RA.org.open=RA.org.open===k?'':k; _raSave(); raKeepFocus(()=>raRerender('org')); }
+function raOrgGo(kind,id){ const v={unit:'units',committee:'cmts',role:'roles',dept:'depts',unknown:'unknown'}[kind]||'units'; Object.assign(RA.org,{v,q:'',open:kind+':'+id}); _raSave(); raTab('org'); }
+function raOrgArts(arts){
+  arts=raArr(arts); if(!arts.length) return '';
+  return `<div class="ra-ih">나온 조문 <b>${arts.length}</b>${arts.length>=60?'+':''}</div><ul class="ra-terms-defs">`+arts.map(a=>`<li><div><b>「${_e(a.reg)}」 ${_e(raLbl(a.no))}</b>${a.title?`(${_e(a.title)})`:''} `+
+    `<a class="ra-link" href="${raRegUrl(a.slug)}" target="_blank" rel="noopener">원문↗</a> <button class="ra-link" onclick="raAdvOpenReg('${_a(a.slug)}','${_a(a.reg)}','${_a(a.no)}')">내규 목록</button> <button class="ra-link" onclick="raRegsAmendArt('${_a(a.slug)}','${_a(a.reg)}','${_a(a.no)}')">개정</button></div>`+
+    `<div class="ra-terms-def">${_e(a.snip)}</div></li>`).join('')+`</ul>`;
+}
+function raOrgBodyView(kind,id){
+  const k=kind+':'+id, d=_raOrgItem[k]; if(!d){ raOrgLoadOne(kind,id); return raSpin('불러오는 중...'); }
+  if(!d.success) return raErr(d.error||'불러오지 못했습니다.');
+  const x=d.item, src=(s,l)=>s?`<div class="ra-row" style="margin:2px 0"><span class="ra-sub">${l}</span> <b>「${_e(s.reg)}」${s.no?' '+_e(raLbl(s.no)):''}</b> <a class="ra-link" href="${raRegUrl(s.slug)}" target="_blank" rel="noopener">원문↗</a></div>`:'';
+  let h='';
+  if(kind==='committee'){
+    h=`<dl class="ra-org-dl">`+[['구성',x.size],['위원장',x.chair],['간사',x.secretary],[x.verb?x.verb+' 사항':'',raArr(x.functions).length?`<ol>${x.functions.map(f=>`<li>${_e(f)}</li>`).join('')}</ol>`:'']]
+      .filter(([l,v])=>l&&v).map(([l,v])=>`<dt>${_e(l)}</dt><dd>${l.endsWith('사항')?v:_e(v)}</dd>`).join('')+`</dl>`+
+      src({reg:x.reg,slug:x.slug,no:x.no},'설치 근거')+(x.rules?src(x.rules,'운영 내규'):'')+raArr(x.also).map(a=>src(a,'함께 둔 곳')).join('')+
+      (!x.size&&!x.chair?`<div class="ra-hint">구성·위원장을 정한 문장을 찾지 못했습니다. 설치 근거 조문을 확인하세요.</div>`:'');
+  }else if(kind==='unit'){
+    h=(x.duty?`<div class="ra-terms-def">${_e(x.duty)}</div>`:'')+src(x.duty_src||x.src,x.duty?'분장 근거':'직제 근거')+
+      `<div class="ra-row" style="margin:4px 0">${x.parent?`<span class="ra-sub">상위</span> ${raArr(_raOrg&&_raOrg.units).some(u=>u.name===x.parent)?`<button class="ra-link" onclick="raOrgGo('unit','${_a(x.parent)}')">${_e(x.parent)}</button>`:_e(x.parent)}`:''}`+
+      (raArr(x.children).length?` <span class="ra-sub">· 하위</span> ${x.children.map(c=>`<button class="ra-link" onclick="raOrgGo('unit','${_a(c)}')">${_e(c)}</button>`).join(' ')}`:'')+` <span class="ra-sub">· 장</span> ${_e(x.head)}</div>`;
+  }else if(kind==='dept'){
+    h=raArr(x.defs).length?`<ul class="ra-terms-defs">${x.defs.map(f=>`<li><div><b>「${_e(f.reg)}」 ${_e(raLbl(f.no))}</b> 정의</div><div class="ra-terms-def">${_e(f.text)}</div></li>`).join('')}</ul>`
+      :`<div class="ra-note">${raIc('tip')}<span>정의 조항이 없습니다. 여러 ${_e(RA_ORG.reg_word)}에서 쓰면 정의 조항에 “○○부서”란 어느 부서인지 밝혀 두면 해석이 갈리지 않습니다.</span></div>`;
+  }else if(kind==='unknown'){
+    h=`<div class="ra-row"><button class="svc-btn sm" onclick="raOrgBulk('${_a(x.name)}')">${raIc('bulk')}일괄 정비로 바꾸기</button></div>`;
+  }
+  return h+raOrgArts(x.articles);
+}
+async function raOrgLoadOne(kind,id){
+  const k=kind+':'+id; if(_raOrgItem[k]===0) return; _raOrgItem[k]=0;
+  const d=await raPost('/api/regagent/org/item',{kind,id}); _raOrgItem[k]=d;
+  const el=document.getElementById('raOrgBody'); if(el&&RA.org.open===k) el.innerHTML=raOrgBodyView(kind,id);
+}
+function raOrgBulk(name){
+  const x=raArr(_raOrg&&_raOrg.unknown).find(u=>u.name===name);
+  Object.assign(RA.bulk,{old:name,neu:'',whole:true,res:null,sel:{},only:x?x.regs.map(r=>r.slug):null,reason:`직제에 없는 조직명 「${name}」을(를) 현재 조직명으로 바로잡으려는 것임.`});
+  _raSave(); raTab('bulk'); _toast('바꿀 새 이름을 넣고 찾기를 누르세요.');
+}
 
 function raUpperView(){
   const U=RA.upper;
