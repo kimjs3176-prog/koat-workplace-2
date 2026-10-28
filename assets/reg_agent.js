@@ -65,7 +65,7 @@ const RA_PAGE={
   enact:['새 내규 제정',[['info','기본 정보'],['upper','위임 조항'],['search','유사 규정'],['spark','조문 초안'],['check','점검·심의'],['doc','문서 세트']]],
   amend:['내규 개정',[['search','조문 선택'],['spark','수정안'],['doc','대비표'],['bulk','인용 영향'],['check','점검·심의'],['doc','문서 세트']]],
   bulk:['용어·명칭 일괄 정비',[['search','용어 검색'],['bulk','조사까지 교정'],['doc','개정문·부칙']]],
-  upper:['상위법 개정 영향 분석',[['upper','법령 개정'],['search','인용 조문'],['alert','개정 후보'],['amend','개정 착수']]],
+  upper:['상위법 개정 영향 분석',[['upper','법령 개정'],['search','인용 조문'],['alert','개정 후보'],['amend','개정 착수'],['graph','법령 조문 지도']]],
   check:['내규 점검',[['search','없는 조문 인용'],['doc','내규명'],['alert','옛 명칭·직위'],['check','조 번호']]],
   graph:['내규 인용 관계',[['graph','영향 범위'],['bulk','간접 영향'],['alert','옛 명칭 인용'],['amend','정비 착수']]],
   proc:['제·개정 절차 안내',[['proc','해당 여부'],['check','단계 체크'],['doc','문서 준비']]],
@@ -91,7 +91,7 @@ function _raBlank(){
     enact:{review:null,title:'',category:'규칙',dept:'',effective:'',purpose:'',contents:'',dels:[],sim:null,refs:{},draft:null,lint:null,docTab:'law',lawQ:'',lawArts:null,lawName:''},
     bulk:{old:'',neu:'',whole:true,res:null,sel:{},reason:''},
     amend:{src:'reg',pasteText:'',pasted:false,moves:'',review:null,slug:'',title:'',sel:{},intent:'',effective:'',refText:'',changes:[],purpose:'',main:[],addenda:'',notes:[],impact:null,lint:null,docTab:'cmp',filter:'',abbr:true,lawStyle:'fine',fullRev:false},
-    upper:{law:'',arts:'',old:'',neu:'',res:null},
+    upper:{law:'',arts:'',old:'',neu:'',res:null,map:{q:'',open:''}},
     check:{res:null,reg:'',one:null},
     regs:{q:'',cat:'',sort:'name',open:'',view:'arts',art:''},
     advise:{q:'',scope:'',res:null,hist:[],thread:[]},
@@ -2919,8 +2919,75 @@ function raUpperView(){
     `<div class="ra-grid2"><label class="ra-f"><span>개정 전 조문 ${raTip('선택 — 바뀐 용어를 찾아 영향 조문을 넓힙니다')}</span>${raTa('upper.old',U.old,'개정 전 조문을 붙여 넣으세요',4)}</label>`+
     `<label class="ra-f"><span>개정 후 조문</span>${raTa('upper.neu',U.neu,'개정 후 조문을 붙여 넣으세요',4)}</label></div>`+
     `<div class="ra-row"><button class="svc-btn yes" onclick="raUpperRun()">${raIc('search')}영향 조문 찾기</button>${raTip(`기관 내규 전체에서 이 법령(시행령·시행규칙 포함)을 인용하는 조문을 찾아 개정 후보로 보여 줍니다.`)}</div>`;
-  return `<div class="ra-wide">${raSec(1,'상위법 개정 내용','',form)}${raSec(2,'개정 후보 조문','',`<div id="raUpper">${raUpperResView()}</div>`)}</div>`;
+  return `<div class="ra-wide">${raSec(1,'상위법 개정 내용','',form)}${raSec(2,'개정 후보 조문','',`<div id="raUpper">${raUpperResView()}</div>`)}${raSec(3,'법령 조문 지도','',`<div id="raLawMap">${raLawMapView()}</div>`)}</div>`;
 }
+// ── 법령 조문 지도(규정 온톨로지 4단계): 법령 → 인용한 조 → 그 조를 인용한 내규 조문, 법제처 현행 조문과 대조 ──
+let _raLawMap=null, _raLawMapItem={}, _raLawCur={};
+function raLawMapView(){
+  if(!_raLawMap){ raLawMapLoad(); return raSpin('법령 조문 지도를 만드는 중...'); }
+  const d=_raLawMap; if(!d.success) return raErr(d.error||'불러오지 못했습니다.');
+  const M=RA.upper.map=RA.upper.map||{q:'',open:''}, q=(M.q||'').replace(/\s+/g,'');
+  const st=d.stats||{}, L=raArr(d.laws).filter(x=>!q||x.law.replace(/\s+/g,'').includes(q));
+  return `<div class="ra-hint">${_e(RA_ORG.reg_word)}가 인용한 법령의 <b>조</b> 단위 연결입니다(「○○법」 제N조, 약칭 “법·영 제N조”, “같은 법 제N조”). 법령 ${st.laws}개 · 조 ${st.arts}개 · 인용 ${st.refs}곳.</div>`+
+    `<div class="ra-regs-bar"><input class="ra-in" id="raLawMapQ" type="search" aria-label="법령 찾기" placeholder="법령명으로 찾기 (예: 공공기관, 근로기준법)" value="${_e(M.q||'')}" oninput="raLawMapQ(this.value)"></div>`+
+    `<div id="raLawMapList">${raLawMapList(L)}</div>`;
+}
+function raLawMapList(L){
+  const M=RA.upper.map;
+  return L.length?`<ul class="ra-terms">`+L.slice(0,120).map(x=>{ const open=M.open===x.law;
+    return `<li class="${open?'on':''}"><div class="ra-terms-r"><button class="ra-link ra-terms-t" aria-expanded="${open}" onclick="raLawMapOpen('${_a(x.law)}')"><b>${_e(x.law)}</b></button>`+
+      `<span class="ra-sub">조 ${x.arts}개 · ${x.regs}개 ${_e(RA_ORG.reg_word)} · ${x.refs}곳</span></div>`+(open?`<div class="ra-terms-b" id="raLawMapBody">${raLawMapBody(x.law)}</div>`:'')+`</li>`; }).join('')+`</ul>`
+    :`<div class="ra-empty sm">찾는 법령을 인용한 ${_e(RA_ORG.reg_word)}가 없습니다.</div>`;
+}
+function raLawMapBody(law){
+  const d=_raLawMapItem[law]; if(!d){ raLawMapLoadOne(law); return raSpin('불러오는 중...'); }
+  if(!d.success) return raErr(d.error||'불러오지 못했습니다.');
+  const cur=_raLawCur[law];
+  const st=a=>{ if(!cur||cur===0||!cur.ok) return ''; const c=cur.map[a.art];
+    if(!c) return `<span class="ra-chip bad" title="현행 법령에 이 조가 없습니다">현행에 없음</span>`;
+    if(c.del) return `<span class="ra-chip bad" title="현행 법령에서 삭제된 조입니다">삭제된 조</span>`;
+    return `<span class="ra-chip ok">현행 ${_e(c.title||'있음')}</span>`; };
+  const bad=cur&&cur.ok?raArr(d.arts).filter(a=>!cur.map[a.art]||cur.map[a.art].del).length:0;
+  return `<div class="ra-row" style="margin:0 0 6px">`+
+    (cur===0?raSpin('법제처에서 현행 조문을 불러오는 중...'):cur&&!cur.ok?`<span class="ra-hint">${_e(cur.err)}</span>`:
+      cur?`<span class="ra-chip ${bad?'bad':'ok'}">${bad?`인용 조 ${bad}곳 확인 필요`:'인용한 조가 모두 현행에 있습니다'}</span><span class="ra-sub">${_e(cur.name)}${cur.date?` · 시행 ${_e(raDateStr(String(cur.date).replace(/^(\d{4})(\d{2})(\d{2})$/,'$1-$2-$3'))||cur.date)}`:''}</span>`
+      :`<button class="svc-btn ghost sm" onclick="raLawCurLoad('${_a(law)}')">${raIc('check')}법제처 현행 조문과 대조</button>`)+
+    ` ${raLawLink(law)}</div><ul class="ra-terms-defs">`+raArr(d.arts).map(a=>{ const c=cur&&cur.ok&&cur.map[a.art];
+      return `<li><div><b>${_e(a.label)}</b> ${st(a)} <span class="ra-sub">${a.refs.length}곳 인용</span> <button class="ra-link" onclick="raLawMapUpper('${_a(law)}','${_a(a.label)}')">${raIc('upper')}이 조가 바뀌면</button></div>`+
+        (c&&c.text?`<details class="ra-lawcur"><summary>현행 조문 보기</summary><div class="ra-terms-def">${_e(c.text.slice(0,900))}</div></details>`:'')+
+        `<ul class="ra-lawrefs">${a.refs.map(r=>`<li><b>「${_e(r.reg)}」 ${_e(raLbl(r.no))}</b>${r.title?`(${_e(r.title)})`:''} <a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener">원문↗</a> <button class="ra-link" onclick="raRegsAmendArt('${_a(r.slug)}','${_a(r.reg)}','${_a(r.no)}')">개정</button><div class="ra-sub">${_e(r.snip)}</div></li>`).join('')}</ul></li>`; }).join('')+`</ul>`;
+}
+async function raLawMapLoad(){ if(raLawMapLoad._b) return; raLawMapLoad._b=true; const d=await raGet('/api/regagent/lawlinks'); raLawMapLoad._b=false; _raLawMap=d; raLawMapRedraw(); }
+function raLawMapRedraw(){ const el=document.getElementById('raLawMap'); if(el&&RA.tab==='upper') raKeepFocus(()=>{ el.innerHTML=raLawMapView(); }); }
+let _raLawMapT=0;
+function raLawMapQ(v){ RA.upper.map.q=v; _raSave(); clearTimeout(_raLawMapT); _raLawMapT=setTimeout(()=>{ const el=document.getElementById('raLawMapList'); const q=v.replace(/\s+/g,''); if(el&&_raLawMap) el.innerHTML=raLawMapList(raArr(_raLawMap.laws).filter(x=>!q||x.law.replace(/\s+/g,'').includes(q))); },200); }
+function raLawMapOpen(law){ const M=RA.upper.map; M.open=M.open===law?'':law; _raSave(); raLawMapRedraw(); }
+async function raLawMapLoadOne(law){
+  if(_raLawMapItem[law]===0) return; _raLawMapItem[law]=0;
+  _raLawMapItem[law]=await raPost('/api/regagent/lawlinks',{law});
+  const el=document.getElementById('raLawMapBody'); if(el&&RA.upper.map.open===law) el.innerHTML=raLawMapBody(law);
+}
+// 법제처 현행 조문과 대조 — 인용한 조가 지금 법령에 있는지, 삭제됐는지
+async function raLawCurLoad(law){
+  _raLawCur[law]=0; const el=()=>document.getElementById('raLawMapBody'); if(el()) el().innerHTML=raLawMapBody(law);
+  let r;
+  try{
+    const d=await raGet('/api/law/articles?name='+encodeURIComponent(law));
+    const arts=raArr(d.articles).filter(a=>a.type!=='header'&&a['조문번호']);
+    if(d.error||!arts.length) r={ok:false, err:d.error||d.message||'법제처에서 조문을 받지 못했습니다.'};
+    else{
+      const map={};
+      arts.forEach(a=>{ const lbl=String(a['조문표시번호']||('제'+a['조문번호']+'조')).replace(/\s+/g,''), m=lbl.match(/^제(\d+)조(?:의(\d+))?/); if(!m) return;
+        const k=m[1]+(m[2]?'의'+m[2]:''), t=String(a['조문내용']||'').trim();
+        if(map[k]&&!map[k].del) return;
+        map[k]={title:a['조문제목']||'', text:t, del:/^(?:제\s*\d+\s*조(?:의\s*\d+)?\s*)?삭제\s*(?:[<＜(（][^>＞)）]*[>＞)）])?\s*$/.test(t)}; });
+      r={ok:true, map, name:d.law_name||law, date:d.law_date||''};
+      if((d.law_name||law).replace(/\s+/g,'')!==law.replace(/\s+/g,'')) r={ok:false, err:`「${law}」${raEul(law)} 찾지 못했습니다(가장 가까운 이름: 「${d.law_name}」). 법령명이 바뀌었는지 확인하세요.`};
+    }
+  }catch(e){ r={ok:false, err:'법제처 연결에 실패했습니다.'}; }
+  _raLawCur[law]=r; if(el()&&RA.upper.map.open===law) el().innerHTML=raLawMapBody(law);
+}
+function raLawMapUpper(law,label){ Object.assign(RA.upper,{law,arts:label,old:'',neu:''}); _raSave(); raRerender('upper'); window.scrollTo(0,0); setTimeout(raUpperRun,50); }
 async function raUpperRun(){
   const U=RA.upper; if(!U.law.trim()){ _toast('상위 법령명을 입력하세요.'); return; }
   const box=document.getElementById('raUpper'); if(box) box.innerHTML=raSpin('내규 전체에서 인용 조문을 찾는 중...');

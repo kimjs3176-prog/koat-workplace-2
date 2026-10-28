@@ -59,7 +59,7 @@ def test_org_api(client):
 def test_ontology_includes_org(client):
     d = client.get("/api/regagent/ontology").get_json()
     inc = d["@included"]
-    u = next(x for x in inc if x["rdfs:label"] == "인사혁신실")
+    u = next(x for x in inc if x.get("rdfs:label") == "인사혁신실")
     assert u["org:subOrganizationOf"]["@id"].endswith("unit/기획운영본부")
-    c = next(x for x in inc if x["rdfs:label"] == "인사위원회")
+    c = next(x for x in inc if x.get("rdfs:label") == "인사위원회")
     assert c["org:classification"] == "회의체" and "부원장" in c["rdfs:comment"]
