@@ -1605,6 +1605,24 @@ def ra_upper():
             cands.append({"slug": o["slug"], "reg": o["title"], "no": a["no"], "title": a["title"],
                           "body": body[:1200], "cites": cites[:6], "specific": spec[:4],
                           "terms": term_hits, "snippet": snip, "score": score})
+    have = {(c["slug"], c["no"]): c for c in cands}
+    for x in law_links()["rows"]:                     # “법 제21조”(약칭)·낫표 없는 법령명 인용도 조문 지도로 잡는다
+        if _nk(x["law"]) not in law_keys:
+            continue
+        hit = bool(tset) and art_key(x["art"]) in tset
+        c = have.get((x["slug"], x["no"]))
+        lbl = f"{x['law']} {art_label(x['art'])}"
+        if c:
+            if hit and lbl not in c["specific"] and not any(art_label(x["art"]) in s_ for s_ in c["specific"]):
+                c["specific"].append(lbl)
+                c["score"] += 10
+            continue
+        o = next(r for r in all_regs() if r["slug"] == x["slug"])
+        a = next(a for a in o["articles"] if a["no"] == x["no"])
+        c = {"slug": o["slug"], "reg": o["title"], "no": a["no"], "title": a["title"], "body": a["body"][:1200], "cites": [lbl],
+             "specific": [lbl] if hit else [], "terms": [], "snippet": x["snip"], "score": 10 if hit else (1 if tset else 2)}
+        have[(x["slug"], x["no"])] = c
+        cands.append(c)
     cands.sort(key=lambda x: (-x["score"], x["reg"], art_key(x["no"])))
     regs = {}
     for c in cands:
@@ -4613,6 +4631,10 @@ def _org_nodes(base: str) -> list:
         if u.get("duty"):
             n["org:purpose"] = u["duty"]
         out.append(n)
+    refs = {}
+    for x in law_links()["rows"]:
+        refs.setdefault(f"{base}reg/{x['slug']}#{x['no']}", []).append(f"{base}law/{x['law'].replace(' ', '_')}#{x['art']}")
+    out += [{"@id": k, "dcterms:references": [{"@id": u} for u in dict.fromkeys(v)]} for k, v in refs.items()]
     for c in E["committees"].values():
         n = {"@id": base + "committee/" + re.sub(r"\s+", "_", c["id"]), "@type": "org:OrganizationalUnit",
              "rdfs:label": c["name"], "org:classification": "회의체", "org:subOrganizationOf": {"@id": base + "org"},
@@ -5286,3 +5308,130 @@ def ra_duties():
                     "actors": [{"name": k, "n": n} for k, n in sorted(actors.items(), key=lambda kv: -kv[1])][:24],
                     "acts": [{"name": k, "n": n} for k, n in sorted(acts.items(), key=lambda kv: -kv[1])][:20],
                     "delegations": dl[:200], "dlg_total": len(delegations())})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 법령 조문 연결(규정 온톨로지 4단계) — 내규 조문이 인용한 법령의 “조” 단위 연결.
+# 「○○법」 제N조(의M)·제K항, 약칭 정의(이하 “법”·“영”이라 한다) 뒤의 “법 제N조”·“영 제N조”, “같은 법·동법 제N조”.
+# ══════════════════════════════════════════════════════════════════════════
+_LL = {"key": None, "v": None}
+_ART_ONE = r"제\s*(\d+)\s*조(?:\s*의\s*(\d+))?(?:\s*제\s*(\d+)\s*항)?(?:\s*제\s*(\d+)\s*호)?"
+_ART_LIST = re.compile(r"\s*(?:\([^)]{0,30}\)\s*)?(" + _ART_ONE + r"(?:\s*(?:\([^)]{0,30}\)\s*)?(?:,|및|또는|·|ㆍ|와|과|부터|내지|~)\s*(?:"
+                       + _ART_ONE + r"|제\s*\d+\s*[항호])(?:\s*까지)?)*)")
+
+
+def _arts_in(s: str) -> list:
+    """“제3조제1항 및 제5조의2” → ["3", "5의2"] (항·호는 조 단위로 묶는다). “제3조부터 제5조까지”는 사이도 넣는다."""
+    out = []
+    ms = list(re.finditer(_ART_ONE, s))
+    for i, m in enumerate(ms):
+        no = m.group(1) + (f"의{m.group(2)}" if m.group(2) else "")
+        if i and re.match(r"\s*(?:부터|내지|~)", s[ms[i - 1].end():m.start()]) and not m.group(2) and not ms[i - 1].group(2):
+            a, b = int(ms[i - 1].group(1)), int(m.group(1))
+            out += [str(k) for k in range(a + 1, b) if b - a <= 30]
+        out.append(no)
+    return list(dict.fromkeys(out))
+
+
+def law_links() -> dict:
+    """{rows: [{law, art, reg, slug, no, title, snip}], laws: {법령명: {arts: {조: [행 번호]}, regs: set}}}"""
+    regs = all_regs()
+    if _LL["key"] == id(regs):
+        return _LL["v"]
+    rows = []
+    known = {}
+    for r in regs:
+        for a in r["articles"]:
+            for m in _QUOTED_NAME.finditer(a["body"]):
+                nm = re.sub(r"\s+", " ", m.group(1)).strip()
+                if _LAW_NAME_OK.search(nm) and len(nm) <= 60 and len(_nk(nm)) >= 3:
+                    known.setdefault(_nk(nm), nm)
+    for grp in _LAW_ALIAS:
+        for x in grp:
+            known.setdefault(_nk(x), grp[-1])
+    for r in regs:
+        abbr = {}
+        for a in r["articles"]:
+            if a["deleted"]:
+                continue
+            body = a["body"]
+            last = None
+            events = []
+            for m in _QUOTED_NAME.finditer(body):
+                nm = re.sub(r"\s+", " ", m.group(1)).strip()
+                if not _LAW_NAME_OK.search(nm) or len(nm) > 60:
+                    continue
+                law = law_official(nm)
+                ma = re.match(r"\s*\(\s*이하\s*[“\"‘']([^”\"’']{1,8})[”\"’']\s*(?:이)?라\s*한다\s*\)", body[m.end():m.end() + 30])
+                if ma:
+                    abbr[ma.group(1)] = law
+                events.append((m.start(), m.end(), law))
+            for k in abbr:
+                for m in re.finditer(r"(?<![가-힣「])" + re.escape(k) + r"(?=\s*제\s*\d+\s*조)", body):
+                    events.append((m.start(), m.end(), abbr[k]))
+            for m in re.finditer(r"(?<![가-힣「·])([가-힣·]{2,30}(?:법|법률)(?:\s*시행령|\s*시행규칙)?)(?=\s*제\s*\d+\s*조)", body):
+                nm = m.group(1)                       # 낫표 없이 쓴 법령명(“근로기준법 제60조”) — 다른 곳에서 낫표로 인용한 이름만
+                if _nk(nm) in known and not any(s0 <= m.start() < e0 for s0, e0, _ in events):
+                    events.append((m.start(), m.end(), law_official(known[_nk(nm)])))
+            for m in re.finditer(r"(?:같은|동)\s*(법|영|시행령|법\s*시행령|규칙)(?=\s*제\s*\d+\s*조)", body):
+                events.append((m.start(), m.end(), ("same", re.sub(r"\s+", "", m.group(1)))))
+            events.sort()
+            for s0, e0, law in events:
+                if isinstance(law, tuple):           # “같은 법” — 바로 앞에 인용한 법령(“같은 영”은 그 시행령)
+                    if not last:
+                        continue
+                    base = re.sub(r"\s*(시행령|시행규칙)$", "", last)
+                    law = base + " 시행령" if law[1] in ("영", "시행령", "법시행령") else base if law[1] == "법" else last
+                last = law
+                ml = _ART_LIST.match(body[e0:e0 + 160])
+                if not ml:
+                    continue
+                for no in _arts_in(ml.group(1)):
+                    rows.append({"law": law, "art": no, "reg": r["title"], "slug": r["slug"], "no": a["no"], "title": a["title"],
+                                 "snip": _snip(body, s0, 70)})
+    # 표기 흔들림(“초·중등교 육법”·“농업 ･ 농촌”·이름 속 “(이하 …)”)은 가장 많이 쓴 표기로 묶는다
+    tidy = lambda n: re.sub(r"(\S)\s(\S법)$", r"\1\2", re.sub(r"\s*([·ㆍ･])\s*", "·", re.sub(r"\s*\([^)]*\)\s*", " ", n)).strip())
+    cnt = {}
+    for x in rows:
+        x["law"] = tidy(x["law"])
+        cnt[x["law"]] = cnt.get(x["law"], 0) + 1
+    canon = {}
+    for n, c in sorted(cnt.items(), key=lambda kv: (-kv[1], kv[0])):
+        canon.setdefault(_nk(n), n)
+    seen, uniq = set(), []
+    for x in rows:
+        x["law"] = canon[_nk(x["law"])]
+        k = (x["law"], x["art"], x["slug"], x["no"])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(x)
+    laws = {}
+    for i, x in enumerate(uniq):
+        L = laws.setdefault(x["law"], {"arts": {}, "regs": set()})
+        L["arts"].setdefault(x["art"], []).append(i)
+        L["regs"].add(x["slug"])
+    v = {"rows": uniq, "laws": laws}
+    _LL.update(key=id(regs), v=v)
+    return v
+
+
+@bp.route("/api/regagent/lawlinks", methods=["GET", "POST"])
+def ra_lawlinks():
+    """법령 조문 지도. GET → 법령별 요약, POST {law} → 그 법령의 조별 인용 조문, POST {slug} → 한 내규가 인용한 법령 조문."""
+    L = law_links()
+    b = _body() if request.method == "POST" else {}
+    law, slug = re.sub(r"[「」]", "", (b.get("law") or "")).strip(), (b.get("slug") or "").strip()
+    if law:
+        k = _nk(law_official(law))
+        name = next((n for n in L["laws"] if _nk(n) == k or _nk(n) == _nk(law)), None)
+        if not name:
+            return jsonify({"success": False, "error": "그 법령의 조문을 인용한 내규가 없습니다."}), 404
+        arts = [{"art": a, "label": art_label(a), "refs": [L["rows"][i] for i in idx]} for a, idx in L["laws"][name]["arts"].items()]
+        arts.sort(key=lambda x: art_key(x["art"]))
+        return jsonify({"success": True, "law": name, "arts": arts, "regs": len(L["laws"][name]["regs"])})
+    if slug:
+        rows = [x for x in L["rows"] if x["slug"] == slug]
+        return jsonify({"success": True, "slug": slug, "rows": rows})
+    laws = [{"law": n, "arts": len(v["arts"]), "regs": len(v["regs"]), "refs": sum(len(i) for i in v["arts"].values())} for n, v in L["laws"].items()]
+    laws.sort(key=lambda x: (-x["regs"], -x["refs"], x["law"]))
+    return jsonify({"success": True, "laws": laws, "stats": {"laws": len(laws), "arts": sum(x["arts"] for x in laws), "refs": len(L["rows"])}})
