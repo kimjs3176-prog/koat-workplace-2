@@ -1027,3 +1027,7 @@ a.ra-link[target="_blank"][href^="http"]::after,a.ra-pill[target="_blank"][href^
 .ra-org-dl dd{margin:0;overflow-wrap:anywhere;}
 .ra-org-dl ol{margin:0;padding-left:18px;}
 @media (max-width:560px){.ra-org-dl{grid-template-columns:1fr;}.ra-org .ra-org-sub{padding-left:8px;}}
+.ra-tbl-wrap{overflow-x:auto;margin:4px 0 10px;}
+.ra-tbl.ra-dlg{min-width:0;}
+.ra-tbl.ra-dlg td:last-child{white-space:nowrap;}
+@media (max-width:560px){.ra-tbl.ra-dlg thead{display:none;}.ra-tbl.ra-dlg tr{display:block;padding:6px 0;border-bottom:1px solid var(--bd);}.ra-tbl.ra-dlg td{display:inline;border:none;padding:0 4px 0 0;}}
