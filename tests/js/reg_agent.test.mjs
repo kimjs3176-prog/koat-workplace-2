@@ -648,3 +648,43 @@ test('조문 연혁: 이전 판이 없을 때 안내, 바뀐 판은 이전·이 
   assert.match(v, /신설/);
   assert.match(v, /이전 판[\s\S]*ra-d[\s\S]*이 판[\s\S]*ra-i/);
 });
+
+test('별표·서식 수정: 머리 줄 조 번호·개정문 문형·대비표·전체 반영', () => {
+  const c = load();
+  // 머리 줄의 관련 조문(범위 포함)
+  assert.equal(JSON.stringify(c.raAppxCites('〔별표 2〕〈 제10조부터 제13조까지 및 제15조제1항 관련 〉')), JSON.stringify(['10', '11', '12', '13', '15']));
+  assert.equal(JSON.stringify(c.raAppxCites('[별지 제1호 서식] <제7조의2 관련>')), JSON.stringify(['7의2']));
+  const RA = c.__RA();
+  RA.amend.slug = 's'; RA.amend.title = '여비규정';
+  vm.runInContext(`_raArts=${JSON.stringify({ title: '여비규정', articles: [{ no: '15', title: '일비', body: '일비는 별표 2에 따른다.', deleted: false }],
+    appendix: [{ id: '별표 2', head: '〔별표 2〕〈 제15조 관련 〉', body: '국내여비지급표\n일 비\n25,000' }, { id: '별표 3', head: '〔별표 3〕〈 제12조 관련 〉', body: '표3' }] })}`, c);
+  // 고친 조문과 관련된 별표를 담는다(제15조 → 별표 2만)
+  RA.amend.appx = [];
+  assert.equal(JSON.stringify(c.raAppxForArts(['15'])), JSON.stringify(['별표 2']));
+  assert.equal(RA.amend.appx.length, 1);
+  assert.equal(c.raEffAppx().length, 0);                                      // 아직 안 고침 → 개정문·대비표에서 뺀다
+  RA.amend.appx[0].body = '국내여비지급표\n일 비\n30,000';
+  assert.equal(c.raEffAppx().length, 1);
+  assert.equal(c.raAppxSentence(RA.amend.appx[0]), '별표 2를 별지와 같이 한다.');
+  assert.equal(c.raAppxSentence({ type: 'delete', id: '별표 3' }), '별표 3을 삭제한다.');
+  assert.equal(c.raAppxSentence({ type: 'insert', id: '별지 제4호 서식' }), '별지 제4호 서식을 별지와 같이 신설한다.');
+  // 대비표: 바뀐 줄만 남고 나머지는 (생 략)
+  RA.amend.abbr = true; RA.amend.changes = [];
+  const rows = c.raCmpRows();
+  assert.equal(rows.length, 1);
+  assert.match(rows[0][2], /25,000/); assert.match(rows[0][3], /30,000/); assert.match(rows[0][2], /\(생 략\)/);
+  // 개정문: 조문 문장 뒤에 별표 문장, 부칙 뒤에 바뀐 별표 전체
+  const ctx = c.raDocCtx('amend');
+  const law = c.raDocLaw(ctx);
+  assert.match(law, /별표 2를 별지와 같이 한다\./);
+  assert.ok(law.indexOf('부    칙') < law.indexOf('〔별표 2〕'));
+  assert.match(law, /30,000/); assert.doesNotMatch(law, /표3/);          // 고치지 않은 별표 3은 일부개정문에 안 붙는다
+  // 점검용 전체 글에는 별표가 모두(고친 대로) 붙는다
+  const full = c.raAmendFullText();
+  assert.match(full.text, /30,000/); assert.match(full.text, /표3/); assert.doesNotMatch(full.text, /25,000/);
+  // 삭제·신설까지 반영한 전체 별표
+  RA.amend.appx.push({ type: 'delete', id: '별표 3' }, { type: 'insert', id: '별표 4', head: '〔별표 4〕', body: '새 표' });
+  assert.equal(JSON.stringify(c.raAppxAll().map(x => x.id)), JSON.stringify(['별표 2', '별표 4']));
+  // 같은 문장 찾기 요청에 별표 수정분이 ‘별표’ 번호로 들어간다
+  assert.ok(c.raCfChanges().some(x => x.no === '별표' && /30,000/.test(x.body)));
+});
