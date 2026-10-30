@@ -688,3 +688,29 @@ test('별표·서식 수정: 머리 줄 조 번호·개정문 문형·대비표�
   // 같은 문장 찾기 요청에 별표 수정분이 ‘별표’ 번호로 들어간다
   assert.ok(c.raCfChanges().some(x => x.no === '별표' && /30,000/.test(x.body)));
 });
+
+test('별표 수정: 대비표는 길잡이 줄만 남기고 접기, 주요 내용 자동 생성, 별표만 고쳐도 다음 단계', () => {
+  const c = load();
+  const RA = c.__RA();
+  RA.amend.slug = 's'; RA.amend.title = '여비규정'; RA.amend.changes = []; RA.amend.abbr = true;
+  vm.runInContext(`_raArts=${JSON.stringify({ title: '여비규정', articles: [{ no: '15', title: '일비', body: '일비는 별표 2에 따른다.', deleted: false }],
+    appendix: [{ id: '별표 2', head: '〔별표 2〕〈 제15조 관련 〉', body: '국내여비지급표\n(단위 : 원)\n구 분\n철도운임\n일 비\n제1호\n실비\n25,000\n실비\n제2호\n실비\n25,000\n실비' }] })}`, c);
+  RA.amend.appx = [{ type: 'modify', id: '별표 2', head: '〔별표 2〕〈 제15조 관련 〉', body: '국내여비지급표\n(단위 : 원)\n구 분\n철도운임\n일 비\n제1호\n실비\n30,000\n실비\n제2호\n실비\n30,000\n실비' }];
+  const rows = c.raCmpRows();
+  assert.equal(rows.length, 1);
+  const cur = rows[0][2].split('\n'), neu = rows[0][3].split('\n');
+  assert.equal(cur[0], '〔별표 2〕〈 제15조 관련 〉');                        // 머리 줄은 남는다
+  assert.ok(cur.includes('제1호') && cur.includes('제2호') && cur.includes('구 분'));   // 길잡이 줄
+  assert.equal(cur.filter(l => l === '(생 략)').length, 6);                    // 바뀌지 않은 줄 묶음(6곳)은 각각 하나로
+  assert.equal(cur.filter(l => l === '25,000').length, 2);
+  assert.equal(neu.filter(l => l === '30,000').length, 2);
+  assert.ok(cur.length < 14);
+  // 주요 내용: 표의 숫자 바뀜을 단위와 함께
+  const ctx = c.raDocCtx('amend');
+  assert.equal(JSON.stringify(c.raMainItems(ctx)), JSON.stringify(['별표 2(국내여비지급표) 조정(25,000원 → 30,000원)']));
+  // 별표만 고쳐도 확인·검토 단계로 넘어간다
+  assert.equal(c.raWizGate('amend', 2), '');
+  assert.equal(c.raWizDone('amend', 1), true);
+  RA.amend.appx[0].body = RA.amend.appx[0].body.replace(/30,000/g, '25,000');
+  assert.match(c.raWizGate('amend', 2), /수정안/);
+});

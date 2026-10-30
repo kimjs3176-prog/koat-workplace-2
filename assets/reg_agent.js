@@ -493,14 +493,14 @@ function raWizGate(mode, i){
     return ''; }
   const A=RA.amend;
   if(i>=1&&!_raArts&&!A.slug&&!A.pasted) return `먼저 개정할 ${RA_ORG.reg_word}를 불러오세요.`;
-  if(i>=2&&!raEffChanges().length) return '먼저 “고치기” 단계에서 수정안을 만드세요.';
+  if(i>=2&&!raEffChanges().length&&!raEffAppx().length) return '먼저 “고치기” 단계에서 수정안을 만드세요.';   // 별표·서식만 고친 개정도 넘어간다
   return '';
 }
 function raWizDone(mode, i){
   if(mode==='enact'){ const E=RA.enact;
     return [!!(E.title&&String(E.purpose||'').trim()), !!((E.dels||[]).length||Object.keys(E.refs||{}).length), !raWizGate('enact',3)&&!raStale('enact'), !!(E.lint&&E.review), false][i]; }
   const A=RA.amend;
-  return [!!_raArts&&(Object.keys(A.sel||{}).length>0||A.changes.length>0), raEffChanges().length>0, !!(A.lint&&A.review), false][i];
+  return [!!_raArts&&(raSelCount()>0||A.changes.length>0||raArr(A.appx).length>0), raEffChanges().length>0||raEffAppx().length>0, !!(A.lint&&A.review), false][i];
 }
 // 초안(수정안)을 만든 뒤 그 바탕이 된 입력(기본 정보·참고 자료 / 개정 의도·고른 조문)이 바뀌었는지
 function raBasis(mode){
@@ -1079,10 +1079,34 @@ function raCmpRows(){
     const n=c.type==='delete'?{type:'delete',no:c.no}:{no:c.no,title:c.title,body:c.body};
     return raCmpCell(o, n, A.abbr);
   });
-  // 별표·서식은 조 표기 없이 머리 줄+내용 그대로 견준다(바뀌지 않은 줄은 “(생 략)”)
-  raEffAppx().forEach(x=>{ const o=raOldX(x.id);
-    rows.push(raCmpCell(o?{raw:true,id:o.id,text:raXText(o)}:null, x.type==='delete'?{type:'delete'}:{raw:true,id:x.id,text:raXText(x)}, A.abbr)); });
+  raEffAppx().forEach(x=>rows.push(raCmpCellX(raOldX(x.id), x, A.abbr)));
   return rows;
+}
+// 별표·서식의 대비표 칸 — 표는 줄마다 한 칸이라 조문처럼 줄마다 “(생 략)”을 쓰면 수십 줄이 된다.
+// 머리 줄·“구 분”·“제N호” 같은 길잡이 줄은 남기고, 바뀌지 않은 줄 묶음은 “(생 략)” 하나로 접는다
+function raCmpCellX(o, x, abbr){
+  if(!o){ const t=raXText(x); return ['&lt;신 설&gt;', `<u class="ra-i">${_e(t).replace(/\n/g,'<br>')}</u>`, '<신 설>', t]; }
+  const ot=raXText(o);
+  if(!x||x.type==='delete') return [`<u class="ra-d">${_e(ot).replace(/\n/g,'<br>')}</u>`, `${_e(o.id)} &lt;삭 제&gt;`, ot, `${o.id} <삭 제>`];
+  const nt=raXText(x);
+  if(!abbr) return raCmpCell({raw:true,id:o.id,text:ot},{raw:true,id:x.id,text:nt},false);
+  const OL=ot.split('\n'), NL=nt.split('\n');
+  const ops=raLcs(OL,NL,(a,b)=>a.trim()===b.trim())||[...OL.map(l=>['-',l,null]),...NL.map(l=>['+',null,l])];
+  const keep=l=>/^(?:제\s*\d+\s*호|구\s*분|[\[［〔【<＜(（]\s*(?:별표|별지))/.test(String(l).trim());
+  const L=[],R=[],LP=[],RP=[]; let gap=false;
+  for(let k=0;k<ops.length;){
+    if(ops[k][0]==='='){ const l=ops[k][1];
+      if(k===0||keep(l)){ L.push(_e(l)); R.push(_e(l)); LP.push(l); RP.push(l); gap=false; }
+      else if(!gap){ L.push('(생 략)'); R.push('(현행과 같음)'); LP.push('(생 략)'); RP.push('(현행과 같음)'); gap=true; }
+      k++; continue; }
+    gap=false; const dels=[], ins=[];
+    while(k<ops.length&&ops[k][0]!=='='){ if(ops[k][0]==='-') dels.push(ops[k][1]); else ins.push(ops[k][2]); k++; }
+    raPairLines(dels,ins).forEach(([d,s])=>{
+      if(d!=null&&s!=null){ const [a,b]=raWordDiff(d,s); L.push(a); R.push(b); LP.push(d); RP.push(s); }
+      else if(d!=null){ L.push(`<u class="ra-d">${_e(d)}</u>`); LP.push(d); R.push('&lt;삭 제&gt;'); RP.push('<삭 제>'); }
+      else { L.push('&lt;신 설&gt;'); LP.push('<신 설>'); R.push(`<u class="ra-i">${_e(s)}</u>`); RP.push(s); } });
+  }
+  return [L.join('<br>'), R.join('<br>'), LP.join('\n'), RP.join('\n')];
 }
 function raCmpView(){
   const rows=raCmpRows();
@@ -1189,7 +1213,9 @@ function raReviewPayload(mode){
     return {mode, alio_refs:raAlioRefList('enact'), title:E.title, text:D.text||'', addenda:raDocCtx('enact').addenda, purpose:D.purpose||E.purpose, main:String(D.main||'').split('\n'), delegations:E.dels};
   }
   const A=RA.amend, t=raAmendFullText()||{};
-  return {mode, focus:raEffChanges().map(c=>c.no), alio_refs:raAlioRefList('amend'), title:A.title, slug:A.slug, text:t.text||'', addenda:raDocCtx('amend').addenda, purpose:A.purpose||A.intent, main:A.main||[], delegations:A.refText?[{law:'참고',art:'',text:A.refText}]:[]};
+  const cx=raDocCtx('amend');
+  return {mode, focus:raEffChanges().map(c=>c.no), alio_refs:raAlioRefList('amend'), title:A.title, slug:A.slug, text:t.text||'', addenda:cx.addenda, purpose:A.purpose||A.intent,
+    main:raMainItems(cx), delegations:A.refText?[{law:'참고',art:'',text:A.refText}]:[]};   // 주요 내용을 비워 두면 수정안에서 만든 것(이유서와 같은 줄)으로 검토한다
 }
 function raReview(mode){ return raOnce('review:'+mode, ()=>_raReview(mode)); }
 async function _raReview(mode){
@@ -1573,7 +1599,21 @@ function raMainItems(c){ return c.main.length?c.main:(c.mode==='enact'?c.arts.fi
       if(ch.type==='delete'){ const ot=(ch.title||(raOld(ch.no)||{}).title||'').trim(); return `${ot?ot+' 조항':raLbl(ch.no)} 삭제(현행 ${raLbl(ch.no)})`; }   // “파견근무 조항 삭제(현행 제11조)”
       const o=ch.type==='insert'?null:raOld(ch.no), q=o?raQtyDiff(o.body,ch.body):null;     // 금액·기간·비율이 바뀌면 “(3만원 → 5만원)”
       const qd=q&&q.from.length&&q.to.length&&q.from.length<=3?`(${q.from.join('·')} → ${q.to.join('·')})`:'';
-      return `${ch.title||raLbl(ch.no)} ${ch.type==='insert'?'신설':qd?'조정'+qd:'정비'}(안 ${raLbl(nn||ch.no)})`; })); }
+      return `${ch.title||raLbl(ch.no)} ${ch.type==='insert'?'신설':qd?'조정'+qd:'정비'}(안 ${raLbl(nn||ch.no)})`; }).concat(raArr(c.appx).map(raAppxMain))); }
+// 별표·서식 수정의 주요 내용 한 줄: “별표 2(국내여비지급표) 조정(25,000원 → 30,000원)”. 표의 숫자는 단위 없이 적히므로 “(단위 : 원)”을 찾아 붙인다
+function raAppxMain(x){
+  const o=raOldX(x.id), nm=o?raAppxTitle(o):'', lb=x.id+(nm&&nm!==x.id?`(${nm})`:'');
+  if(x.type==='delete') return `${lb} 삭제`;
+  if(!o) return `${lb} 신설`;
+  const unit=((o.body+'\n'+x.body).match(/단위\s*[:：]\s*([^)）\s]{1,6})/)||[])[1]||'';
+  const num=l=>/^[\d,.]+$/.test(String(l).trim()), bag=t=>String(t||'').split('\n').map(l=>l.trim()).filter(num);
+  const a=bag(o.body), b=bag(x.body), rm=a.slice(), ad=[];
+  b.forEach(v=>{ const k=rm.indexOf(v); if(k>=0) rm.splice(k,1); else ad.push(v); });
+  const from=[...new Set(rm)], to=[...new Set(ad)];
+  const q=raQtyDiff(o.body,x.body);
+  const qd=from.length&&to.length&&from.length<=3?`(${from.join('·')}${unit} → ${to.join('·')}${unit})`:q&&q.from.length&&q.to.length&&q.from.length<=3?`(${q.from.join('·')} → ${q.to.join('·')})`:'';
+  return `${lb} ${qd?'조정'+qd:'정비'}`;
+}
 function raOutNotice(c, staff){
   const days=staff?(+RA_ORG.staff_days||7):(+RA_ORG.notice_days||20);
   return {title:staff?`「${c.title}」 ${c.word}(안) 직원 의견수렴 공고`:`「${c.title}」 ${c.word}(안) 사전예고`,
@@ -1881,7 +1921,7 @@ function raSubmitCheck(mode, B){
   const nt=S.nota&&S.nota.res; const ne=nt?Object.values(nt).reduce((m,f)=>m+f.filter(x=>x.level==='error').length,0):0;
   add(!nt?'warn':ne?'warn':'ok',!nt?'공문서 표기 점검을 아직 하지 않았습니다.':ne?`공문서 표기 오류 ${ne}건`:'공문서 표기 — 오류 없음');
   add(String(B.c.addenda||'').trim()?'ok':'err',String(B.c.addenda||'').trim()?'부칙(시행일) 있음':'부칙(시행일)이 없습니다.');
-  if(mode==='amend'&&!raEffChanges().length) add('err','개정 내용(수정안)이 없습니다.');
+  if(mode==='amend'&&!raEffChanges().length&&!raEffAppx().length) add('err','개정 내용(수정안)이 없습니다.');
   const pv=raAiProv(mode);                                   // AI가 쓴 조문은 사람이 대조·확인한 뒤 낸다
   const aok=raAiOk(mode), stale=sub.aiOk&&!aok;
   if(pv) add(aok&&raMe()?'ok':'err',aok&&raMe()?`AI 작성분 검토 확인 — ${raMe()}(${raAiParts(pv)})`
@@ -2193,7 +2233,7 @@ async function raAgAmend(P, step, fin, stop){
   const relX=raAppxForArts(tg.map(a=>a.no));
   if(relX.length){ s=step('관련 별표·서식'); fin(s,`${relX.map(_e).join(', ')} — 고친 조문의 머리 줄에 적힌 관련 별표를 수정안 칸에 담았습니다. 금액·일수가 표에 있으면 여기서 고치세요.`); }
   if(!raEffChanges().length&&!raEffAppx().length){                // 아직 고친 곳이 없으면 점검·문서는 의미가 없다
-    s=step('조문 고치기'); fin(s,'대상 조문'+(relX.length?'과 관련 별표':'')+'을 수정안 칸에 담았습니다. 문장을 고친 뒤 확인·검토 단계로 넘어가세요.','warn');
+    s=step('조문 고치기'); fin(s,'대상 조문'+(relX.length?'과 관련 별표를':'을')+' 수정안 칸에 담았습니다. 문장을 고친 뒤 확인·검토 단계로 넘어가세요.','warn');
     A.step=1; RA.agent.done={title:`「${A.title}」 개정 대상 조문을 준비했습니다`,sub:'결과 화면의 “고치기” 단계에서 조문 문장을 고치면 대비표·개정문·문서가 바로 만들어집니다.',
       acts:[['고치기 단계 열기',"RA.amend.step=1;raTab('amend')",1]]};
     return;
