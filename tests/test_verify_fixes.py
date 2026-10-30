@@ -90,3 +90,14 @@ def test_conflict_week_unit(ra):
     c = ra._cf_clauses({"articles": [{"no": "1", "title": "", "body": "신청인은 사유가 생긴 날부터 2주일 이내에 서면으로 신청하여야 한다.", "deleted": False},
                                      {"no": "2", "title": "", "body": "신청인은 사유가 생긴 날부터 3주 이내에 서면으로 신청하여야 한다.", "deleted": False}], "appendix": ""})
     assert len(c) == 2 and c[0]["tpl"] == c[1]["tpl"] and c[0]["vals"] != c[1]["vals"]
+
+
+def test_split_appendix_blocks(ra, client):
+    blocks = ra.split_appendix("머리 앞 글\n〔별표 1〕〈 제3조 관련 〉 <개정 2022.02.24.>\n여비지급구분표\n구 분\n\n[별지 제2호 서식] <제9조 관련>\n신청서\n【 별지 제10-1호 서식 】\n양식")
+    assert [b["id"] for b in blocks] == ["별표 1", "별지 제2호 서식", "별지 제10-1호 서식"]
+    assert blocks[0]["head"].startswith("〔별표 1〕") and blocks[0]["body"] == "여비지급구분표\n구 분"
+    assert blocks[1]["body"] == "신청서"
+    slug = next(r for r in ra.all_regs() if r["title"] == "여비규정")["slug"]
+    d = client.get("/api/regagent/articles?slug=" + slug).get_json()
+    assert d["has_appendix"] and [b["id"] for b in d["appendix"]][:3] == ["별표 1", "별표 2", "별표 3"]
+    assert "국내여비지급표" in next(b for b in d["appendix"] if b["id"] == "별표 2")["body"]

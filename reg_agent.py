@@ -1396,6 +1396,23 @@ def ra_regs_search():
     return jsonify({"success": True, "q": q, "regs": out[:200]})
 
 
+_APPX_HEAD = re.compile(r"^\s*[\[［〔【<＜(（]\s*(별표|별지)\s*([^\]］〕】>＞)）]{0,30}?)\s*[\]］〕】>＞)）](.*)$")
+
+
+def split_appendix(text: str) -> list:
+    """별표·서식 묶음 → 블록 목록 [{id, head, body}]. id 는 “별표 2”·“별지 제1호 서식”처럼 머리 괄호 안을 정리한 이름(개정문·대비표에서 그대로 쓴다).
+    첫 머리 앞의 글은 버린다(부칙 꼬리 등)."""
+    out, cur = [], None
+    for ln in (text or "").replace("\r", "").split("\n"):
+        m = _APPX_HEAD.match(ln)
+        if m:
+            cur = {"id": re.sub(r"\s+", " ", f"{m.group(1)} {m.group(2)}").strip(), "head": ln.strip(), "lines": []}
+            out.append(cur)
+        elif cur is not None and ln.strip():
+            cur["lines"].append(ln.rstrip())
+    return [{"id": b["id"], "head": b["head"], "body": "\n".join(b["lines"])} for b in out]
+
+
 @bp.route("/api/regagent/articles")
 def ra_articles():
     r = find_reg(request.args.get("slug", ""), request.args.get("title", ""))
@@ -1404,7 +1421,8 @@ def ra_articles():
     return jsonify({"success": True, "slug": r["slug"], "title": r["title"],
                     "category": r["category"], "revision": r["revision"],
                     "chapters": r["chapters"], "articles": r["articles"],
-                    "addenda_tail": r["addenda"][-1500:], "has_appendix": bool(r["appendix"])})
+                    "addenda_tail": r["addenda"][-1500:], "has_appendix": bool(r["appendix"]),
+                    "appendix": split_appendix(r["appendix"])})
 
 
 @bp.route("/api/regagent/similar", methods=["POST"])
