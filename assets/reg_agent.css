@@ -1005,3 +1005,32 @@ a.ra-link[target="_blank"][href^="http"]::after,a.ra-pill[target="_blank"][href^
 .ra-hist-h{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-xs);font-size:var(--text-sm);}
 .ra-hist-d{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-md);margin-top:var(--space-xs);font:var(--text-sm)/1.8 var(--font-text);}
 @media (max-width:760px){ .ra-hist-d{grid-template-columns:1fr;} }
+
+/* ── 용어 사전 ── */
+.ra-terms{list-style:none;margin:6px 0 0;padding:0;border-top:1px solid var(--bd);}
+.ra-terms>li{border-bottom:1px solid var(--bd);padding:8px 2px;}
+.ra-terms>li.on{background:var(--sf2);}
+.ra-terms-r{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;}
+.ra-terms-t{font-size:14px;padding:0;}
+.ra-terms-b{padding:8px 4px 4px 12px;}
+.ra-terms-defs{list-style:none;margin:0;padding:0;}
+.ra-terms-defs>li{padding:8px 0;border-bottom:1px dashed var(--bd);font-size:13px;}
+.ra-terms-defs>li:last-child{border-bottom:none;}
+.ra-terms-def{margin-top:4px;line-height:1.75;color:var(--tx);overflow-wrap:anywhere;}
+.ra-note.warn{display:flex;gap:8px;align-items:flex-start;color:var(--warn);background:var(--warn-l);border-color:transparent;}
+.ra-note.warn svg.ic{width:16px;height:16px;flex:none;margin-top:2px;}
+.ra-org-h{display:flex;align-items:center;gap:6px;margin:12px 0 2px;font-size:13px;color:var(--mu);}
+.ra-org .ra-org-sub{padding:0 0 0 18px;border-bottom:none;}
+.ra-org .ra-org-sub>.ra-terms{border-top:none;margin:0;border-left:2px solid var(--bd);}
+.ra-org-dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:0 0 6px;font-size:13px;}
+.ra-org-dl dt{color:var(--mu);}
+.ra-org-dl dd{margin:0;overflow-wrap:anywhere;}
+.ra-org-dl ol{margin:0;padding-left:18px;}
+@media (max-width:560px){.ra-org-dl{grid-template-columns:1fr;}.ra-org .ra-org-sub{padding-left:8px;}}
+.ra-tbl-wrap{overflow-x:auto;margin:4px 0 10px;}
+.ra-tbl.ra-dlg{min-width:0;}
+.ra-tbl.ra-dlg td:last-child{white-space:nowrap;}
+@media (max-width:560px){.ra-tbl.ra-dlg thead{display:none;}.ra-tbl.ra-dlg tr{display:block;padding:6px 0;border-bottom:1px solid var(--bd);}.ra-tbl.ra-dlg td{display:inline;border:none;padding:0 4px 0 0;}}
+.ra-lawrefs{list-style:none;margin:4px 0 0;padding:0 0 0 12px;border-left:2px solid var(--bd);}
+.ra-lawrefs>li{padding:4px 0;font-size:12.5px;}
+.ra-lawcur summary{cursor:pointer;font-size:12.5px;color:var(--mu);margin-top:2px;}

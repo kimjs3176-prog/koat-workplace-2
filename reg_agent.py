@@ -853,6 +853,11 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
         # (8-2) 용어 정의 — 중복 정의·쓰지 않는 용어·정의 전 사용
         for lv, tno, msg in term_check(arts):
             add(lv, "term", tno, msg)
+        # (8-2-1) 정의 불일치 — 다른 내규가 같은 용어를 다른 뜻으로 정의했으면 알린다(용어 사전)
+        for dno, t, others in def_conflicts(arts, title)[:5]:
+            add("info", "defconf", dno, f"{art_label(dno)}의 “{t}” 정의가 다른 {ORG['reg_word']} {len(others)}곳"
+                f"({', '.join('「' + x + '」' for x in others[:2])}{' 등' if len(others) > 2 else ''})과 다릅니다. "
+                f"같은 뜻이면 표현을 맞추고, 다르면 이 {ORG['reg_word']}에서의 범위를 분명히 하세요.", term=t)
         # (8-3) 시행세칙 위임 — 이 내규가 “시행세칙으로 정한다”고 맡긴 사항을 시행세칙이 받았는지
         for dg in delegation_check(title, arts):
             if not dg["covered"]:
@@ -1600,6 +1605,24 @@ def ra_upper():
             cands.append({"slug": o["slug"], "reg": o["title"], "no": a["no"], "title": a["title"],
                           "body": body[:1200], "cites": cites[:6], "specific": spec[:4],
                           "terms": term_hits, "snippet": snip, "score": score})
+    have = {(c["slug"], c["no"]): c for c in cands}
+    for x in law_links()["rows"]:                     # “법 제21조”(약칭)·낫표 없는 법령명 인용도 조문 지도로 잡는다
+        if _nk(x["law"]) not in law_keys:
+            continue
+        hit = bool(tset) and art_key(x["art"]) in tset
+        c = have.get((x["slug"], x["no"]))
+        lbl = f"{x['law']} {art_label(x['art'])}"
+        if c:
+            if hit and lbl not in c["specific"] and not any(art_label(x["art"]) in s_ for s_ in c["specific"]):
+                c["specific"].append(lbl)
+                c["score"] += 10
+            continue
+        o = next(r for r in all_regs() if r["slug"] == x["slug"])
+        a = next(a for a in o["articles"] if a["no"] == x["no"])
+        c = {"slug": o["slug"], "reg": o["title"], "no": a["no"], "title": a["title"], "body": a["body"][:1200], "cites": [lbl],
+             "specific": [lbl] if hit else [], "terms": [], "snippet": x["snip"], "score": 10 if hit else (1 if tset else 2)}
+        have[(x["slug"], x["no"])] = c
+        cands.append(c)
     cands.sort(key=lambda x: (-x["score"], x["reg"], art_key(x["no"])))
     regs = {}
     for c in cands:
@@ -3704,11 +3727,12 @@ _ADV_GENERIC = {"기간", "절차", "방법", "대상", "지급", "사용", "신
                 "얼마나", "며칠", "가능", "여부", "규정", "경우", "최대", "최소", "이상", "이하", "이내", "수준"}
 
 
-def _adv_query(q: str):
+def _adv_query(q: str, user_syn=None):
     """질의 → (검색 문장, 검색어, 어디에도 없는 검색어, 낱말 묶음). 묻는 말을 빼고, 본문에 없는 4자 이상 복합어는 두 글자씩 나눠 본다
     (“연차휴가” → 연차·휴가: 원문은 “연차유급휴가”). 일상어는 내규 용어를 더한다(“출장비” → 여비).
     낱말 묶음 [{w, alts, generic, syn}]은 근거 조문이 질의의 핵심 낱말을 함께 다루는지 볼 때 쓴다."""
     corpus = _corpus_text()
+    usyn = _user_syn(user_syn)
     words, miss = [], []
     for w in re.findall(r"[가-힣A-Za-z0-9]+", q or ""):
         w2 = _ADV_HA.sub("", w) if len(w) > 3 and len(_ADV_HA.sub("", w)) >= 2 else w
@@ -3722,7 +3746,7 @@ def _adv_query(q: str):
     for w in words:
         parts = [w[i:i + 2] for i in range(0, len(w) - 1, 2)] if re.fullmatch(r"[가-힣]{4,}", w) else []
         parts = [p for p in parts if p in corpus and p not in _ADV_QSTOP]
-        syn = _syn(w)
+        syn = _syn(w) + [x for x in usyn.get(w, []) if re.sub(r"\s+", "", x) in corpus and x not in _syn(w)]   # 화면에서 더한 동의어
         if w not in corpus and not syn:
             miss.append(w)                                    # 원문에 그대로는 없는 말(“가족수당”) — 쪼갠 말로 찾아도 단정하지 않는다
         use = parts if parts and (w not in corpus or len(w) >= 4) else []
@@ -3742,9 +3766,10 @@ def _adv_cover(text: str, groups: list) -> int:
 _ADV_WEAK_TITLE = re.compile(r"^(?:목적|정의|용어의\s*정의|기타|적용\s*범위)$")
 
 
-def advise_sources(q: str, slug: str = "", cap: int = 10) -> dict:
-    """질의 → 근거 후보 조문(주 조문 + 그 조문이 인용·준용하는 조문 + 시행세칙의 관련 조문 + 인용한 별표)."""
-    query, toks, miss, groups = _adv_query(q)
+def advise_sources(q: str, slug: str = "", cap: int = 10, syn=None) -> dict:
+    """질의 → 근거 후보 조문(주 조문 + 그 조문이 인용·준용하는 조문 + 시행세칙의 관련 조문 + 인용한 별표
+    + 질의에 든 용어의 정의 조문)."""
+    query, toks, miss, groups = _adv_query(q, syn)
     core = sum(1 for g in groups if not g["generic"])
     regs = {r["slug"]: r for r in all_regs()}
     names = _reg_names()
@@ -3874,9 +3899,30 @@ def advise_sources(q: str, slug: str = "", cap: int = 10) -> dict:
             t = re.sub(r"\s+", "", bx["title"] + bx["body"])
             gap = [g["w"] for g in groups if not g["generic"] and not any(re.sub(r"\s+", "", a) in t for a in g["alts"])]
             gap = gap or [g["w"] for g in groups if not g["generic"]]
+    # 질의에 든 용어를 내규에서 정의했으면 그 정의 조문도 근거로 — 내규마다 뜻이 다르면 알린다(“임직원에 계약직도 포함되나요?”)
+    terms = []
+    gl = glossary()["terms"]
+    qn = re.sub(r"\s+", "", q or "")
+    cap += 4                                                  # 정의 조문은 주 조문이 자리를 다 채워도 넣는다
+    for t, e in sorted(gl.items(), key=lambda x: -len(x[0])):
+        tn = re.sub(r"\s+", "", t)
+        if len(tn) < 2 or t in _GLOSS_GENERIC or tn not in qn or any(tn in re.sub(r"\s+", "", x) for x in terms):
+            continue
+        dd = [d for d in e["defs"] if d["kind"] == "def" and (not slug or d["slug"] == slug)]
+        if not dd:
+            continue
+        terms.append(t)
+        for d in dd[:4]:
+            src = add(d["slug"], d["no"], "def", f"“{t}”의 정의")
+            if src:
+                src["keys"] = [f"“{t}”{_josa(t, ('이란', '란'))} {d['text'].split(chr(10))[0][:200]}"]
+        if len(terms) >= 2:
+            break
+    conf = [t for t in terms if gl[t]["conflict"] and not slug]
     return {"tokens": toks, "unmatched": miss, "semantic": res.get("semantic", False), "sources": out,
             "laws": list(laws.values())[:6], "scoped": bool(slug), "core": [g["w"] for g in groups if not g["generic"]],
-            "gap": gap, "mapped": {g["w"]: g["syn"] for g in groups if g["syn"]}}
+            "gap": gap, "mapped": {g["w"]: g["syn"] for g in groups if g["syn"]}, "terms": terms, "term_conflicts": conf,
+            "delegations": match_delegations(q, toks) if not slug or "전결" in regs.get(slug, {}).get("title", "") else []}
 
 
 def _adv_rule_answer(q: str, S: dict) -> dict:
@@ -3909,7 +3955,12 @@ def _adv_rule_answer(q: str, S: dict) -> dict:
             ans += f" 금액·기준은 {', '.join('「' + x['reg'] + '」 ' + x['appx'] for x in ap[:2])}에 있습니다."
         if extra:
             ans += f" 이 조문이 인용·준용하는 조문과 세부 기준 {len(extra)}건도 함께 보세요."
-    return {"conclusion": "확인 필요" if weak else "해당 규정", "answer": ans, "basis": basis, "conditions": [], "caveats": [], "followups": []}
+    cav = [f"“{t}”의 뜻이 {ORG['reg_word']}마다 다르게 정의되어 있습니다(근거의 ‘정의’ 조문 참조). 어느 {ORG['reg_word']}가 적용되는지 확인하세요."
+           for t in S.get("term_conflicts") or []]
+    dl = S.get("delegations") or []
+    if dl:
+        cav.append(f"결재(전결)권자는 「{dl[0]['reg']}」 별표 기준으로 " + "; ".join(_dlg_line(x) for x in dl[:4]) + "입니다.")
+    return {"conclusion": "확인 필요" if weak else "해당 규정", "answer": ans, "basis": basis, "conditions": [], "caveats": cav, "followups": []}
 
 
 _ADV_CITE_GROUP = re.compile(r"\[\s*([0-9]+(?:\s*[,~\-–]\s*[0-9]+)+)\s*\]")
@@ -3979,6 +4030,11 @@ def ai_advise(b: dict, S: dict):
     gap = S.get("gap") or []
     note = (f"\n※ 검색 참고: 질의의 “{'”, “'.join(gap[:3])}”{_josa(gap[:3][-1], ('을', '를'))} 직접 다룬 조문은 찾지 못했습니다. "
             "근거 조문에 없으면 단정하지 말 것.\n") if gap else ""
+    note += "".join(f"\n※ “{t}”는 {ORG['reg_word']}마다 정의가 다르다(근거의 ‘정의’ 조문). 어느 {ORG['reg_word']}의 정의가 적용되는지 구분해 답할 것.\n"
+                    for t in S.get("term_conflicts") or [])
+    dl = S.get("delegations") or []
+    if dl:
+        note += f"\n[전결 기준 — 「{dl[0]['reg']}」 별표] 결재권자를 물으면 이 표를 근거로 답할 것:\n" + "\n".join("- " + _dlg_line(x) for x in dl[:8]) + "\n"
     user = f"{hist}질의: {b.get('question', '')}\n{note}\n[근거 조문]\n{blocks}"
     text, err = _CTX["ai_generate"](provider, key, mdl, system, user, max_tokens=2500, temperature=0.1, json_mode=True)
     if err:
@@ -4039,7 +4095,7 @@ def ra_advise():
     slug = (b.get("slug") or "").strip()
     if slug and not find_reg(slug, ""):
         return jsonify({"success": False, "error": "지정한 내규를 찾을 수 없습니다."}), 404
-    S = advise_sources(q, slug)
+    S = advise_sources(q, slug, syn=b.get("synonyms"))
     ans, notice = ai_advise(b, S)
     hint = ""
     if not ans:
@@ -4050,7 +4106,8 @@ def ra_advise():
     return jsonify({"success": True, "question": q, "scope": slug, "ai": "model" in ans, "notice": notice or hint,
                     "semantic": S["semantic"], "tokens": S["tokens"], "unmatched": S.get("unmatched", []),
                     "gap": S.get("gap", []), "mapped": S.get("mapped", {}),
-                    "sources": S["sources"], "laws": S["laws"], **ans})
+                    "sources": S["sources"], "laws": S["laws"], "terms": S.get("terms", []),
+                    "term_conflicts": S.get("term_conflicts", []), "delegations": S.get("delegations", []), **ans})
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -4389,3 +4446,992 @@ def ra_ledger_sum():
         ok, recs = _ledger_lines()
         _LEDGER_SUM.update(at=time.time(), v={"available": ok, "months": ledger_summary(recs) if ok else []})
     return jsonify({"success": True, "kinds": _LEDGER_KINDS, **_LEDGER_SUM["v"]})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 용어 사전(규정 온톨로지 1단계) — 내규에서 정의한 용어·약칭을 개념으로 모으고,
+# 동의어(일상어↔내규 용어 _SYN·기관 프로필 synonyms + 약칭↔정식 명칭)와 내규 사이 정의 불일치를 계산한다.
+# 내보내기는 SKOS 개념(prefLabel·altLabel·definition) 꼴의 JSON-LD.
+# ══════════════════════════════════════════════════════════════════════════
+_GLOSS = {"key": None, "v": None}
+_GLOSS_GENERIC = _TERM_GENERIC | {"법", "영", "시행령", "규정", "이 규정", "이 규칙", "기관", "본부", "센터", "협의회", "사업", "과제",
+                                   "본원", "지침", "세칙", "매뉴얼", "요령", "기준", "계획", "신청인", "신청자"}
+
+
+def _def_text(body: str, m) -> str:
+    """정의 줄 + 그 아래 목(가. 나.) — “…다음 각 목의 어느 하나에 해당하는 자를 말한다.”까지 함께."""
+    lines = body[m.end():].split("\n")
+    out = [lines[0].strip()]
+    for ln in lines[1:]:
+        s = ln.strip()
+        if not re.match(r"^[가-하]\.\s", s):
+            break
+        out.append(s)
+    return "\n".join(x for x in out if x)[:600]
+
+
+def _def_key(t: str) -> str:
+    """정의 비교용 정규화: 띄어쓰기·괄호·인용·기관명·“…을 말한다” 차이는 같은 뜻으로 본다."""
+    t = re.sub(r"\([^)]{0,40}\)|<[^>]{0,40}>|[「」『』“”\"'‘’·,.\s]", "", t or "")
+    for w in [ORG.get("org_name"), ORG.get("org_short")]:
+        if w:
+            t = t.replace(re.sub(r"\s+", "", w), "")
+    return re.sub(r"(?:을|를)?말한다$", "", t)
+
+
+def _user_syn(extra) -> dict:
+    """화면에서 더한 동의어 {일상어: [내규 용어…]} 정리(브라우저에 저장된 것을 요청마다 보낸다)."""
+    out = {}
+    for k, v in (extra.items() if isinstance(extra, dict) else []):
+        k = str(k).strip()[:30]
+        vs = [str(x).strip()[:30] for x in (v if isinstance(v, list) else [v]) if isinstance(x, (str, int)) and str(x).strip()][:6]
+        if k and vs and len(out) < 200:
+            out[k] = vs
+    return out
+
+
+def glossary() -> dict:
+    """{terms: {용어: {term, defs:[{reg, slug, no, title, kind, text, key}], full:[정식 명칭], conflict, groups}}}"""
+    regs = all_regs()
+    if _GLOSS["key"] == id(regs):
+        return _GLOSS["v"]
+    terms = {}
+
+    def put(t, d):
+        t = re.sub(r"\s+", " ", t).strip()
+        if not t or len(t) > 30 or re.search(r"[○△□◇]", t):
+            return
+        e = terms.setdefault(t, {"term": t, "defs": [], "full": []})
+        if not any(x["slug"] == d["slug"] and x["no"] == d["no"] and x["kind"] == d["kind"] for x in e["defs"]):
+            e["defs"].append(d)
+    for r in regs:
+        for a in r["articles"]:
+            if a["deleted"]:
+                continue
+            body = a["body"]
+            base = {"reg": r["title"], "slug": r["slug"], "no": a["no"], "title": a["title"]}
+            for m in _DEF_LINE.finditer(body):
+                t = re.sub(r"\s+", " ", m.group(1)).strip()
+                if m.group(0).rstrip().endswith("함은"):
+                    t = re.sub(r"(?<=[가-힣]{2})(?:이|라)$", "", t)
+                txt = _def_text(body, m)
+                put(t, dict(base, kind="def", text=txt, key=_def_key(txt.split("\n")[0])))
+            for m in _ABBR_DEF.finditer(body):
+                fm = re.search(r"([^\s,.(（「」]{2,20}(?:\s[^\s,.(（「」]{1,12}){0,3})\s*$", body[max(0, m.start() - 60):m.start()])
+                full = re.sub(r"^(?:및|또는|그|이|각|등|의)\s+", "", fm.group(1)).strip() if fm else ""
+                put(m.group(1), dict(base, kind="abbr", text=f"{full}(약칭)" if full else "약칭", key="", full=full))
+                if full and full != m.group(1):
+                    e = terms[re.sub(r"\s+", " ", m.group(1)).strip()]
+                    if full not in e["full"]:
+                        e["full"].append(full)
+    for t, e in terms.items():
+        dd = [d for d in e["defs"] if d["kind"] == "def"]
+        reps = []                                         # 뜻이 같은 정의끼리 묶는다(표현이 조금 달라도 같은 뜻)
+        for d in dd:
+            for rp in reps:
+                if difflib.SequenceMatcher(None, rp[0]["key"], d["key"]).ratio() >= 0.85:
+                    rp.append(d)
+                    break
+            else:
+                reps.append([d])
+        e["variants"] = len(reps)
+        e["regs"] = sorted({d["reg"] for d in e["defs"]})
+        e["conflict"] = len(reps) > 1 and len({d["reg"] for d in dd}) > 1 and t not in _GLOSS_GENERIC
+    _GLOSS.update(key=id(regs), v={"terms": terms})
+    return _GLOSS["v"]
+
+
+def synonyms(word: str, extra=None) -> list:
+    """동의어: 일상어↔내규 용어(_SYN·기관 프로필 synonyms·화면에서 더한 것) + 약칭↔정식 명칭
+    (약칭의 정식 명칭이 하나뿐일 때만 — 내규마다 다른 약칭은 묶지 않는다)."""
+    w = (word or "").strip()
+    m = dict(_SYN)
+    for k, v in _user_syn(extra).items():
+        m[k] = list(dict.fromkeys(list(m.get(k, [])) + v))
+    out = list(m.get(w, [])) + [k for k, v in m.items() if w in v]
+    e = glossary()["terms"].get(w)
+    if e and len(e["full"]) == 1 and len(e["full"][0]) <= 20:
+        out.append(e["full"][0])
+    for t, e2 in glossary()["terms"].items():
+        if len(e2["full"]) == 1 and e2["full"][0] == w and t not in _GLOSS_GENERIC:
+            out.append(t)
+    return [x for i, x in enumerate(out) if x and x != w and x not in out[:i]][:8]
+
+
+def def_conflicts(arts: list, title: str = "") -> list:
+    """이 조문들에서 정의한 용어가 다른 내규의 정의와 뜻이 다른지 → [(no, term, [다른 내규명])]"""
+    g = glossary()["terms"]
+    out = []
+    for a in arts:
+        if a.get("deleted"):
+            continue
+        for m in _DEF_LINE.finditer(a.get("body", "")):
+            t = re.sub(r"\s+", " ", m.group(1)).strip()
+            e = g.get(t)
+            if not e or t in _GLOSS_GENERIC:
+                continue
+            k = _def_key(_def_text(a["body"], m).split("\n")[0])
+            others = [d for d in e["defs"] if d["kind"] == "def" and _nk(d["reg"]) != _nk(title)]
+            if others and not any(difflib.SequenceMatcher(None, k, d["key"]).ratio() >= 0.85 for d in others):
+                out.append((a["no"], t, sorted({d["reg"] for d in others})))
+    return out
+
+
+def _gloss_row(e: dict, extra=None, full: bool = False) -> dict:
+    row = {"term": e["term"], "regs": e["regs"], "n_defs": len(e["defs"]), "variants": e.get("variants", 0),
+           "conflict": e["conflict"], "abbr": all(d["kind"] == "abbr" for d in e["defs"]), "full": e["full"][:3],
+           "synonyms": synonyms(e["term"], extra)}
+    if full:
+        row["defs"] = [{k: d[k] for k in ("reg", "slug", "no", "title", "kind", "text")} for d in e["defs"]]
+    return row
+
+
+@bp.route("/api/regagent/terms", methods=["POST"])
+def ra_terms():
+    """용어 사전. body: {q?, filter?: all|conflict|abbr|def, term?(한 용어 상세), synonyms?:{일상어: [내규 용어]}}"""
+    b = _body()
+    extra = _user_syn(b.get("synonyms"))
+    g = glossary()["terms"]
+    if (b.get("term") or "").strip():
+        e = g.get(b["term"].strip())
+        if not e:
+            return jsonify({"success": False, "error": "그 용어를 정의한 내규가 없습니다."}), 404
+        return jsonify({"success": True, "item": _gloss_row(e, extra, True)})
+    q = re.sub(r"\s+", "", (b.get("q") or "").strip())[:30]
+    f = (b.get("filter") or "all").strip()
+    rows = []
+    for t, e in g.items():
+        if q and q not in t.replace(" ", "") and not any(q in s for s in synonyms(t, extra)) \
+                and not any(q in re.sub(r"\s+", "", x) for x in e["full"]):
+            continue
+        if f == "conflict" and not e["conflict"]:
+            continue
+        if f == "abbr" and not all(d["kind"] == "abbr" for d in e["defs"]):
+            continue
+        if f == "def" and not any(d["kind"] == "def" for d in e["defs"]):
+            continue
+        rows.append(_gloss_row(e, extra))
+    rows.sort(key=lambda x: (not x["conflict"], -len(x["regs"]), x["term"]))
+    allv = list(g.values())
+    return jsonify({"success": True, "total": len(allv), "count": len(rows), "items": rows[:400],
+                    "stats": {"terms": len(allv), "conflict": sum(1 for e in allv if e["conflict"]),
+                              "multi": sum(1 for e in allv if len(e["regs"]) > 1),
+                              "synonyms": len(_SYN) + len(extra)}})
+
+
+def _org_nodes(base: str) -> list:
+    """조직도·위원회를 W3C ORG 꼴로(org:OrganizationalUnit·org:subOrganizationOf·org:purpose)."""
+    E = entities()
+    uid = lambda n: base + "unit/" + re.sub(r"\s+", "_", n)
+    out = [{"@id": base + "org", "@type": "org:FormalOrganization", "rdfs:label": ORG["org_name"]}]
+    for u in E["units"].values():
+        n = {"@id": uid(u["name"]), "@type": "org:OrganizationalUnit", "rdfs:label": u["name"],
+             "org:subOrganizationOf": {"@id": uid(u["parent"]) if u["parent"] in E["units"] else base + "org"},
+             "dcterms:source": f"{base}reg/{u['src']['slug']}#{u['src']['no']}"}
+        if u.get("duty"):
+            n["org:purpose"] = u["duty"]
+        out.append(n)
+    refs = {}
+    for x in law_links()["rows"]:
+        refs.setdefault(f"{base}reg/{x['slug']}#{x['no']}", []).append(f"{base}law/{x['law'].replace(' ', '_')}#{x['art']}")
+    out += [{"@id": k, "dcterms:references": [{"@id": u} for u in dict.fromkeys(v)]} for k, v in refs.items()]
+    for c in E["committees"].values():
+        n = {"@id": base + "committee/" + re.sub(r"\s+", "_", c["id"]), "@type": "org:OrganizationalUnit",
+             "rdfs:label": c["name"], "org:classification": "회의체", "org:subOrganizationOf": {"@id": base + "org"},
+             "dcterms:source": f"{base}reg/{c['slug']}#{c['no']}"}
+        if c["functions"]:
+            n["org:purpose"] = c["functions"]
+        if c["chair"]:
+            n["rdfs:comment"] = f"위원장: {c['chair']}" + (f", 구성: {c['size']}" if c["size"] else "")
+        out.append(n)
+    return out
+
+
+@bp.route("/api/regagent/ontology")
+def ra_ontology():
+    """용어 사전 내보내기 — SKOS 개념(JSON-LD). 내규·조문은 dcterms:source 로 가리킨다."""
+    g = glossary()["terms"]
+    base = "urn:koat-reg:"
+    concepts = []
+    for t, e in sorted(g.items()):
+        c = {"@id": base + "term/" + t.replace(" ", "_"), "@type": "skos:Concept", "skos:prefLabel": {"@value": t, "@language": "ko"}}
+        alts = synonyms(t) + e["full"]
+        if alts:
+            c["skos:altLabel"] = [{"@value": x, "@language": "ko"} for x in dict.fromkeys(alts)]
+        defs = [d for d in e["defs"] if d["kind"] == "def"]
+        if defs:
+            c["skos:definition"] = [{"@value": d["text"], "@language": "ko", "dcterms:source": f"{base}reg/{d['slug']}#{d['no']}",
+                                     "rdfs:comment": f"「{d['reg']}」 {art_label(d['no'])}"} for d in defs]
+        if e["conflict"]:
+            c["skos:note"] = f"내규마다 정의가 다름({e['variants']}가지)"
+        concepts.append(c)
+    doc = {"@context": {"skos": "http://www.w3.org/2004/02/skos/core#", "dcterms": "http://purl.org/dc/terms/",
+                        "rdfs": "http://www.w3.org/2000/01/rdf-schema#", "org": "http://www.w3.org/ns/org#"},
+           "@id": base + "scheme", "@type": "skos:ConceptScheme", "dcterms:title": f"{ORG['org_name']} {ORG['reg_word']} 용어 사전",
+           "skos:hasTopConcept": concepts, "@included": _org_nodes(base)}
+    resp = jsonify(doc)
+    resp.headers["Content-Disposition"] = "attachment; filename=reg_glossary.jsonld"
+    return resp
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 조직·직위·위원회(규정 온톨로지 2단계) — 직제 조문에서 조직도를, 설치 조문(“…위원회를 둔다”)에서 위원회와
+# 구성(인원·위원장·간사)·기능을, 직위·기능 부서(주관부서 등)는 내규에 나온 곳을 모은다.
+# ══════════════════════════════════════════════════════════════════════════
+_ENT = {"key": None, "v": None}
+_BODY_SUF = r"(?:위원회|심의회|협의회|평가단|자문단|이사회)"
+_CMT_SET = re.compile(r"((?:[가-힣A-Za-z0-9·]+\s){0,3}[가-힣A-Za-z0-9·]*" + _BODY_SUF + r")\s*(?:\([^)]{0,40}\)\s*)?(?:를|을)\s*(?:둔다|둘\s*수\s*있다|설치|구성)")
+_CMT_GENERIC = {"위원회", "심의위원회", "평가위원회", "운영위원회", "심사위원회", "선정위원회", "선정평가위원회", "추진위원회", "조사위원회",
+                "실무협의회", "실무소위원회", "실무위원회", "소위원회", "분과위원회", "운영실무위원회", "자문위원회", "심의회", "협의회", "평가단",
+                "자문단", "점검위원회", "연장심사위원회", "최종평가위원회"}
+_UNIT_KIND = (("본부", "본부장"), ("센터", "센터장"), ("캠퍼스", "캠퍼스장"), ("실", "실장"), ("팀", "팀장"), ("단", "단장"))
+_UNIT_RE = r"[가-힣A-Za-z]{1,16}(?:본부|센터|캠퍼스|실|팀|단)"
+_ROOMS = {"사무실", "연구실", "기계실", "당직실", "회의실", "상황실", "실험실", "전산실", "자료실", "숙직실", "의무실", "휴게실", "기록관리실", "보안실",
+          "통제실", "분석실", "시험실", "검정실", "교육실", "강의실", "화장실", "보존실", "기록실", "문서고실"}
+_ROLE_DEF = [("{head}", "기관장", r"(?<![가-힣]){w}(?![가-힣]*(?:실|회|단|팀))"), ("{deputy}", "임원", r"(?<![가-힣]){w}"),
+             ("상임이사", "임원", r"(?<!비){w}"), ("비상임이사", "임원", r"{w}"), ("감사", "임원", r"(?<![가-힣]){w}(?=는|가|에게|의\s*직무|를\s*보좌)"),
+             ("본부장", "부서장", r"{w}"), ("실장", "부서장", r"(?<!연구){w}"), ("팀장", "부서장", r"{w}"), ("센터장", "부서장", r"{w}"),
+             ("부서장", "부서장", r"{w}|부서의\s*장"), ("위원장", "회의체", r"(?<!부){w}"), ("간사", "회의체", r"(?<![가-힣]){w}")]
+_DEPT_ROLE = re.compile(r"(?<![가-힣])([가-힣]{1,8}(?:담당부서|주관부서|총괄부서|관리부서|전담부서|소관부서|주무부서|처리부서|운용부서))")
+
+
+def _cmt_name(raw: str) -> str:
+    """설치 문장의 앞부분 → 위원회 이름. “…을 위하여 민 간기술이전심의회”처럼 끊긴 띄어쓰기도 붙인다."""
+    toks = raw.split()
+    keep = [toks.pop()]
+    while toks:
+        t = toks.pop()
+        if re.search(r"[을를이가은는에의여서고며다한된될할와과로라해시우면게도만]$", t) or t in ("다음", "각", "그", "이", "및", "또는", "농진원", "본원") \
+                or len(keep) >= 3:
+            break
+        keep.insert(0, t)
+    nm = re.sub(r"^.*?(?:위해|위하여|따라|관해|관하여|경우|반드시|하기)(?=[가-힣A-Z]{3})", "", "".join(keep))
+    for w in [ORG.get("org_short"), ORG.get("org_name")]:
+        if w and nm.startswith(re.sub(r"\s+", "", w)) and len(nm) > len(re.sub(r"\s+", "", w)) + 2:
+            nm = nm[len(re.sub(r"\s+", "", w)):]
+    return nm
+
+
+def _cmt_detail(r: dict, i: int, name: str) -> dict:
+    """설치 조문과 그 뒤 조문(구성·위원장·간사·기능)에서 위원회 정보를 뽑는다."""
+    arts = [a for a in r["articles"][i:i + 5] if not a["deleted"]]
+    keep = [arts[0]]
+    for a in arts[1:]:
+        if _CMT_SET.search(a["body"]) and _cmt_name(_CMT_SET.search(a["body"]).group(1)) != name:
+            break                                      # 다른 위원회의 설치 조문부터는 그 위원회 것
+        if not re.search(r"구성|위원|간사|기능|임무|의결|운영|회의|의장", a["title"] + a["body"][:60]):
+            break
+        keep.append(a)
+    ids = {a["no"] for a in keep}
+    for a in r["articles"]:                            # 구성·위원장 조문이 떨어져 있으면(“제7조(위원회의 구성)”) 함께
+        if a["deleted"] or a["no"] in ids or not re.search(r"구성|위원장|간사|기능", a["title"]):
+            continue
+        k = re.sub(r"\s+", "", a["title"] + a["body"][:200])
+        if name in k or (len(keep) > 1 and re.sub(r"\s+", "", r["title"]).startswith(name)) or \
+                (r["title"].replace(" ", "").startswith(name) and "위원회" in k):
+            keep.append(a)
+            ids.add(a["no"])
+    return dict(_cmt_fields("\n".join(a["body"] for a in keep)), arts=[a["no"] for a in keep])
+
+
+def _cmt_fields(txt: str) -> dict:
+    """위원회 조문 글 → 구성 인원·위원장·간사·기능(심의 사항)."""
+    out = {"size": "", "chair": "", "secretary": "", "functions": [], "verb": ""}
+    ms = [re.search(r"(?:위원장\s*(?:1\s*[명인]\s*)?(?:을|를)?\s*포함(?:한|하여|하는)\s*)?((?:\d+\s*[명인]\s*이상\s*)?\d+\s*[명인]\s*(?:이상|이하|이내))(?:의\s*(?:내·외부|내부|외부)?\s*위원|으로|의\s*위원)", txt),
+          re.search(r"((?:각\s*)?\d+\s*[명인](?:\s*내외)?)\s*(?:의|으로)?\s*위원\s*으로\s*구\s*성", txt)]
+    m = min((x for x in ms if x), key=lambda x: x.start(), default=None)   # 앞 조문(구성 조문)의 것
+    if m:
+        out["size"] = re.sub(r"\s+", " ", m.group(1)).replace("인", "명")
+    elif re.search(r"이사\s*전원으로\s*구성", txt):
+        out["size"] = "이사 전원"
+    m = (re.search(r"(?:위원장|의장)은\s*([^,.。\n]{1,40}?)(?:이|가)\s*(?:되|맡|겸|한다)", txt)
+         or re.search(r"위원장은\s*([가-힣]{2,14}?)\s*(?:,|(?:으로|로)\s*(?:하|한))", txt)
+         or re.search(r"([가-힣]{2,14})\s*\(\s*위원장\s*\)", txt)
+         or re.search(r"([^,.。\n]{1,30}?)(?:은|는)\s*그\s*의장이\s*된다", txt))
+    if m:
+        out["chair"] = re.sub(r"^(?:위원장은|의장은)\s*", "", m.group(1)).strip()
+        for w in [ORG.get("org_short"), ORG.get("org_name")]:
+            if w and out["chair"].startswith(w + " "):
+                out["chair"] = out["chair"][len(w) + 1:]
+    elif re.search(r"위원장은\s*[^.\n]{0,20}호선", txt):
+        out["chair"] = "위원 중에서 호선"
+    m = (re.search(r"[^.\n]*간사[^.\n]*(?:지명|중에서|맡|된다|둔다|두되|둔다|위촉|으로\s*한다)[^.\n]*", txt)
+         or re.search(r"[^.\n]*간사[^.\n]*", txt))
+    if m:
+        out["secretary"] = re.sub(r"^[①-⑳]\s*", "", m.group(0).strip())[:120]
+    m = re.search(r"다음\s*각\s*호의?\s*사항을\s*((?:심의|의결|자문|조정|심사|평가|검토|협의)(?:[·ㆍ･\s및]*(?:심의|의결|자문|조정|심사|평가|검토|협의))*)", txt)
+    if m:
+        out["verb"] = re.sub(r"\s+", "", m.group(1))
+        for ln in txt[m.end():].split("\n")[1:]:
+            s = ln.strip()
+            mm = re.match(r"^\d+\.\s*(.+)$", s)
+            if not mm:
+                if out["functions"]:
+                    break
+                continue
+            if not re.match(r"^삭제", mm.group(1)):
+                out["functions"].append(mm.group(1)[:80])
+            if len(out["functions"]) >= 10:
+                break
+    return out
+
+
+def _count_in(regs: list, pat) -> list:
+    """이 패턴이 나온 내규별 횟수 → [{reg, slug, n}] (많은 순)."""
+    out = []
+    for r in regs:
+        n = len(pat.findall(_live_text(r)))
+        if n:
+            out.append({"reg": r["title"], "slug": r["slug"], "n": n})
+    return sorted(out, key=lambda x: -x["n"])
+
+
+_LIVE = {"key": None, "v": {}}
+
+
+def _live_text(r: dict) -> str:
+    """본칙의 살아 있는 조문을 한 글로(내규 목록이 바뀌면 다시 만든다)."""
+    regs = all_regs()
+    if _LIVE["key"] != id(regs):
+        _LIVE.update(key=id(regs), v={}, ns={})
+    v = _LIVE["v"].get(r["slug"])
+    if v is None:
+        v = _LIVE["v"][r["slug"]] = "\n".join(a["body"] for a in r["articles"] if not a["deleted"])
+    return v
+
+
+def _count_name(regs: list, nm: str) -> list:
+    """이름이 나온 내규별 횟수(띄어쓰기 무시 — 원문에 “민 간기술”처럼 끊긴 곳이 있다)."""
+    k = re.sub(r"\s+", "", nm)
+    out = []
+    for r in regs:
+        t = _LIVE.setdefault("ns", {}).get(r["slug"])
+        if t is None:
+            t = _LIVE["ns"][r["slug"]] = re.sub(r"\s+", "", _live_text(r))
+        n = t.count(k)
+        if n:
+            out.append({"reg": r["title"], "slug": r["slug"], "n": n})
+    return sorted(out, key=lambda x: -x["n"])
+
+
+def entities() -> dict:
+    """{units:{이름: {name, kind, head, parent, children, src}}, committees:{id: {...}}, roles:[...], depts:[...]}"""
+    regs = all_regs()
+    if _ENT["key"] == id(regs):
+        return _ENT["v"]
+    head, deputy = ORG.get("head") or "원장", ORG.get("deputy") or "부원장"
+    units = {}
+
+    def unit(nm, parent, src):
+        nm = re.sub(r"\s+", "", nm)
+        if nm in _ROOMS or len(nm) < 3 or not re.fullmatch(_UNIT_RE, nm):
+            return
+        kind = next((k for k, _ in _UNIT_KIND if nm.endswith(k)), "")
+        u = units.setdefault(nm, {"name": nm, "kind": kind, "head": nm + next(h for k, h in _UNIT_KIND if k == kind)[len(kind):],
+                                  "parent": "", "children": [], "src": src})
+        if parent and not u["parent"] and parent != nm:
+            u["parent"] = parent
+    # 직제: “원장 밑에 홍보실을 두고 …”, “부원장 밑에 A본부, B본부를 둔다”, “1. 기획운영본부 : 기획조정실, AX전략실”
+    for r in regs:
+        if "직제" not in r["title"]:
+            continue
+        for a in r["articles"]:
+            if a["deleted"]:
+                continue
+            src = {"reg": r["title"], "slug": r["slug"], "no": a["no"]}
+            for m in re.finditer(r"([가-힣A-Za-z]{2,16})\s*밑에\s*([^.]{2,300}?)(?:을|를)\s*둔다", a["body"]):
+                for c in re.split(r"\s*(?:(?:을|를)\s*두고|,|및|·|、)\s*", m.group(2)):
+                    mu = re.search(r"(" + _UNIT_RE + r")\s*$", c)
+                    if mu:
+                        unit(mu.group(1), m.group(1), src)
+            for m in re.finditer(r"(" + _UNIT_RE + r")에\s*두는\s*(" + _UNIT_RE + r")", a["body"]):
+                unit(m.group(2), m.group(1), src)
+            for m in re.finditer(r"(?m)^\s*\d+\.\s*(" + _UNIT_RE + r")\s*[:：]\s*(.+)$", a["body"]):
+                par = m.group(1)
+                unit(par, "", src)
+                for c in re.split(r"\s*,\s*", m.group(2)):
+                    unit(re.sub(r"\(.*?\)", "", c), par, src)
+            m = re.match(r"^(" + _UNIT_RE + r")$", re.sub(r"\s+", "", a["title"]))
+            if m and m.group(1) in units and re.search(r"업무를\s*수행", a["body"]):
+                units[m.group(1)]["duty"] = re.sub(r"\s+", " ", a["body"])[:240]
+                units[m.group(1)]["duty_src"] = src
+    for u in units.values():
+        if u["parent"] in units:
+            units[u["parent"]]["children"].append(u["name"])
+    # 위원회·회의체
+    cmts = {}
+    for r in regs:
+        abbr = {}
+        for i, a in enumerate(r["articles"]):
+            if a["deleted"]:
+                continue
+            for m in _CMT_SET.finditer(a["body"]):
+                nm = _cmt_name(m.group(1))
+                if len(nm) < 3 or nm in ("위원회",):
+                    continue
+                ma = _ABBR_DEF.search(a["body"][m.start():m.end() + 40])
+                generic = nm in _CMT_GENERIC
+                cid = f"{nm}@{r['slug']}" if generic else nm
+                if cid in cmts:                        # 이름을 딴 운영규칙(「산업안전보건위원회 운영규칙」)이 있으면 그것을 근거로
+                    cmts[cid].setdefault("also", []).append({"reg": r["title"], "slug": r["slug"], "no": a["no"]})
+                    if not _nk(r["title"]).startswith(_nk(nm)) or _nk(cmts[cid]["reg"]).startswith(_nk(nm)):
+                        continue
+                    old = cmts.pop(cid)
+                    also = [x for x in old.get("also", []) if x["slug"] != r["slug"]] + [{"reg": old["reg"], "slug": old["slug"], "no": old["no"]}]
+                    d = _cmt_detail(r, i, nm)
+                    cmts[cid] = {"id": cid, "name": nm, "generic": generic, "reg": r["title"], "slug": r["slug"], "no": a["no"],
+                                 "title": a["title"], "abbr": ma.group(1) if ma else "", "also": also, **d}
+                    continue
+                d = _cmt_detail(r, i, nm)
+                cmts[cid] = {"id": cid, "name": nm, "generic": generic, "reg": r["title"], "slug": r["slug"], "no": a["no"],
+                             "title": a["title"], "abbr": ma.group(1) if ma else "", **d}
+                if ma:
+                    abbr[ma.group(1)] = cid
+    for c in cmts.values():                            # 「○○위원회 운영규칙」이 따로 있으면 구성·기능을 거기서 채운다
+        if c["generic"]:
+            continue
+        r2 = next((r for r in regs if r["slug"] != c["slug"] and _nk(c["name"]) in _nk(r["title"])
+                   and re.search(r"운영\s*(?:규칙|규정|지침|세칙)$", r["title"])), None)
+        if not r2:
+            continue
+        c["rules"] = {"reg": r2["title"], "slug": r2["slug"]}
+        f = _cmt_fields("\n".join(a["body"] for a in r2["articles"] if not a["deleted"]
+                                  and re.search(r"구성|위원장|간사|기능|설치|목적|심의|임무|의장", a["title"])))
+        for k, v in f.items():
+            if v and not c.get(k):
+                c[k] = v
+    for c in cmts.values():
+        own = next(r for r in regs if r["slug"] == c["slug"])
+        c["mentions"] = _count_name([own] if c["generic"] else regs, c["name"])
+    # 직위·기능 부서
+    roles = []
+    for w, kind, p in _ROLE_DEF:
+        w = w.format(head=head, deputy=deputy)
+        pat = re.compile(p.format(w=re.escape(w)))
+        ms = _count_in(regs, pat)
+        if ms:
+            roles.append({"name": w, "kind": kind, "mentions": ms, "n": sum(x["n"] for x in ms)})
+    for u in units.values():
+        ms = _count_name(regs, u["head"])
+        if ms:
+            roles.append({"name": u["head"], "kind": "부서장", "unit": u["name"], "mentions": ms, "n": sum(x["n"] for x in ms)})
+    for u in units.values():
+        u["mentions"] = _count_name(regs, u["name"])
+    dc = {}
+    for r in regs:
+        for a in r["articles"]:
+            if a["deleted"]:
+                continue
+            for m in _DEPT_ROLE.finditer(a["body"]):
+                nm = re.sub(r"^(?:해당|각|그|이|관련|소속|같은)", "", m.group(1))
+                if len(nm) >= 4:
+                    x = dc.setdefault(nm, {})
+                    x[r["slug"]] = x.get(r["slug"], 0) + 1
+    g = glossary()["terms"]
+    titles = {r["slug"]: r["title"] for r in regs}
+    depts = []
+    for nm, by in dc.items():
+        e = g.get(nm)
+        depts.append({"name": nm, "n": sum(by.values()), "mentions": sorted([{"reg": titles[s], "slug": s, "n": n} for s, n in by.items()], key=lambda x: -x["n"]),
+                      "defs": [{k: d[k] for k in ("reg", "slug", "no", "text")} for d in e["defs"] if d["kind"] == "def"][:4] if e else []})
+    depts.sort(key=lambda x: -x["n"])
+    v = {"units": units, "committees": cmts, "roles": roles, "depts": depts[:60], "head": head, "deputy": deputy}
+    _ENT.update(key=id(regs), v=v)
+    return v
+
+
+_UNIT_ODD = re.compile(r"(?<![가-힣])([가-힣A-Z]{2,14}(?:본부|팀))(?=[은는이가을를의에와과로및,\s)·」]|장|$)")
+_UNIT_ODD_SKIP = re.compile(r"^(?:소속|해당|담당|주무|관련|각|사업담당|대응|실증|우정사업)")
+
+
+def unknown_units() -> list:
+    """직제에 없는 본부·팀 이름 — 조직 개편 뒤 남은 옛 이름일 수 있다(확인 필요)."""
+    E = entities()
+    out = {}
+    for r in all_regs():
+        for m in _UNIT_ODD.finditer(_live_text(r)):
+            nm = m.group(1)
+            if nm in E["units"] or _UNIT_ODD_SKIP.search(nm) or nm in _ROOMS:
+                continue
+            x = out.setdefault(nm, {"name": nm, "n": 0, "regs": {}})
+            x["n"] += 1
+            x["regs"][r["slug"]] = r["title"]
+    rows = [{"name": x["name"], "n": x["n"], "regs": [{"slug": s, "reg": t} for s, t in x["regs"].items()]} for x in out.values()]
+    return sorted(rows, key=lambda x: -x["n"])
+
+
+def _ent_mentions(nm: str, regs: list, extra: str = "", cap: int = 80) -> list:
+    """이름(띄어쓰기 무시)이 나온 조문 → [{reg, slug, no, title, snip}]"""
+    pats = [re.compile(r"\s*".join(map(re.escape, re.sub(r"\s+", "", w)))) for w in [nm, extra] if w]
+    out = []
+    for r in regs:
+        for a in r["articles"]:
+            if a["deleted"]:
+                continue
+            m = next((m for p in pats for m in [p.search(a["body"])] if m), None)
+            if m:
+                out.append({"reg": r["title"], "slug": r["slug"], "no": a["no"], "title": a["title"], "snip": _snip(a["body"], m.start())})
+                if len(out) >= cap:
+                    return out
+    return out
+
+
+@bp.route("/api/regagent/org")
+def ra_org():
+    """조직·직위·위원회 한눈에: 조직도, 위원회(구성·위원장·기능), 직위, 기능 부서, 직제에 없는 조직명."""
+    E = entities()
+    units = [{k: u.get(k) for k in ("name", "kind", "head", "parent", "children", "src", "duty")} | {"n": sum(x["n"] for x in u["mentions"]),
+             "regs": len(u["mentions"])} for u in E["units"].values()]
+    cmts = [{k: c.get(k) for k in ("id", "name", "generic", "reg", "slug", "no", "title", "abbr", "size", "chair", "verb", "rules")}
+            | {"functions": c["functions"][:6], "n": sum(x["n"] for x in c["mentions"]), "regs": len(c["mentions"])} for c in E["committees"].values()]
+    cmts.sort(key=lambda x: (x["generic"], -x["regs"], -x["n"], x["name"]))
+    roles = [{k: r.get(k) for k in ("name", "kind", "unit", "n")} | {"regs": len(r["mentions"])} for r in E["roles"]]
+    depts = [{"name": d["name"], "n": d["n"], "regs": len(d["mentions"]), "def": bool(d["defs"])} for d in E["depts"]]
+    odd = unknown_units()
+    return jsonify({"success": True, "head": E["head"], "deputy": E["deputy"], "units": units, "committees": cmts, "roles": roles,
+                    "depts": depts, "unknown": odd[:30],
+                    "stats": {"units": len(units), "committees": len(cmts), "roles": len(roles), "depts": len(depts), "unknown": len(odd),
+                              "duties": len(duties()["rels"]), "delegations": len(delegations())}})
+
+
+@bp.route("/api/regagent/org/item", methods=["POST"])
+def ra_org_item():
+    """한 개체의 상세와 나온 조문. body: {kind: unit|committee|role|dept|unknown, id}"""
+    b = _body()
+    kind, key = (b.get("kind") or "").strip(), (b.get("id") or "").strip()[:80]
+    E, regs = entities(), all_regs()
+    if kind == "committee" and key in E["committees"]:
+        c = E["committees"][key]
+        scope = [r for r in regs if r["slug"] == c["slug"]] if c["generic"] else regs
+        item = {k: c.get(k) for k in ("id", "name", "generic", "reg", "slug", "no", "title", "abbr", "size", "chair", "secretary",
+                                      "verb", "functions", "arts", "rules", "also")}
+        item["mentions"] = c["mentions"]
+        item["articles"] = _ent_mentions(c["name"], scope, c["abbr"] if c["generic"] else "")
+        return jsonify({"success": True, "kind": kind, "item": item})
+    if kind == "unit" and key in E["units"]:
+        u = E["units"][key]
+        item = {k: u.get(k) for k in ("name", "kind", "head", "parent", "children", "src", "duty", "duty_src", "mentions")}
+        item["articles"] = _ent_mentions(u["name"], regs)
+        return jsonify({"success": True, "kind": kind, "item": item})
+    if kind == "role":
+        r0 = next((r for r in E["roles"] if r["name"] == key), None)
+        if r0:
+            return jsonify({"success": True, "kind": kind, "item": {**r0, "articles": _ent_mentions(key, regs, cap=60)}})
+    if kind == "dept":
+        d = next((d for d in E["depts"] if d["name"] == key), None)
+        if d:
+            return jsonify({"success": True, "kind": kind, "item": {**d, "articles": _ent_mentions(key, regs, cap=60)}})
+    if kind == "unknown":
+        x = next((x for x in unknown_units() if x["name"] == key), None)
+        if x:
+            return jsonify({"success": True, "kind": kind, "item": {**x, "articles": _ent_mentions(key, regs, cap=60)}})
+    return jsonify({"success": False, "error": "그 항목을 찾지 못했습니다."}), 404
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 권한·절차 관계(규정 온톨로지 3단계) — 조문 문장에서 “누가(주체) · 무엇을 · 어떻게(승인·보고·심의 …) ·
+# 누구에게 · 언제(기한)”를 뽑는다. 주체는 2단계 개체(조직·직위·위원회·기능 부서)와 직원·임직원.
+# ══════════════════════════════════════════════════════════════════════════
+_DUTY = {"key": None, "v": None}
+_ACT_VERBS = ("신고", "승인", "결재", "허가", "심의·의결", "심의", "의결", "보고", "통보", "통지", "제출", "신청", "지정", "임명", "위촉", "해촉",
+              "지명", "요청", "공고", "결정", "수립", "위임", "소집", "의뢰", "검토", "협의", "평가", "선정", "작성", "공개", "지급",
+              "징계", "조치", "점검", "감사", "관리", "운영", "시행", "처리", "부과", "회수", "환수", "게시", "보관", "교육", "채용", "면직")
+_ACT_RE = "|".join(sorted(map(re.escape, _ACT_VERBS), key=len, reverse=True))
+_APPROVE = re.compile(r"(승인|결재|허가|동의|심의·의결|심의\s*·\s*의결|심의|의결|재가|협의)\s*(?:을|를)?\s*(?:미리\s*|사전에\s*)?(?:받|얻|득|거쳐|거친|거치|하여야)")
+_MODAL = (("금지", r"(?:하여서는|해서는)\s*아니\s*된\s*다|할\s*수\s*없\s*다|못\s*한\s*다"), ("의무", r"하여\s*야\s*한\s*다|해야\s*한\s*다|하여야\s*하며|하여야\s*하고"),
+          ("재량", r"할\s*수\s*있\s*다|할\s*수\s*있으며"))
+_WHEN = re.compile(r"(\d+\s*(?:일|개월|시간|주)\s*(?:이내|전까지|전|까지|내)|지체\s*없이|즉시|매년|매월|매\s*분기|분기마다|반기마다|매\s*반기|연\s*\d+\s*회(?:\s*이상)?|"
+                   r"\d+\s*월\s*\d+\s*일\s*까지|사전에|미리)")
+
+
+_CLAUSE_END = re.compile(r"(?:하면|이면|으면|되면|때에는|때|경우에는|경우|하고|하며|이며|으며|되며|하여|하여야\s*하며|으나|지만|되어|에도\s*불구하고)[\s,]")
+_ADNOMINAL = re.compile(r"\s?(?:이|가)\s+(?:[가-힣]+\s+)?[가-힣]*(?:하는|정하는|한|된|인|닌|있는|없는|받은|던)\s+(?:바|경우|때|자|사항|범위|기간|날|것|[가-힣]+(?:자|인|기관))")
+_PERSONS = {"직원", "임직원", "임원", "출장자", "신청인", "신청자"}
+_PERSON_ACTS = {"제출", "신청", "보고", "요청", "작성", "통보", "신고", "협의", "의뢰"}
+
+
+def _duty_actors(r: dict, E: dict) -> tuple:
+    """이 내규에서 주체로 볼 이름들(긴 것 먼저)과 약칭→정식 이름."""
+    base = getattr(_duty_actors, "_base", None)
+    if base is None or base[0] is not E:
+        names = set(E["units"]) | {u["head"] for u in E["units"].values()} | {r_["name"] for r_ in E["roles"]} | {d["name"] for d in E["depts"]} \
+                | {c["name"] for c in E["committees"].values() if not c["generic"]} | _PERSONS \
+                | {w for w in [ORG.get("org_short")] if w}
+        base = (E, names)
+        _duty_actors._base = base
+    local = {c["name"]: c["name"] for c in E["committees"].values() if c["generic"] and c["slug"] == r["slug"]}
+    for c in E["committees"].values():
+        if c["slug"] == r["slug"] and c["abbr"] and c["abbr"] not in base[1]:
+            local[c["abbr"]] = c["name"]
+    for x in r.get("_abbr_extra", []):
+        local.setdefault(*x)
+    names = sorted(base[1] | set(local), key=len, reverse=True)
+    return re.compile(r"(?<![가-힣])([가-힣]{0,8}부서\s*의?\s*장|(?:결재|허가|전결|승인)\s*권\s*자|"
+                      + "|".join(re.escape(n).replace(r"\ ", r"\s*") for n in names) + ")"), local
+
+
+def _actor_name(raw: str, local: dict) -> str:
+    """주체 이름 정리: 약칭(“위원회”)은 정식 이름으로, 띄어쓰기 차이(“소속부서의 장”·“소속 부서장”)는 하나로."""
+    k = re.sub(r"\s+", "", raw)
+    if raw in local or k in local:
+        return local.get(raw) or local[k]
+    m = re.fullmatch(r"([가-힣]{0,8}?)부서의?장", k)
+    if m:
+        return "부서장" if m.group(1) in ("", "해당", "각", "그", "의뢰한", "관련") else m.group(1) + "부서장"
+    return k if re.fullmatch(r"(?:결재|허가|전결|승인)권자", k) else re.sub(r"\s+", " ", raw)
+
+
+def _sents(body: str) -> list:
+    out = []
+    for ln in body.split("\n"):
+        ln = re.sub(r"^\s*(?:[①-⑳]|\d+\.|[가-하]\.)\s*", "", ln).strip()
+        out += [x.strip() for x in re.split(r"(?<=다)\s?\.\s+", ln) if len(x.strip()) > 8]
+    return out
+
+
+def duties() -> dict:
+    """{rels: [{actor, act, target, obj, when, modal, kind: do|approve, reg, slug, no, title, sent}], by_actor: {주체: n}}"""
+    regs = all_regs()
+    if _DUTY["key"] == id(regs):
+        return _DUTY["v"]
+    E = entities()
+    rels = []
+    act_re = re.compile(r"(" + _ACT_RE + r")(?=하여야|해야|하여서는|해서는|할\s*수|한다|하며|하고|하되|하여|할\s*때)")
+    for r in regs:
+        apat, local = _duty_actors(r, E)
+        for a in r["articles"]:
+            if a["deleted"]:
+                continue
+            for s in _sents(a["body"]):
+                modal = next((k for k, p in _MODAL if re.search(p, s)), "")
+                if not modal and not re.search(r"한\s*다\s*\.?$|된\s*다\s*\.?$", s):
+                    continue
+                when = [re.sub(r"\s+", " ", m.group(1)) for m in _WHEN.finditer(s)][:2]
+                base = {"reg": r["title"], "slug": r["slug"], "no": a["no"], "title": a["title"], "modal": modal or "규정",
+                        "when": ", ".join(dict.fromkeys(when)), "sent": s[:240]}
+                seen = set()
+                # 1) “X의 승인을 받아야” — X가 승인권자
+                for m in apat.finditer(s):
+                    tail = s[m.end():m.end() + 60]
+                    ma = re.match(r"\s*(?:\([^)]{0,40}\)\s*)?(?:의|에게|으로부터|로부터|에서)?\s*(?:사전\s*|미리\s*)?", tail)
+                    if not ma:
+                        continue
+                    mb = _APPROVE.match(tail[ma.end():])
+                    if not mb:
+                        continue
+                    who = _actor_name(m.group(1), local)
+                    act = re.sub(r"\s+", "", mb.group(1))
+                    obj = re.sub(r"^.*?(?:은|는)\s+", "", s[:m.start()]).strip()[-70:]
+                    k = (who, act)
+                    if k not in seen:
+                        seen.add(k)
+                        rels.append(dict(base, actor=who, act=act, target="", obj=obj, kind="approve"))
+                # 2) “X는(이) … Y에게 보고하여야 한다” — X가 하는 일
+                for mv in act_re.finditer(s):
+                    pre = s[:mv.start()]
+                    sm = None
+                    for m in reversed([m for m in apat.finditer(pre) if re.match(r"\s?(?:은|는|이|가)\s", pre[m.end():m.end() + 3])]):
+                        if re.search(r"(?:의|에게|및|과|와)\s*$", pre[:m.start()]):
+                            continue                  # “원장의 …”, “원장에게”, “A 및 원장은”
+                        topic = re.match(r"\s?(?:은|는)\s", pre[m.end():m.end() + 3])
+                        seg = pre[m.end() + 2:]
+                        if (not topic and _CLAUSE_END.search(seg)) or _ADNOMINAL.match(pre[m.end():]) \
+                                or (topic and re.search(r"(?:하며|하고|이며|으며|되며|하나|,)\s+[가-힣·\s]{1,20}?(?:은|는)\s", seg)):
+                            continue                  # “직원이 휴직을 신청하면 이를 허가” — 종속절의 주어
+                        sm = m
+                        break
+                    if not sm:
+                        continue
+                    who = _actor_name(sm.group(1), local)
+                    act = mv.group(1)
+                    if (who, act) in seen or (who in _PERSONS and act not in _PERSON_ACTS):
+                        continue                      # “… 근무한 직원은 일할 계산하여 지급한다” — 직원은 받는 쪽
+                    seen.add((who, act))
+                    mid = re.sub(r"^\s?(?:은|는|이|가)\s", "", pre[sm.end():]).strip()
+                    target = ""
+                    if act in ("보고", "통보", "통지", "제출", "신청", "요청", "의뢰", "협의", "신고"):
+                        mt = [(m.end(), _actor_name(m.group(1), local)) for m in apat.finditer(mid) if re.match(r"\s?(?:에게|에)(?:\s|$)", mid[m.end():m.end() + 4])]
+                        mt += [(m.end(), m.group(1)) for m in re.finditer(r"([가-힣A-Za-z·]{2,20})\s?(?:에게|에)(?=\s|$)", mid)
+                               if re.search(r"(?:청장|회|기관|인|자|청|부처|위원)$", m.group(1)) and not apat.fullmatch(m.group(1))]
+                        if mt:
+                            target = max(mt)[1]
+                    rels.append(dict(base, actor=who, act=act, target=target, obj=mid[-90:], kind="do"))
+    by = {}
+    for x in rels:
+        by[x["actor"]] = by.get(x["actor"], 0) + 1
+    v = {"rels": rels, "by_actor": dict(sorted(by.items(), key=lambda kv: -kv[1]))}
+    _DUTY.update(key=id(regs), v=v)
+    return v
+
+
+_DLG = {"key": None, "v": None}
+
+
+def _html_tables(html: str) -> list:
+    """HTML 표 → [[(th?, 글, colspan) …] …] (행 목록). 표준 라이브러리 파서로 셀 글만 모은다."""
+    from html.parser import HTMLParser
+
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.tables, self.row, self.cell = [], None, None
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "table":
+                self.tables.append([])
+            elif tag == "tr" and self.tables:
+                self.row = []
+            elif tag in ("td", "th") and self.row is not None:
+                self.cell = [tag == "th", "", int(dict(attrs).get("colspan") or 1)]
+            elif tag in ("p", "br") and self.cell is not None and self.cell[1]:
+                self.cell[1] += " "
+
+        def handle_endtag(self, tag):
+            if tag in ("td", "th") and self.cell is not None and self.row is not None:
+                self.cell[1] = re.sub(r"\s+", " ", self.cell[1].replace("\xa0", " ")).strip()
+                self.row.append(tuple(self.cell))
+                self.cell = None
+            elif tag == "tr" and self.row is not None and self.tables:
+                self.tables[-1].append(self.row)
+                self.row = None
+
+        def handle_data(self, d):
+            if self.cell is not None:
+                self.cell[1] += d
+    p = P()
+    p.feed(html)
+    return p.tables
+
+
+def delegations() -> list:
+    """위임전결 별표(○ 표시) → [{area, group, task, who, note, reg, slug}] — “누가 결재하나”의 근거."""
+    regs = all_regs()
+    if _DLG["key"] == id(regs):
+        return _DLG["v"]
+    E = entities()
+    roles = {E["head"], E["deputy"], "본부장", "부서장", "실장", "팀장", "센터장", "부서의 장", "이사회", "감사"}
+    out = []
+    for r in regs:
+        if "전결" not in r["title"]:
+            continue
+        try:
+            with open(os.path.join(reg_chunks.REG_DIR, r["slug"], "index.html"), encoding="utf-8") as f:
+                tables = _html_tables(f.read())
+        except OSError:
+            continue
+        for t in tables:
+            heads = [c[1] for row in t for c in row if c[0] and c[2] == 1 and c[1] in roles]
+            if len(heads) < 2:
+                continue
+            area = group = ""
+            for row in t:
+                if all(c[0] for c in row):
+                    continue
+                cells = [c[1] for c in row]
+                if len(cells) < len(heads) + 1:
+                    continue
+                marks, text = cells[-len(heads):], cells[-len(heads) - 1]
+                for c in cells[:-len(heads) - 1]:
+                    if re.match(r"^\d+\.\s", c):
+                        area = c
+                if re.match(r"^\d+\.\s", text):
+                    area, text = text, ""
+                if re.match(r"^[가-하]\.\s", text):
+                    group, text = text, text
+                elif text and not text.startswith("○"):
+                    group = text
+                task = re.sub(r"^○\s*", "", text)
+                for h, m in zip(heads, marks):
+                    if "○" in m:
+                        note = re.sub(r"[○()\s]", "", m)
+                        out.append({"area": area, "group": re.sub(r"^[가-하]\.\s*", "", group),
+                                    "task": task if task != group else "", "who": h, "note": note,
+                                    "reg": r["title"], "slug": r["slug"]})
+    _DLG.update(key=id(regs), v=out)
+    return out
+
+
+_DLG_ASK = re.compile(r"누가|누구|결재|전결|승인권|권한|위임|재가")
+_DLG_STOP = {"결재", "전결", "승인", "누가", "누구", "권한", "권자", "승인권자", "결재권자", "전결권자", "위임", "받아야", "하나요", "사항", "업무", "관리"}
+
+
+def _dlg_line(x: dict) -> str:
+    what = " ".join(w for w in [x["group"], x["task"]] if w)
+    return f"{what} → {x['who']}" + (f"({x['note']})" if x["note"] else "")
+
+
+def match_delegations(q: str, toks=None) -> list:
+    """질의 → 위임전결 별표의 맞는 행(같은 묶음의 다른 행도 함께 — “국외출장” 직급별 3행)."""
+    if not _DLG_ASK.search(q or ""):
+        return []
+    D = delegations()
+    raw = [re.sub(r"(?<=[가-힣]{2})(?:을|를|은|는|이|가|의|에|도|와|과|으로|로|이면|이나)$", "", w) for w in re.findall(r"[가-힣A-Za-z]{2,}", q)]
+    words = [w for w in dict.fromkeys(list(toks or []) + raw) if w not in _DLG_STOP and len(w) >= 2]
+    scored = []
+    for i, x in enumerate(D):
+        txt = re.sub(r"\s+", "", x["area"] + x["group"] + x["task"])
+        sc = sum(len(w) for w in words if len(w) >= 2 and w in txt)
+        if sc >= 2:
+            scored.append((sc, i))
+    if not scored:
+        return []
+    best = max(sc for sc, _ in scored)
+    keep = sorted({i for sc, i in scored if sc >= max(2, best - 1)})[:6]
+    grp = {(D[i]["area"], D[i]["group"]) for i in keep}
+    out = [x for x in D if (x["area"], x["group"]) in grp][:10]
+    return [{k: x[k] for k in ("area", "group", "task", "who", "note", "reg", "slug")} for x in out]
+
+
+@bp.route("/api/regagent/duties", methods=["POST"])
+def ra_duties():
+    """권한·절차 관계. body: {q?(업무·문구), actor?(주체), act?(승인·보고 …), slug?} → 조문 관계 + 위임전결 별표 행"""
+    b = _body()
+    q = re.sub(r"\s+", " ", (b.get("q") or "").strip())[:40]
+    actor, act, slug = (b.get("actor") or "").strip()[:30], (b.get("act") or "").strip()[:10], (b.get("slug") or "").strip()
+    D = duties()
+    words = [w for w in re.split(r"\s+", q) if w]
+    hit = lambda t: all(re.sub(r"\s+", "", w) in re.sub(r"\s+", "", t) for w in words)
+    rels = [x for x in D["rels"] if (not actor or x["actor"] == actor or x["target"] == actor) and (not act or x["act"] == act)
+            and (not slug or x["slug"] == slug) and (not words or hit(x["sent"] + x["actor"] + x["reg"]))]
+    acts = {}
+    for x in rels:
+        acts[x["act"]] = acts.get(x["act"], 0) + 1
+    base = [x for x in D["rels"] if (not slug or x["slug"] == slug) and (not words or hit(x["sent"] + x["actor"] + x["reg"]))]
+    actors = {}
+    for x in base:
+        actors[x["actor"]] = actors.get(x["actor"], 0) + 1
+    dl = [x for x in delegations() if (not words or hit(x["area"] + x["group"] + x["task"])) and (not actor or x["who"] == actor)
+          and not act and not slug] if (words or actor) else []
+    order = {"approve": 0, "do": 1}
+    rels.sort(key=lambda x: (order.get(x["kind"], 2), x["reg"], art_key(x["no"])))
+    return jsonify({"success": True, "total": len(D["rels"]), "count": len(rels), "rels": rels[:300],
+                    "actors": [{"name": k, "n": n} for k, n in sorted(actors.items(), key=lambda kv: -kv[1])][:24],
+                    "acts": [{"name": k, "n": n} for k, n in sorted(acts.items(), key=lambda kv: -kv[1])][:20],
+                    "delegations": dl[:200], "dlg_total": len(delegations())})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 법령 조문 연결(규정 온톨로지 4단계) — 내규 조문이 인용한 법령의 “조” 단위 연결.
+# 「○○법」 제N조(의M)·제K항, 약칭 정의(이하 “법”·“영”이라 한다) 뒤의 “법 제N조”·“영 제N조”, “같은 법·동법 제N조”.
+# ══════════════════════════════════════════════════════════════════════════
+_LL = {"key": None, "v": None}
+_ART_ONE = r"제\s*(\d+)\s*조(?:\s*의\s*(\d+))?(?:\s*제\s*(\d+)\s*항)?(?:\s*제\s*(\d+)\s*호)?"
+_ART_LIST = re.compile(r"\s*(?:\([^)]{0,30}\)\s*)?(" + _ART_ONE + r"(?:\s*(?:\([^)]{0,30}\)\s*)?(?:,|및|또는|·|ㆍ|와|과|부터|내지|~)\s*(?:"
+                       + _ART_ONE + r"|제\s*\d+\s*[항호])(?:\s*까지)?)*)")
+
+
+def _arts_in(s: str) -> list:
+    """“제3조제1항 및 제5조의2” → ["3", "5의2"] (항·호는 조 단위로 묶는다). “제3조부터 제5조까지”는 사이도 넣는다."""
+    out = []
+    ms = list(re.finditer(_ART_ONE, s))
+    for i, m in enumerate(ms):
+        no = m.group(1) + (f"의{m.group(2)}" if m.group(2) else "")
+        if i and re.match(r"\s*(?:부터|내지|~)", s[ms[i - 1].end():m.start()]) and not m.group(2) and not ms[i - 1].group(2):
+            a, b = int(ms[i - 1].group(1)), int(m.group(1))
+            out += [str(k) for k in range(a + 1, b) if b - a <= 30]
+        out.append(no)
+    return list(dict.fromkeys(out))
+
+
+def law_links() -> dict:
+    """{rows: [{law, art, reg, slug, no, title, snip}], laws: {법령명: {arts: {조: [행 번호]}, regs: set}}}"""
+    regs = all_regs()
+    if _LL["key"] == id(regs):
+        return _LL["v"]
+    rows = []
+    known = {}
+    for r in regs:
+        for a in r["articles"]:
+            for m in _QUOTED_NAME.finditer(a["body"]):
+                nm = re.sub(r"\s+", " ", m.group(1)).strip()
+                if _LAW_NAME_OK.search(nm) and len(nm) <= 60 and len(_nk(nm)) >= 3:
+                    known.setdefault(_nk(nm), nm)
+    for grp in _LAW_ALIAS:
+        for x in grp:
+            known.setdefault(_nk(x), grp[-1])
+    for r in regs:
+        abbr = {}
+        for a in r["articles"]:
+            if a["deleted"]:
+                continue
+            body = a["body"]
+            last = None
+            events = []
+            for m in _QUOTED_NAME.finditer(body):
+                nm = re.sub(r"\s+", " ", m.group(1)).strip()
+                if not _LAW_NAME_OK.search(nm) or len(nm) > 60:
+                    continue
+                law = law_official(nm)
+                ma = re.match(r"\s*\(\s*이하\s*[“\"‘']([^”\"’']{1,8})[”\"’']\s*(?:이)?라\s*한다\s*\)", body[m.end():m.end() + 30])
+                if ma:
+                    abbr[ma.group(1)] = law
+                events.append((m.start(), m.end(), law))
+            for k in abbr:
+                for m in re.finditer(r"(?<![가-힣「])" + re.escape(k) + r"(?=\s*제\s*\d+\s*조)", body):
+                    events.append((m.start(), m.end(), abbr[k]))
+            for m in re.finditer(r"(?<![가-힣「·])([가-힣·]{2,30}(?:법|법률)(?:\s*시행령|\s*시행규칙)?)(?=\s*제\s*\d+\s*조)", body):
+                nm = m.group(1)                       # 낫표 없이 쓴 법령명(“근로기준법 제60조”) — 다른 곳에서 낫표로 인용한 이름만
+                if _nk(nm) in known and not any(s0 <= m.start() < e0 for s0, e0, _ in events):
+                    events.append((m.start(), m.end(), law_official(known[_nk(nm)])))
+            for m in re.finditer(r"(?:같은|동)\s*(법|영|시행령|법\s*시행령|규칙)(?=\s*제\s*\d+\s*조)", body):
+                events.append((m.start(), m.end(), ("same", re.sub(r"\s+", "", m.group(1)))))
+            events.sort()
+            for s0, e0, law in events:
+                if isinstance(law, tuple):           # “같은 법” — 바로 앞에 인용한 법령(“같은 영”은 그 시행령)
+                    if not last:
+                        continue
+                    base = re.sub(r"\s*(시행령|시행규칙)$", "", last)
+                    law = base + " 시행령" if law[1] in ("영", "시행령", "법시행령") else base if law[1] == "법" else last
+                last = law
+                ml = _ART_LIST.match(body[e0:e0 + 160])
+                if not ml:
+                    continue
+                for no in _arts_in(ml.group(1)):
+                    rows.append({"law": law, "art": no, "reg": r["title"], "slug": r["slug"], "no": a["no"], "title": a["title"],
+                                 "snip": _snip(body, s0, 70)})
+    # 표기 흔들림(“초·중등교 육법”·“농업 ･ 농촌”·이름 속 “(이하 …)”)은 가장 많이 쓴 표기로 묶는다
+    tidy = lambda n: re.sub(r"(\S)\s(\S법)$", r"\1\2", re.sub(r"\s*([·ㆍ･])\s*", "·", re.sub(r"\s*\([^)]*\)\s*", " ", n)).strip())
+    cnt = {}
+    for x in rows:
+        x["law"] = tidy(x["law"])
+        cnt[x["law"]] = cnt.get(x["law"], 0) + 1
+    canon = {}
+    for n, c in sorted(cnt.items(), key=lambda kv: (-kv[1], kv[0])):
+        canon.setdefault(_nk(n), n)
+    seen, uniq = set(), []
+    for x in rows:
+        x["law"] = canon[_nk(x["law"])]
+        k = (x["law"], x["art"], x["slug"], x["no"])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(x)
+    laws = {}
+    for i, x in enumerate(uniq):
+        L = laws.setdefault(x["law"], {"arts": {}, "regs": set()})
+        L["arts"].setdefault(x["art"], []).append(i)
+        L["regs"].add(x["slug"])
+    v = {"rows": uniq, "laws": laws}
+    _LL.update(key=id(regs), v=v)
+    return v
+
+
+@bp.route("/api/regagent/lawlinks", methods=["GET", "POST"])
+def ra_lawlinks():
+    """법령 조문 지도. GET → 법령별 요약, POST {law} → 그 법령의 조별 인용 조문, POST {slug} → 한 내규가 인용한 법령 조문."""
+    L = law_links()
+    b = _body() if request.method == "POST" else {}
+    law, slug = re.sub(r"[「」]", "", (b.get("law") or "")).strip(), (b.get("slug") or "").strip()
+    if law:
+        k = _nk(law_official(law))
+        name = next((n for n in L["laws"] if _nk(n) == k or _nk(n) == _nk(law)), None)
+        if not name:
+            return jsonify({"success": False, "error": "그 법령의 조문을 인용한 내규가 없습니다."}), 404
+        arts = [{"art": a, "label": art_label(a), "refs": [L["rows"][i] for i in idx]} for a, idx in L["laws"][name]["arts"].items()]
+        arts.sort(key=lambda x: art_key(x["art"]))
+        return jsonify({"success": True, "law": name, "arts": arts, "regs": len(L["laws"][name]["regs"])})
+    if slug:
+        rows = [x for x in L["rows"] if x["slug"] == slug]
+        return jsonify({"success": True, "slug": slug, "rows": rows})
+    laws = [{"law": n, "arts": len(v["arts"]), "regs": len(v["regs"]), "refs": sum(len(i) for i in v["arts"].values())} for n, v in L["laws"].items()]
+    laws.sort(key=lambda x: (-x["regs"], -x["refs"], x["law"]))
+    return jsonify({"success": True, "laws": laws, "stats": {"laws": len(laws), "arts": sum(x["arts"] for x in laws), "refs": len(L["rows"])}})
