@@ -831,6 +831,19 @@ def lint_articles(arts: list, addenda: str = "", appendix: str = "", title: str 
                 fix = "" if fnd["suggest"].startswith(("예)", "…")) else f"“{fnd['match']}” → “{fnd['suggest']}”"
                 add("info", "notation", no, f"{lbl}: {fnd['label']}, “{fnd['match']}”. {fnd['message']}", fix)
 
+    # (6-1) 별표·서식의 구 명칭 — 결재란·제출처(“이사장 귀하”)에 옛 직위·기관명이 남기 쉽다.
+    # 별표 자리에 섞여 들어온 부칙(“해당조항 중 “이사장”을 “원장”으로 한다”)과 옛 이름임을 밝힌 표기(“구. ○○재단”)는 뺀다
+    for old, new, word in [(o, n, False) for o, n in _STALE_TERMS] + [(o, n, True) for o, n in _STALE_WORDS]:
+        for ln in (appendix or "").split("\n"):
+            if re.search(r"부\s*칙|다른\s*내규의\s*개정|해당\s*조항\s*중|종전의|시행\s*당시", ln):
+                continue
+            s = re.sub(r"[“‘\"'][^“”‘’\"']{1,30}[“”‘’\"']|\(\s*구\s*[.．:]?\s*[^)]{0,30}\)", " ", ln)
+            pat = (r"(?<![가-힣])" + re.escape(old) + r"(?:은|는|이|가|의|에|에서|과|와|을|를|에게)?(?![가-힣])") if word else re.escape(old)
+            m = re.search(pat, s)
+            if m:
+                add("warn", "stale", "", f"별표·서식에 구 명칭 “{old}”{_josa(old, ('이', '가'))} 있습니다.", f"“{old}” → “{new}”",
+                    term=old, new=new, word=word, snip=_snip(s, m.start()))
+                break
     ph = [a["no"] for a in arts if draft_base is not None and not a.get("deleted")
           and re.search(r"[○△□]{2}", (a.get("title") or "") + (a.get("body") or ""))
           and draft_base.get(a["no"]) != a.get("body")]   # 등록된 내규의 예시(“○○ 연구소”)는 그대로 둔다
@@ -1440,10 +1453,16 @@ def ra_impact():
                               "text": raw.strip(), "snippet": _snip(a["body"], pos), "suggest": sug})
     # (b) 별표·별지 관련 조문 표기
     appx = []
-    for m in re.finditer(r"[\[［]\s*(별표|별지)[^\]］]{0,20}[\]］][^\n]{0,80}", r["appendix"] or ""):
+    # 별표 머리의 괄호는 [ ］〔 【 ( 등 제각각이고, “제10조부터 제13조까지 관련”처럼 범위로도 적는다
+    for m in re.finditer(r"[\[［〔【(（]\s*(별표|별지)[^\]］〕】)）]{0,20}[\]］〕】)）][^\n]{0,80}", r["appendix"] or ""):
         seg = m.group(0)
-        for mm in re.finditer(r"제\s*(\d+)\s*조(?:\s*의\s*(\d+))?", seg):
-            no = mm.group(1) + (("의" + mm.group(2)) if mm.group(2) else "")
+        cites = []
+        for mm in re.finditer(r"제\s*(\d+)\s*조(?:\s*의\s*(\d+))?(\s*부터\s*제\s*(\d+)\s*조\s*까지)?", seg):
+            if mm.group(3) and not mm.group(2):
+                cites += [str(k) for k in range(int(mm.group(1)), int(mm.group(4)) + 1)]
+            else:
+                cites.append(mm.group(1) + (("의" + mm.group(2)) if mm.group(2) else ""))
+        for no in dict.fromkeys(cites):
             if art_key(no) in targets:
                 appx.append({"form": re.sub(r"\s+", " ", seg)[:80], "cites": no})
     # (c) 다른 내규에서 이 내규 인용
@@ -2489,10 +2508,56 @@ def rev_date(rev: str) -> str:
     return f"{m.group(1)}{int(m.group(2) or 1):02d}{int(m.group(3) or 1):02d}"
 
 
+_LAW_SPELL = {"key": None, "v": {}}
+
+
+def _law_unbreak(nm: str) -> str:
+    """PDF 에서 낱말 가운데가 끊긴 법령명을 잇는다: “국유재 산법”·“민 사소송 등 인지법”·“초·중등교 육법”·“책 임에 관한”.
+    한 글자짜리 토막(등·및·그·밖 같은 낱말은 제외)이나 “○법”으로 끝나는 두 글자 토막 앞의 빈칸만 지운다."""
+    stop = ("등", "및", "그", "밖", "중", "외", "의", "날", "수", "자", "물")        # 법령명에 홀로 쓰는 한 글자 낱말(“근로자의 날 제정에…”)
+    toks, out, carry = nm.split(" "), [], ""
+    for tk in toks:
+        prev = out[-1] if out else ""
+        if carry:                                            # 앞의 한 글자 토막(“민”·“책”·“관”)은 뒤 낱말에 붙인다
+            tk, carry = carry + tk, ""
+        back = (prev and re.fullmatch(r"[가-힣·]*[가-힣]", prev) and re.fullmatch(r"(?:법|령|률|[가-힣](?:법|령))", tk)
+                and tk not in ("법률", "법령"))               # “○법”·“법”으로 끝나는 토막은 앞 낱말에 붙인다(“국유재 산법”·“저작권 법”)
+        if back:
+            out[-1] = prev + tk
+        elif re.fullmatch(r"[가-힣]", tk) and tk not in stop:
+            carry = tk
+        else:
+            out.append(tk)
+    if carry:
+        out.append(carry)
+    return " ".join(out)
+
+
+def law_spelling() -> dict:
+    """같은 법령의 여러 표기 → 정식에 가까운 하나. 전체 내규에서 가장 많이 쓴 표기(같으면 빈칸이 적은 것)를 고른다."""
+    regs = all_regs()
+    if _LAW_SPELL["key"] == id(regs):
+        return _LAW_SPELL["v"]
+    cnt = {}
+    for r in regs:
+        for a in r["articles"]:
+            if a["deleted"]:
+                continue
+            for m in _QUOTED_NAME.finditer(a["body"]):
+                nm = re.sub(r"\s+", " ", m.group(1)).strip()
+                if _LAW_NAME_OK.search(nm) and len(nm) <= 80:
+                    cnt.setdefault(_nk(nm), {}).setdefault(nm, 0)
+                    cnt[_nk(nm)][nm] += 1
+    v = {k: max(c, key=lambda t: (c[t], -t.count(" "))) for k, c in cnt.items()}
+    _LAW_SPELL.update(key=id(regs), v=v)
+    return v
+
+
 def cited_laws(reg: dict, official: bool = False) -> list:
     """내규 본문(부칙 제외)이 인용하는 국가 법령명(「…법」·시행령·시행규칙).
-    official=True 면 약칭(「청탁금지법」)을 정식 명칭으로 바꿔 한 번만 센다(법제처 조회용)."""
+    official=True 면 약칭(「청탁금지법」)을 정식 명칭으로, 끊긴 띄어쓰기(「국유재 산법」)는 다른 내규의 표기나 낱말 잇기로 고쳐 한 번만 센다(법제처 조회용)."""
     names = []
+    spell = law_spelling() if official else {}
     for a in reg["articles"]:
         if a["deleted"]:
             continue
@@ -2500,6 +2565,7 @@ def cited_laws(reg: dict, official: bool = False) -> list:
             nm = re.sub(r"\s+", " ", m.group(1)).strip()
             if official and _LAW_NAME_OK.search(nm):
                 nm = law_official(nm)
+                nm = _law_unbreak(spell.get(_nk(nm), nm))
             if _LAW_NAME_OK.search(nm) and nm not in names and len(nm) <= 40 + 40 * official:
                 names.append(nm)
     return names
@@ -2565,7 +2631,7 @@ def dup_regs() -> dict:
 # ── 같은 문장, 다른 수치 — 내규 사이·본문과 별표 사이에서 문장은 같은데 숫자만 다른 곳 ─────────────
 # 단위 뒤에 조사가 와도 수치로 본다(2만원으로·10일 이내). 단위 글자로 시작하는 다른 낱말(일비·원장·회의·명칭 등)만 뺀다
 _CF_Q = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(만\s*원(?![장칙본래격])|천\s*원(?![장칙본래격])|원(?![장칙본래격])|일(?![반비부자정괄련요])|개월|월(?![급])|년(?![도])|시간|분(?![의할기])"
-                   r"|퍼센트|%|회(?![의사계])|배(?![상])|명(?![칭단예령의]))|(\d+)\s*분의\s*(\d+)")
+                   r"|주일|주(?![요차관체민택식소무제])|퍼센트|%|회(?![의사계])|배(?![상])|명(?![칭단예령의]))|(\d+)\s*분의\s*(\d+)")
 _CF_DATE = re.compile(r"\d{2,4}\s*년\s*\d{1,2}\s*월(?:\s*\d{1,2}\s*일)?|\d{1,2}\s*월\s*\d{1,2}\s*일")
 _CF_SKIP = re.compile(r"시행일|부\s*칙|경과조치|시행한다")
 _CF = {"key": None, "v": None}
@@ -2582,7 +2648,7 @@ def _cf_val(m) -> str:
         return n + u
     if u in ("만원", "천원"):
         f, u = f * (10000 if u == "만원" else 1000), "원"
-    u = "%" if u == "퍼센트" else u
+    u = "%" if u == "퍼센트" else "주" if u == "주일" else u
     return f"{f:g}{u}"
 
 
@@ -2603,7 +2669,7 @@ def _cf_clauses(r: dict) -> list:
                 continue
             parts, last = [], 0
             for m in ms:
-                parts += [cl[last:m.start()], "#" + ("%" if (m.group(2) or "").strip() in ("%", "퍼센트") else re.sub(r"\s|만|천", "", m.group(2) or "분의"))]
+                parts += [cl[last:m.start()], "#" + ("%" if (m.group(2) or "").strip() in ("%", "퍼센트") else re.sub(r"\s|만|천|(?<=주)일", "", m.group(2) or "분의"))]
                 last = m.end()
             parts.append(cl[last:])
             tpl = re.sub(r"^[①-⑳\d]+\.?|[\s「」『』“”\"'·ㆍ･,()（）※\-]", "", "".join(parts))
@@ -2795,13 +2861,14 @@ def health_row(r: dict, law_info: dict, today: str) -> dict:
             reasons.append(f"개정 후 {age:g}년 경과")
     laws = cited_laws(r, official=True)
     rules = cited_rules(r)
-    stale_laws = []
+    stale_laws, unfound = [], []
     lk = {_nk(k): v for k, v in law_info.items()}            # PDF 에서 띄어쓰기가 깨진 이름(「공공기 관의 …」)도 같은 규범으로
     for nm in laws + rules:
         info = law_info.get(nm) or lk.get(_nk(nm))
         info = info if isinstance(info, dict) else {}
         ef = re.sub(r"\D", "", str(info.get("ef") or ""))[:8]
         if info.get("found") is False:
+            unfound.append(nm)                               # 법제처에 없는 이름 — 최신성을 못 봤다고 화면에 알린다(조용히 넘기지 않음)
             continue
         if rd and len(ef) == 8 and rd < ef <= today:
             # 「…규정」이라도 법제처에서 법령(대통령령 등)으로 찾았으면 상위법, 훈령·예규·고시 등이면 행정규칙
@@ -2823,17 +2890,24 @@ def health_row(r: dict, law_info: dict, today: str) -> dict:
                        f"내규 개정 뒤 시행된 상위법·행정규칙 {len(stale_laws)}건")
     score = max(0, 100 - pen)
     grade = next(g for g, cut in _H_GRADE if score >= cut)
+    if not any(not a["deleted"] for a in r["articles"]):
+        # 원문에서 조문을 하나도 읽지 못했다 — 점검할 수 없는 내규를 “100점 A”로 보이지 않게 점수를 비우고 따로 알린다
+        score, grade = None, "?"
+        reasons.insert(0, "조문을 읽지 못함")
+        iss.append({"level": "warn", "code": "noparse", "no": "", "term": "",
+                    "msg": f"원문에서 “제1조(목적)” 형식의 조문을 읽지 못해 점검하지 못했습니다. 원문 파일(표·그림만 있는 문서, 스캔 PDF 등)을 확인하고 내규 등록 화면에서 다시 올리세요."})
+        cnt["noparse"] = 1
     by_no = {a["no"]: a for a in r["articles"]}
     detail = []
     for i in iss[:min(n_lint, 30)] + iss[n_lint:]:   # 화면에서 바로 확인하도록 조 제목과 문제 부분 앞뒤 글을 붙인다(중복 등록 안내는 항상 포함)
         a = by_no.get(i["no"]) or {}
         body = a.get("body", "")
         k = body.find(i["term"]) if i.get("term") else -1
-        snip = _snip(body, k) if k >= 0 else body[:90] + ("…" if len(body) > 90 else "")
+        snip = i.get("snip") or (_snip(body, k) if k >= 0 else body[:90] + ("…" if len(body) > 90 else ""))
         detail.append({**i, "art_title": a.get("title", ""), "snip": snip})
     return {"slug": r["slug"], "title": r["title"], "category": r["category"], "revision": r.get("revision", ""),
             "rev_date": rd, "age": age, "score": score, "grade": grade, "counts": cnt,
-            "issues": detail, "laws": laws, "rules": rules, "stale_laws": stale_laws, "upcoming": upcoming, "reasons": reasons,
+            "issues": detail, "laws": laws, "rules": rules, "stale_laws": stale_laws, "unfound": unfound, "upcoming": upcoming, "reasons": reasons,
             "n_articles": len(r["articles"])}
 
 
@@ -2844,8 +2918,10 @@ def ra_health():
     law_info = b.get("law_info") if isinstance(b.get("law_info"), dict) else {}
     today = _kst_today()
     rows = [health_row(r, law_info, today) for r in all_regs()]
-    rows.sort(key=lambda x: (x["score"], -(x["age"] or 0)))
+    rows.sort(key=lambda x: (-1 if x["score"] is None else x["score"], -(x["age"] or 0)))   # 읽지 못한 내규는 맨 앞
+    scored = [x for x in rows if x["score"] is not None]
     grades = {g: sum(1 for x in rows if x["grade"] == g) for g in "ABCDE"}
+    grades["?"] = len(rows) - len(scored)
     all_laws = sorted({nm for x in rows for nm in x["laws"]})
     spell = {}                                               # 같은 규범의 여러 표기 중 가장 많이 쓴(같으면 띄어쓰기가 덜 깨진) 것 하나로 조회
     for x in rows:
@@ -2853,11 +2929,12 @@ def ra_health():
             spell.setdefault(_nk(nm), {}).setdefault(nm, 0)
             spell[_nk(nm)][nm] += 1
     all_rules = sorted(max(v, key=lambda t: (v[t], -t.count(" "))) for v in spell.values())
-    n = len(rows) or 1
-    return jsonify({"success": True, "today": today, "count": len(rows),
+    n = len(scored) or 1
+    return jsonify({"success": True, "today": today, "count": len(rows), "unread": len(rows) - len(scored),
                     "rules": {"weights": _H_W, "grades": _H_GRADE,
                               "age": "2년 -4 · 3년 -8 · 5년 이상 -15", "law": "상위법·행정규칙 건당 -8(최대 -32)"},
-                    "avg": round(sum(x["score"] for x in rows) / n, 1), "grades": grades,
+                    "avg": round(sum(x["score"] for x in scored) / n, 1), "grades": grades,
+                    "unfound": sorted({nm for x in rows for nm in x["unfound"]}),
                     "with_errors": sum(1 for x in rows if x["counts"].get("ref") or x["counts"].get("xref") or x["counts"].get("dup") or x["counts"].get("order")),
                     "with_issues": sum(1 for x in rows if x["reasons"]),
                     "issue_total": sum(sum(x["counts"].values()) for x in rows),
@@ -3541,7 +3618,9 @@ def heuristic_plan(req: str) -> dict:
         mb = _BULK_RE.search(t)                # “경영지원팀을 경영관리팀으로 바꿔줘” — 특정 내규 없이 조직·직위명만 바꾸면 일괄 정비
         if mb and re.search(r"(팀|부|실|처|본부|단|센터|과|원장|사장|이사|위원회|위원장|관|국)$", mb.group(1).strip()):
             bulk_kw = mb
-    m = _ARROW_RE.search(t) or (_BULK_RE.search(t) if bulk_kw else None)
+    # “모든 내규에서 A를 B로” — 범위를 말하는 머리말이 바뀌기 전 용어로 잡히지 않게 떼고 찾는다
+    tb = re.sub(r"(?:모든|전체|전|일체의?)\s*(?:내규|규정|규칙|" + re.escape(ORG["reg_word"]) + r")\s*(?:에서|의|에|를|을)?\s*", "", t)
+    m = _ARROW_RE.search(t) or (_BULK_RE.search(tb) if bulk_kw else None)
     if m and (bulk_kw or "→" in t or "->" in t):
         _clean = lambda w: re.sub(r"\s*(?:명칭|이름|용어|표현|표기|단어|문구)$", "", w.strip()).strip()
         plan.update(mode="bulk", old=_clean(m.group(1)), new=_clean(m.group(2)))

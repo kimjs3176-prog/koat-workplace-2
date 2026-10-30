@@ -2178,7 +2178,9 @@ async function raAgUpper(P, step, fin, stop){
 // ══════════════════════════════════════════════════════════════════════════
 // 규정 건강검진 — 내규별 점수·등급·정비 우선순위, 상위법 최신성(법제처) 확인
 // ══════════════════════════════════════════════════════════════════════════
-const RA_GRADE={A:['양호','good'],B:['관심','good'],C:['주의','warning'],D:['경고','serious'],E:['위험','critical']};
+const RA_GRADE={A:['양호','good'],B:['관심','good'],C:['주의','warning'],D:['경고','serious'],E:['위험','critical'],'?':['읽지 못함','n']};
+// 점수 표시 — 조문을 읽지 못한 내규(score null)는 숫자 대신 “—”
+function raScoreTxt(r){ return r.score==null?'—':String(r.score); }
 async function raHealthLoad(){
   if(_raBusy.health) return; _raBusy.health=true;
   try{ await _raHealthLoad(); } finally{ _raBusy.health=false; }
@@ -2224,13 +2226,14 @@ function raHealthView(){
     `<div class="ra-kpi"><div class="ra-kpi-l">문제가 발견된 ${_e(RA_ORG.reg_word)}</div><div class="ra-kpi-v">${d.with_issues}<small>건</small></div>${raMeter(d.with_issues/d.count,'serious')}<div class="ra-kpi-s">전체의 ${Math.round(d.with_issues/d.count*100)}%</div></div>`+
     `<div class="ra-kpi"><div class="ra-kpi-l">인용·명칭·번호 문제</div><div class="ra-kpi-v">${d.issue_total}<small>곳</small></div><div class="ra-kpi-s">오류가 있는 ${_e(RA_ORG.reg_word)} ${d.with_errors}건</div></div>`+
     `<div class="ra-kpi"><div class="ra-kpi-l">3년 이상 개정 없음</div><div class="ra-kpi-v">${d.old_regs}<small>건</small></div>${raMeter(d.old_regs/d.count,'warning')}<div class="ra-kpi-s">전체의 ${Math.round(d.old_regs/d.count*100)}%</div></div>`+
-    `<div class="ra-kpi"><div class="ra-kpi-l">상위법·행정규칙 개정 미반영 의심</div><div class="ra-kpi-v">${lawN?d.stale_regs:'—'}<small>${lawN?'건':''}</small></div>${raMeter(lawN/nTot,'acc')}<div class="ra-kpi-s">${lawN?`법령·규칙 ${lawN}/${norms.length}개 확인`:'법제처 확인 전'}</div></div></div>`;
+    `<div class="ra-kpi"><div class="ra-kpi-l">상위법·행정규칙 개정 미반영 의심</div><div class="ra-kpi-v">${lawN?d.stale_regs:'—'}<small>${lawN?'건':''}</small></div>${raMeter(lawN/nTot,'acc')}<div class="ra-kpi-s">${lawN?`법령·규칙 ${lawN}/${norms.length}개 확인`+(raArr(d.unfound).length?`, 못 찾음 ${d.unfound.length}`:''):'법제처 확인 전'}</div></div></div>`+
+    (d.unread?`<div class="ra-chip warn">${raIc('info')}원문에서 조문을 읽지 못한 ${_e(RA_ORG.reg_word)} ${d.unread}건은 점수 없이 목록 맨 앞에 둡니다</div>`:'');
   const mx=Math.max(1,...Object.values(d.grades));
   const dist=`<div class="ra-dist" role="img" aria-label="등급 분포">`+'ABCDE'.split('').map(g=>{ const n=d.grades[g]||0;
     return `<button class="ra-dist-r${f.g===g?' on':''}" onclick="raHealthF('g','${g}')" title="${g}등급(${RA_GRADE[g][0]}) ${n}건 — 눌러서 목록 거르기"><span class="ra-dist-k"><span class="ra-gr g-${RA_GRADE[g][1]}">${g}</span>${RA_GRADE[g][0]}</span>`+
       `<span class="ra-dist-t"><i class="g-${RA_GRADE[g][1]}" style="width:${n?Math.max(2,n/mx*100):0}%"></i></span><span class="ra-dist-n">${n}</span></button>`; }).join('')+`</div>`;
   const top=d.rows.filter(r=>r.reasons.length).slice(0,10);
-  const prio=top.length?`<ol class="ra-prio">`+top.map((r,i)=>`<li id="raHp-${_a(r.slug)}"><span class="ra-prio-n">${i+1}</span><div class="ra-prio-b"><div class="ra-prio-t"><b>「${_e(r.title)}」</b><span class="ra-gr g-${RA_GRADE[r.grade][1]}">${r.grade}</span>${raMini(r.score,RA_GRADE[r.grade][1])}<span class="ra-prio-s">${r.score}점</span><span class="ra-sub">${_e(r.revision)}</span></div>`+
+  const prio=top.length?`<ol class="ra-prio">`+top.map((r,i)=>`<li id="raHp-${_a(r.slug)}"><span class="ra-prio-n">${i+1}</span><div class="ra-prio-b"><div class="ra-prio-t"><b>「${_e(r.title)}」</b><span class="ra-gr g-${RA_GRADE[r.grade][1]}">${r.grade}</span>${raMini(r.score||0,RA_GRADE[r.grade][1])}<span class="ra-prio-s">${r.score==null?'점수 없음':r.score+'점'}</span><span class="ra-sub">${_e(r.revision)}</span></div>`+
     `<div class="ra-prio-r">${raHealthChips(r)}</div>`+
     `</div><div class="ra-prio-a"><button class="svc-btn sm" onclick="raHealthOpen('${_a(r.slug)}','all')">${raIc('search')}문제 보기</button><a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener">원문</a></div>`+
     `<div class="ra-hdet" id="raHd-${_a(r.slug)}">${(H.open||{})[r.slug]?raHealthDetail(r):''}</div></li>`).join('')+`</ol>`:'<div class="ra-ok">정비가 필요한 내규가 없습니다.</div>';
@@ -2255,7 +2258,7 @@ function raMini(v, tone){ return `<span class="ra-mini" aria-hidden="true"><i cl
 function raHealthRows(d,f){ const q=(f.q||'').replace(/\s+/g,''); return d.rows.filter(r=>(!f.g||r.grade===f.g)&&(!q||r.title.replace(/\s+/g,'').includes(q))); }
 function raHealthTbody(rows){
   return rows.map(r=>`<tr><td><a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener">${_e(r.title)}</a><div class="ra-sub">${_e(r.category)}${RA_VR}${r.n_articles}개 조${RA_VR}인용 법령 ${r.laws.length}${raArr(r.rules).length?`${RA_VR}행정규칙 등 ${r.rules.length}`:''}</div></td>`+
-    `<td><span class="ra-gr g-${RA_GRADE[r.grade][1]}">${r.grade}</span></td><td class="num"><span class="ra-sc">${raMini(r.score,RA_GRADE[r.grade][1])}${r.score}</span></td><td>${_e(r.revision)}</td><td>${r.reasons.length?raHealthChips(r):'<span class="ra-mu">이상 없음</span>'}</td></tr>`+
+    `<td><span class="ra-gr g-${RA_GRADE[r.grade][1]}">${r.grade}</span></td><td class="num"><span class="ra-sc">${raMini(r.score||0,RA_GRADE[r.grade][1])}${raScoreTxt(r)}</span></td><td>${_e(r.revision)}</td><td>${r.reasons.length?raHealthChips(r):'<span class="ra-mu">이상 없음</span>'}</td></tr>`+
     ((RA.health.open||{})[r.slug]?`<tr class="ra-hdet-tr"><td colspan="5"><div class="ra-hdet">${raHealthDetail(r)}</div></td></tr>`:'')).join('');
 }
 
@@ -2288,7 +2291,7 @@ function raRegsListView(){
   return `<div class="ra-meta" aria-live="polite">${list.length}건${pend}</div><ul class="ra-regs">`+list.map(r=>{ const h=H[r.slug], x=hits[r.slug], open=S.open===r.slug;
     return `<li class="${open?'on':''}"><div class="ra-regs-r"><span class="ra-regs-cat">${_e(r.category||'기타')}</span>`+
       `<div class="ra-regs-t"><a class="ra-link" href="${raRegUrl(r.slug)}" target="_blank" rel="noopener"><b>${_e(r.title)}</b></a>`+
-      `<div class="ra-sub">${_e(r.revision||'')}${RA_VR}<span class="ra-nw">${r.live}개 조${h?`${RA_VR}<span class="ra-gr g-${RA_GRADE[h.grade][1]}" title="건강 점수 ${h.score}점">${h.grade}</span>`:''}</span></div>`+
+      `<div class="ra-sub">${_e(r.revision||'')}${RA_VR}<span class="ra-nw">${r.live}개 조${h?`${RA_VR}<span class="ra-gr g-${RA_GRADE[h.grade][1]}" title="건강 점수 ${raScoreTxt(h)}점">${h.grade}</span>`:''}</span></div>`+
       (x&&x.first?`<ul class="ra-regs-hits">${raArr(x.arts||[x.first]).slice(0,3).map(t=>`<li><button class="ra-link" onclick="raRegsShowArt('${_a(r.slug)}','${_a(t.no)}')">${_e(raLbl(t.no))}${t.title?`(${_e(t.title)})`:''}</button> ${raMark(t.snip,S.q)}</li>`).join('')}</ul><div class="ra-hint">${x.hits}곳${(x.n_arts||0)>3?`${RA_VR}맞는 조문 ${x.n_arts}개 중 3개`:''}</div>`:'')+`</div>`+
       `<div class="ra-regs-a"><button class="ra-link" aria-expanded="${open&&S.view!=='rel'}" onclick="raRegsOpen('${_a(r.slug)}','arts')">조문 ${open&&S.view!=='rel'?'접기':'보기'}</button>`+
       `<button class="ra-link" aria-expanded="${open&&S.view==='rel'}" onclick="raRegsOpen('${_a(r.slug)}','rel')">관계·법령</button>`+
@@ -2417,13 +2420,14 @@ function raRegsAmendArt(slug,title,no){
 }
 function raRegsGraph(slug){ RA.graph=RA.graph||{}; RA.graph.sel=slug; _raSave(); raTab('graph'); }
 // ── 건강검진 문제 펼쳐 보기 → 고른 문제로 개정 작업 ──
-const RA_HCODE={ref:'없는 조문 인용',xref:'다른 내규의 없는·삭제된 조문 인용',deleg:'시행세칙 위임 확인',dup:'조 번호 중복',order:'조 번호 순서 오류',regname:'현행 목록에 없는 내규명 인용',stale:'옛 기관명·직위',dupreg:'중복 등록 의심',conflict:'같은 문장 다른 수치'};
+const RA_HCODE={ref:'없는 조문 인용',xref:'다른 내규의 없는·삭제된 조문 인용',deleg:'시행세칙 위임 확인',dup:'조 번호 중복',order:'조 번호 순서 오류',regname:'현행 목록에 없는 내규명 인용',stale:'옛 기관명·직위',dupreg:'중복 등록 의심',conflict:'같은 문장 다른 수치',noparse:'조문을 읽지 못함'};
 function raHealthChips(r){
   const on=(RA.health.open||{})[r.slug];
   const chip=(code,label,tone)=>`<button class="ra-chip btn${tone?' '+tone:''}${on===code?' on':''}" aria-expanded="${on===code}" onclick="raHealthOpen('${_a(r.slug)}','${code}')">${_e(label)}</button>`;
-  return Object.entries(r.counts||{}).map(([c,n])=>chip(c,`${RA_HCODE[c]||c} ${n}건`,['ref','xref','dup','order'].includes(c)?'hi':'warn')).join('')+
+  return Object.entries(r.counts||{}).map(([c,n])=>chip(c,c==='noparse'?RA_HCODE[c]:`${RA_HCODE[c]||c} ${n}건`,['ref','xref','dup','order','noparse'].includes(c)?'hi':'warn')).join('')+
     (r.age>=2?chip('age',`개정 후 ${r.age}년 경과`,''):'')+
-    (raArr(r.stale_laws).length?chip('law',`내규 개정 뒤 시행된 ${r.stale_laws.some(l=>l.kind==='rule')?'상위법·행정규칙':'상위법'} ${r.stale_laws.length}건`,'warn'):'');
+    (raArr(r.stale_laws).length?chip('law',`내규 개정 뒤 시행된 ${r.stale_laws.some(l=>l.kind==='rule')?'상위법·행정규칙':'상위법'} ${r.stale_laws.length}건`,'warn'):'')+
+    (raArr(r.unfound).length?chip('unfound',`법제처에서 못 찾은 법령·규칙 ${r.unfound.length}건`,''):'');
 }
 function raHealthRow(slug){ return ((_raHealth&&_raHealth.rows)||[]).find(x=>x.slug===slug); }
 function raHealthOpen(slug, code){
@@ -2453,6 +2457,7 @@ function raHealthDetail(r){
       `</div></li>`).join('')+`</ul>`;
   if(code==='all'||code==='age') if(r.age>=2) h+=`<div class="ra-hl-x">${raIc('info')}<span>마지막 개정(${_e(r.revision)}) 뒤 ${r.age}년이 지났습니다. 조직·직위·상위법 변경이 반영됐는지 전체를 점검하세요.</span><button class="ra-link" onclick="raHealthCheckOne('${_a(r.title)}')">이 ${_e(RA_ORG.reg_word)} 전체 점검</button></div>`;
   if(code==='all'||code==='law') raArr(r.stale_laws).forEach(l=>{ h+=`<div class="ra-hl-x">${raIc('upper')}<span>「${_e(l.law)}」${l.kind==='rule'?' <span class="ra-chip">행정규칙</span>':''} ${l.ef.slice(0,4)}. ${+l.ef.slice(4,6)}. ${+l.ef.slice(6)}. 시행 — 이 ${_e(RA_ORG.reg_word)}보다 나중입니다.</span><button class="ra-link" onclick="raHealthUpper('${_a(l.law)}')">영향 조문 찾기</button></div>`; });
+  if((code==='all'||code==='unfound')&&raArr(r.unfound).length) h+=`<div class="ra-hl-x">${raIc('info')}<span>법제처에서 찾지 못해 최신성을 확인하지 못한 이름: ${r.unfound.map(n=>'「'+_e(n)+'」').join(', ')}. 약칭·옛 이름·끊긴 띄어쓰기면 조문의 법령명을 정식 명칭으로 고치세요.</span></div>`;
   if(!h) h=`<div class="ra-meta">이 항목은 따로 볼 세부 내용이 없습니다.</div>`;
   const n=raHealthPicked(r).filter(x=>code==='all'||x.code===code).length;
   return h+`<div class="ra-row ra-hgo">`+(rows.some(({x})=>x.code!=='dupreg')?`<button class="svc-btn yes sm" data-hgo="${_a(r.slug)}" onclick="raHealthToAmend('${_a(r.slug)}')">${raIc('amend')}고른 ${n}건으로 개정 작업</button>`+
