@@ -1035,3 +1035,17 @@ a.ra-link[target="_blank"][href^="http"]::after,a.ra-pill[target="_blank"][href^
 .ra-lawrefs>li{padding:4px 0;font-size:12.5px;}
 .ra-lawcur summary{cursor:pointer;font-size:12.5px;color:var(--mu);margin-top:2px;}
 .ra-chg.t-appx{border-top-color:var(--color-accent);}
+/* 메뉴 묶음 — 작업은 항상, 나머지는 접힘 */
+.ra-nav-g{margin-bottom:var(--space-xs);}
+.ra-nav-gh{display:flex;align-items:center;justify-content:space-between;width:100%;font:600 var(--text-xs)/1 var(--font-display);letter-spacing:.04em;color:var(--color-muted);background:transparent;border:none;padding:var(--space-xs) var(--space-xs) var(--space-2xs);cursor:default;text-align:left;}
+button.ra-nav-gh{cursor:pointer;} button.ra-nav-gh:hover{color:var(--color-ink);}
+.ra-nav-chev{font-size:var(--text-xs);color:var(--color-faint);}
+.ra-nav-g.fold .ra-nav-gb{display:none;}
+.ra-nav-g.small .ra-tab{min-height:30px;} .ra-nav-g.small .ra-tab-t b{font-weight:400;color:var(--color-muted);}
+/* 확인·검토 요약 칩과 접는 구역 */
+.ra-chksum{display:flex;flex-wrap:wrap;gap:var(--space-xs) var(--space-md);padding:var(--space-xs) 0 var(--space-sm);border-bottom:var(--rule-hair) solid var(--color-rule);margin-bottom:var(--space-sm);}
+.ra-chksum-i{display:inline-flex;align-items:center;gap:var(--space-2xs);font-size:var(--text-sm);} .ra-chksum-l{color:var(--color-muted);}
+.ra-fold summary{display:flex;align-items:center;gap:var(--space-xs);list-style:none;} .ra-fold summary::-webkit-details-marker{display:none;}
+.ra-fold summary h3{display:inline;margin:0;font-size:var(--text-md);} .ra-fold summary::before{content:'▸';color:var(--color-faint);font-size:var(--text-xs);} .ra-fold[open] summary::before{content:'▾';}
+.ra-fold-b{padding-top:var(--space-xs);}
+.ra-hseg{margin-bottom:var(--space-md);}
