@@ -2,7 +2,18 @@
 import json
 import time
 
+import pytest
+
 import api_server as A
+
+
+@pytest.fixture(autouse=True)
+def _no_live_model_list(monkeypatch):
+    """대체 모델을 고를 때 부르는 ListModels(실제 네트워크)를 막는다 — 시험마다 필요하면 다시 바꾼다."""
+    monkeypatch.setattr(A, "_gemini_latest_model", lambda k: "gemini-flash-latest")
+    A._GEMINI_MODEL_CACHE.update({"model": None, "ranked": []})
+    yield
+    A._GEMINI_MODEL_CACHE.update({"model": None, "ranked": []})
 
 
 class _R:
@@ -21,7 +32,7 @@ def _ok(text):
 
 def test_alternates_prefer_same_generation_then_other_flash():
     A._GEMINI_MODEL_CACHE["ranked"] = []
-    assert A._gemini_alternates("gemini-2.5-flash") == ["gemini-2.5-flash-lite", "gemini-2.0-flash", "gemini-flash-latest"]
+    assert A._gemini_alternates("gemini-2.5-flash") == ["gemini-flash-latest", "gemini-flash-lite-latest"]   # 은퇴하는 버전 이름은 쓰지 않는다
     A._GEMINI_MODEL_CACHE["ranked"] = ["gemini-3.0-pro", "gemini-3.0-flash", "gemini-3.0-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
     alts = A._gemini_alternates("gemini-3.0-flash")
     assert alts[0] == "gemini-3.0-flash-lite" and "gemini-3.0-flash" not in alts and "gemini-3.0-pro" not in alts
@@ -42,7 +53,7 @@ def test_generate_switches_model_on_overload(monkeypatch):
     assert err == "" and text == '{"mode":"amend"}'
     # 원래 모델 3회(재시도) 뒤 대체 모델 1회로 성공
     assert sum("gemini-2.5-flash:" in u for u in calls) == 3
-    assert any("gemini-2.5-flash-lite:" in u for u in calls)
+    assert any("gemini-flash-latest:" in u for u in calls)
 
 
 def test_generate_reports_alternates_when_all_fail(monkeypatch):
@@ -50,7 +61,7 @@ def test_generate_reports_alternates_when_all_fail(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
     A._GEMINI_MODEL_CACHE["ranked"] = []
     text, err = A._ai_generate("gemini", "k", "gemini-2.5-flash", "sys", "user")
-    assert text == "" and "사용량 한도" in err and "대체 모델" in err and "gemini-2.5-flash-lite" in err
+    assert text == "" and "사용량 한도" in err and "대체 모델" in err and "gemini-flash-latest" in err
 
 
 def test_error_kinds():
@@ -71,7 +82,7 @@ def test_generate_switches_model_on_timeout(monkeypatch):
     A._GEMINI_MODEL_CACHE["ranked"] = []
     text, err = A._ai_generate("gemini", "k", "gemini-2.5-flash", "sys", "user")
     assert (text, err) == ("ok", "")
-    assert calls[0][1] <= 40 and any("flash-lite" in u for u, _ in calls)
+    assert calls[0][1] <= 40 and any("flash-latest" in u for u, _ in calls)
 
 
 def test_generate_timeout_message_when_all_slow(monkeypatch):
@@ -81,3 +92,49 @@ def test_generate_timeout_message_when_all_slow(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
     text, err = A._ai_generate("gemini", "k", "gemini-2.5-flash", "sys", "user")
     assert text == "" and "응답이 늦습니다" in err
+
+
+def test_retired_model_uses_suggested_then_remembers(monkeypatch):
+    """“models/gemini-2.0-flash is no longer available … use models/gemini-3.8-flash” → 안내된 모델로 바꾸고 기본으로 기억."""
+    calls = []
+    def post(url, **kw):
+        calls.append(url)
+        if "gemini-3.8-flash:" in url:
+            return _ok("ok")
+        return _R(404, {"error": {"message": "This model models/gemini-2.0-flash is no longer available. Please update your code to use models/gemini-3.8-flash for the latest features and improvements."}})
+    monkeypatch.setattr(A.req_lib, "post", post)
+    monkeypatch.setattr(A, "_gemini_latest_model", lambda k: "gemini-flash-latest")   # 목록 조회는 이 시험에서 막는다
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    A._GEMINI_MODEL_CACHE.update({"model": None, "ranked": []})
+    text, err = A._ai_generate("gemini", "k", "gemini-2.0-flash", "sys", "user")
+    assert (text, err) == ("ok", "")
+    assert "gemini-3.8-flash:" in calls[1]                       # 원 모델 1회(재시도 안 함) 뒤 바로 안내된 모델
+    assert A._GEMINI_MODEL_CACHE["model"] == "gemini-3.8-flash"
+    assert A._default_model_for("gemini") == "gemini-3.8-flash"
+    A._GEMINI_MODEL_CACHE.update({"model": None, "ranked": []})
+
+
+def test_retired_model_message_and_default():
+    assert A.GEMINI_DEFAULT_MODEL in ("gemini-flash-latest",) or A.os.environ.get("GEMINI_MODEL")
+    msg, kind = A._ai_error(_R(404, {"error": {"message": "This model models/gemini-2.5-flash is no longer available."}}))
+    assert kind == "gone" and "최신 Flash" in msg
+
+
+def test_overload_fills_live_model_list(monkeypatch):
+    """과부하로 대체할 때 모델 목록이 비어 있으면 ListModels로 현행 모델을 채워 그중에서 고른다."""
+    calls = []
+    def post(url, **kw):
+        calls.append(url)
+        if "gemini-flash-latest:" in url:
+            return _R(503, {"error": {"message": "The model is overloaded."}})
+        return _ok("ok")
+    def latest(k):
+        A._GEMINI_MODEL_CACHE["ranked"] = ["gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.8-pro"]
+        return "gemini-3.8-flash"
+    monkeypatch.setattr(A.req_lib, "post", post)
+    monkeypatch.setattr(A, "_gemini_latest_model", latest)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    A._GEMINI_MODEL_CACHE.update({"model": None, "ranked": []})
+    text, err = A._ai_generate("gemini", "k", "gemini-flash-latest", "sys", "user")
+    assert (text, err) == ("ok", "") and "gemini-3.8-flash:" in calls[-1]
+    A._GEMINI_MODEL_CACHE.update({"model": None, "ranked": []})

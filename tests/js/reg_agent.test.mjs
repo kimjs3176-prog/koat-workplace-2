@@ -863,3 +863,61 @@ test('수정안 나눠 요청: 조문 9개 → 4·4·1 묶음, 실패한 묶음�
   const one = await c.raDraftBatched({ mode: 'amend', intent: 'x' }, T.slice(0, 3));   // 4개 이하는 한 번에
   assert.equal(one.success, true); assert.equal(calls.length, 4);
 });
+
+test('제정: 열어 본 다른 기관 규정의 조 구성을 초안 요청용으로 모은다', () => {
+  const c = load();
+  vm.runInContext(`RA.alio={enact:{q:'드론',cat:'',scope:'peer',picked:[],old:false,
+    res:{q:'드론',hits:[{orgId:'A1',idx:'7',org:'가공사',title:'드론 운영지침(2025.1.1. 개정)'},{orgId:'B2',idx:'9',org:'나공단',title:'무인비행장치 관리규정'}]},
+    open:{'A1|7':{data:{toc:['제1조(목적)','제2조(운영책임자)']}},'B2|9':{loading:true}}}, amend:null};`, c);
+  const o = c.raEnactOutline();
+  assert.equal(o.length, 1, '불러오지 못한 규정은 뺀다');
+  assert.equal(o[0].org, '가공사'); assert.equal(o[0].reg, '드론 운영지침'); assert.equal(o[0].toc.length, 2);
+});
+
+test('제정 1단계 안내: 찾는 중·찾음·없음', () => {
+  const c = load();
+  vm.runInContext(`RA.enact.title='업무용 드론 운영지침'; RA.enact.alioPre={q:'드론',st:'done',orgs:['가공사','나공단'],regs:['가공사 「드론 운영지침」','나공단 「무인비행장치 관리규정」'],refs:3,outline:2};`, c);
+  let h = c.raEnactPreView();
+  assert.ok(h.includes('<b>2</b>곳') && h.includes('<b>3</b>개') && h.includes('조 구성') && h.includes('보고 고르기'));
+  vm.runInContext(`RA.enact.alioPre={q:'드론',st:'none'};`, c); assert.ok(c.raEnactPreView().includes('찾지 못했습니다'));
+  vm.runInContext(`RA.enact.alioPre={q:'드론',st:'run'};`, c); assert.ok(c.raEnactPreView().includes('찾는 중'));
+});
+
+test('조문별 참고 출처를 입안 시 확인할 점에 넣는다', () => {
+  const c = load();
+  vm.runInContext(`raRerender=()=>{}; RA.enact.draft={text:'제1조(목적) 가.',notes:['기존'],sources:[{no:'5',title:'비행 승인',src:'다른 기관 2곳 공통 — 가공사 「드론 운영지침」 제4조'}]};`, c);
+  assert.ok(c.raEnactSrcView(c.__RA().enact.draft).includes('제5조(비행 승인)'));
+  c.raEnactSrcNote(); c.raEnactSrcNote();
+  const n = c.__RA().enact.draft.notes;
+  assert.equal(n.length, 2, '두 번 눌러도 한 줄');
+  assert.ok(n[1].startsWith('다른 기관 참고:') && n[1].includes('가공사'));
+});
+
+test('지시문 수치 반영: 표는 열을 맞춰서만, 조문은 낱말 바로 뒤만', () => {
+  const c = load();
+  const tbl = ['국내여비지급표', '(단위 : 원)', '구 분', '철도운임', '선박운임', '자동차', '운임', '일 비', '(1일당)', '숙박비', '(1야당)', '식 비', '(1일당)',
+    '제1호', '실비', '(특실)', '실비', '실비', '25,000', '실비', '25,000',
+    '제2호', '실비', '실비', '실비', '25,000', '실비', '(상한액: 서울특별시 100,000, 광역시 80,000,', '그 밖의 지역은 70,000)', '25,000',
+    '비고 : 1. 일비는 1일당 지급한다.'].join('\n');
+  const q = c.raVqReq('여비규정 제15조의 일비를 3만원으로 올려줘');
+  assert.equal(q.key, '일비'); assert.equal(q.val, 30000); assert.equal(q.unit, '원');
+  const r = c.raVqInTable(tbl, q);
+  assert.equal(r.n, 2); assert.equal(r.where.join(','), '제1호,제2호');
+  const L = r.body.split('\n');
+  assert.equal(L[18], '30,000'); assert.equal(L[20], '25,000', '식비는 그대로');
+  assert.equal(L[25], '30,000'); assert.equal(L[29], '25,000');
+  const s = c.raVqInTable(tbl, c.raVqReq('식비를 2만원으로'));
+  assert.equal(s.body.split('\n')[20], '20,000'); assert.equal(s.body.split('\n')[18], '25,000');
+  // 열 수가 안 맞으면 손대지 않는다
+  assert.equal(c.raVqInTable(tbl.replace('\n실비\n25,000\n제2호', '\n25,000\n제2호'), q), null);   // 제1호 칸이 하나 모자람
+  // 조문: 낱말 뒤 같은 단위만, 표기 따라
+  assert.equal(c.raVqInText('일비는 1일 2만원으로 하고 식비는 1만원으로 한다.', q).body, '일비는 1일 3만원으로 하고 식비는 1만원으로 한다.');
+  assert.equal(c.raVqInText('연차휴가는 15일로 한다.', c.raVqReq('연차휴가를 20일로 늘려')).body, '연차휴가는 20일로 한다.');
+  assert.equal(c.raVqReq('여비규정을 정비해 줘'), null);
+  // 개정 작업에 넣기: 안내·개정 이유
+  const A = { title: '여비규정', purpose: '', changes: [{ type: 'modify', no: '15', body: '일비·숙박비 및 식비는 〔별표 2〕에 따라 지급한다.' }], appx: [{ type: 'modify', id: '별표 2', body: tbl, why: '' }] };
+  const v = c.raVqApply(A, '일비를 3만원으로 올려줘');
+  assert.equal(v.n, 2); assert.ok(A.valNote.includes('별표 2') && A.valNote.includes('확인'));
+  assert.equal(A.purpose, '일비를 30,000원으로 조정하려는 것임.');
+  assert.equal(A.changes[0].body, '일비·숙박비 및 식비는 〔별표 2〕에 따라 지급한다.', '금액이 없는 조문은 그대로');
+});

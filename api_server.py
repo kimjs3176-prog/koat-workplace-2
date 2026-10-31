@@ -883,7 +883,7 @@ _AI_MODEL_FALLBACK = {"gemini": "gemini-flash-latest",
                       "gpt": "gpt-4.1-mini", "openai": "gpt-4.1-mini"}
 # 콜드 스타트에서 시나리오/해석 핫패스가 ListModels 왕복을 동기로 기다리지 않도록
 # 즉시 반환할 기본 모델(캐시가 비었을 때 사용).
-GEMINI_DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "") or "gemini-2.5-flash"
+GEMINI_DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "") or "gemini-flash-latest"   # 버전 이름은 은퇴하므로 늘 현행 Flash를 가리키는 별칭
 _GEMINI_MODEL_CACHE: dict = {"model": None, "ts": 0.0, "ranked": []}   # ranked: ListModels 기준 점수 내림차순 후보(과부하 대체용)
 _GEMINI_CACHE_TTL = 6 * 3600          # 6시간
 # 선호 Gemini 버전. 기본은 비워 두고 ListModels 기준 '사용 가능한 최신'을 자동 선택한다
@@ -982,8 +982,9 @@ def _gemini_latest_model(api_key: str) -> str:
     return fallback
 
 
-_GEMINI_STATIC_ALTS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash",
-                       "gemini-flash-latest", "gemini-flash-lite-latest"]
+_GEMINI_STATIC_ALTS = ["gemini-flash-latest", "gemini-flash-lite-latest"]   # 버전 이름(2.0·2.5 등)은 은퇴하므로 별칭만 둔다
+_GEMINI_GONE = re.compile(r"no longer available|not found|deprecated|retired|is not supported|discontinued|unsupported model", re.I)
+_GEMINI_SUGGEST = re.compile(r"\buse\s+(?:models/)?(gemini-[\w.\-]{2,60})", re.I)
 
 
 def _gemini_alternates(mdl: str, limit: int = 3) -> list:
@@ -1102,9 +1103,21 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
             if r is not None and r.status_code == 400 and think and "thinking" in (r.text or "").lower():
                 r = call(limit, None)           # 사고 설정 미지원 모델 폴백
             tried = []
-            if r is None or r.status_code in (429, 503, 500, 502, 504) or (r.status_code == 404 and "not found" in (r.text or "").lower()):
-                # 과부하·한도·미제공 모델이면 다른 Gemini 모델로 바로 바꿔 부른다(시간 예산이 남아 있을 때만)
-                for alt in _gemini_alternates(mdl):
+            gone = r is not None and r.status_code in (400, 404) and bool(_GEMINI_GONE.search(r.text or ""))
+            if r is None or r.status_code in (429, 503, 500, 502, 504) or gone:
+                # 과부하·한도·시간 초과·은퇴(미제공) 모델이면 다른 Gemini 모델로 바로 바꿔 부른다(시간 예산이 남아 있을 때만)
+                alts = []
+                if gone:
+                    sm = _GEMINI_SUGGEST.search(r.text or "")      # “use models/gemini-3.8-flash” — 오류가 알려 준 새 모델부터
+                    if sm and re.fullmatch(r"[\w.\-]{1,80}", sm.group(1)):
+                        alts.append(sm.group(1).rstrip(".,"))
+                if not _GEMINI_MODEL_CACHE.get("ranked") and deadline - _t.time() > 20:
+                    _GEMINI_MODEL_CACHE["ts"] = 0
+                    _gemini_latest_model(api_key)                # 이 계정이 쓸 수 있는 현행 모델 목록을 채운다(한 번, 8초 제한)
+                for a in alts + _gemini_alternates(mdl):
+                    if a.lower() != (mdl or "").lower() and a not in alts:
+                        alts.append(a)
+                for alt in alts[:4]:
                     if deadline - _t.time() < 12:
                         break
                     tried.append(alt)
@@ -1115,6 +1128,9 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
                     if r is not None and r.status_code == 400 and think and "thinking" in (r.text or "").lower():
                         r = call(limit, None)
                     if r is not None and r.status_code == 200:
+                        if gone:                                    # 은퇴한 모델은 다시 부르지 않게 기본을 바꿔 둔다
+                            _GEMINI_MODEL_CACHE.update({"model": alt, "ts": _t.time()})
+                            print(f"[ai] {mdl} 은퇴 → 기본 모델을 {alt}(으)로 바꿈")
                         mdl = alt
                         break
             if r is None:
@@ -1221,7 +1237,10 @@ def _ai_error(resp):
         msg = (resp.text or "")[:200]
     low = (msg or "").lower()
     code = resp.status_code
-    if code == 429 and ("quota" in low or "resource_exhausted" in low or "limit" in low):
+    if code in (400, 404) and _GEMINI_GONE.search(msg or ""):
+        kind = "gone"
+        user = (f"선택한 AI 모델을 더는 쓸 수 없습니다. [AI 설정]에서 모델을 “최신 Flash(자동)”로 두세요. (원문: {msg[:160]})")
+    elif code == 429 and ("quota" in low or "resource_exhausted" in low or "limit" in low):
         kind = "quota"
         user = f"AI 사용량 한도(분당·일일)를 넘었습니다. 1분쯤 뒤 다시 시도하거나 다른 모델·키를 쓰세요. (원문: {msg[:160]})"
     elif code in (429, 503) or "overload" in low or "high demand" in low or "unavailable" in low or "quota" in low or "rate" in low:

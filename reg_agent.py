@@ -1162,6 +1162,66 @@ _ACT_NOUNS = {"신청", "승인", "제출", "보고", "기록", "통보", "통�
               "설치", "구성", "개최", "소집", "집행", "부담", "지원", "추진", "보완", "제공", "배정", "배치", "회신", "결재"}
 
 
+_OUTLINE_GENERIC = re.compile(r"^(목적|정의|용어의정의|적용범위|적용대상|시행일|시행세칙|세부사항|세부운영사항|기타|준용|위임|다른규정과의관계|"
+                              r"다른규정과의관계등|경과조치|재검토기한|삭제)$")
+_TOC_RE = re.compile(r"^\s*제\s*(\d+)\s*조(?:\s*의\s*(\d+))?\s*\(([^)]*)\)")
+
+
+def _outline_norm(t: str) -> str:
+    t = re.sub(r"\s+", "", str(t or ""))
+    return re.sub(r"(등|에관한사항|의운영|운영)$", "", t) or t
+
+
+def outline_sections(outline, cap: int = 10) -> list:
+    """다른 기관 규정들의 조 구성(목차)에서 새 내규에 둘 만한 조를 고른다.
+
+    outline: [{"org", "reg", "toc": ["제1조(목적)", …]}]. 목적·정의·적용범위·세부사항처럼 표준 골격에 이미 있는 조는 뺀다.
+    기관이 2곳 이상이면 2곳 이상에 공통으로 있는 조만, 1곳이면 그 기관의 조를 쓴다. 순서는 각 규정 안 상대 위치의 평균.
+    반환: [{"title", "orgs": [기관], "refs": ["○○공사 「…」 제5조"], "pos"}]
+    """
+    seen_org, agg = set(), {}
+    for o in outline or []:
+        if not isinstance(o, dict):
+            continue
+        org = str(o.get("org") or "").strip()[:40]
+        reg = str(o.get("reg") or "").strip()[:60]
+        if not org or org in seen_org:
+            continue
+        toc = []
+        for x in (o.get("toc") or [])[:80]:
+            m = _TOC_RE.match(str(x))
+            if m and m.group(3).strip() and m.group(3).strip() != "삭제":
+                toc.append((m.group(1) + (f"의{m.group(2)}" if m.group(2) else ""), m.group(3).strip()[:30]))
+        if not toc:
+            continue
+        seen_org.add(org)
+        for i, (no, t) in enumerate(toc):
+            k = _outline_norm(t)
+            if _OUTLINE_GENERIC.match(k):
+                continue
+            g = agg.setdefault(k, {"title": t, "orgs": [], "refs": [], "pos": []})
+            if org in g["orgs"]:
+                continue
+            g["orgs"].append(org)
+            g["refs"].append(f"{org} 「{reg}」 {art_label(no)}")
+            g["pos"].append(i / max(1, len(toc) - 1))
+    need = 2 if len(seen_org) >= 2 else 1
+    out = [dict(g, pos=sum(g["pos"]) / len(g["pos"])) for g in agg.values() if len(g["orgs"]) >= need]
+    out.sort(key=lambda g: (g["pos"], -len(g["orgs"])))
+    if len(out) > cap:                                          # 많으면 여러 기관이 함께 둔 조를 남기고 원래 순서로
+        keep = {id(g) for g in sorted(out, key=lambda g: -len(g["orgs"]))[:cap]}
+        out = [g for g in out if id(g) in keep]
+    return out
+
+
+def _outline_block(outline) -> str:
+    lines = []
+    for o in (outline or [])[:5]:
+        if isinstance(o, dict) and o.get("toc"):
+            lines.append(f"- {str(o.get('org', ''))[:40]} 「{str(o.get('reg', ''))[:60]}」: " + ", ".join(str(x)[:40] for x in o["toc"][:40]))
+    return "\n".join(lines)
+
+
 def template_enact(b: dict) -> dict:
     """AI 없이 쓰는 표준 조문 골격."""
     title = (b.get("title") or "○○ 운영규칙").strip()
@@ -1210,15 +1270,63 @@ def template_enact(b: dict) -> dict:
                     f"\n1. ○○\n2. ○○")
         arts.append({"no": str(n), "title": t or "○○", "body": body})
         n += 1
+    # 다른 기관 규정의 조 구성: 주요 내용에 없는 조를 같은 문형으로 더하고 출처를 남긴다(본문은 ○○ — 옮겨 쓰지 않는다)
+    def same(a, k):
+        h = _outline_norm(a["title"])
+        return h == k or (len(h) >= 2 and len(k) >= 2 and (k in h or h in k))
+
+    def new_art(t, src):
+        nonlocal n
+        tn = re.sub(r"(?<=[가-힣])(?:을|를)\s+([가-힣]{2,6})$", r"의 \1", t)
+        arts.append({"no": str(n), "title": t,
+                     "body": f"{tn}{_josa(tn, ('은', '는'))} 다음 각 호의 기준에 따라 {head_ga} 정한다.\n1. ○○\n2. ○○", "src": src})
+        n += 1
+    for g in outline_sections(b.get("outline")):
+        k = _outline_norm(g["title"])
+        src = (f"다른 기관 {len(g['orgs'])}곳 공통 — " if len(g["orgs"]) > 1 else "다른 기관 — ") + ", ".join(g["refs"][:4])
+        hit = next((a for a in arts[3:] if same(a, k)), None)
+        if hit:                                                 # 주요 내용에 이미 있는 조 — 출처만 붙인다
+            hit["src"] = src
+        elif not any(same(a, k) for a in arts[:3]):
+            new_art(g["title"], src)
+    for r in b.get("refs") or []:                               # 직접 고른 다른 기관 조문은 한 곳뿐이어도 조로 둔다
+        if not (isinstance(r, dict) and r.get("org") and r.get("title")):
+            continue
+        k = _outline_norm(r["title"])
+        if len(k) < 2 or _OUTLINE_GENERIC.match(k) or any(same(a, k) for a in arts):
+            continue
+        new_art(str(r["title"]).strip()[:30], f"다른 기관 — {r['org']} 「{r.get('reg', '')}」 {art_label(r.get('no', ''))}")
     arts.append({"no": str(n), "title": "세부사항",
                  "body": f"이 {kind}에서 정한 사항 외에 {purpose}에 필요한 세부사항은 {head_ga} 따로 정한다."})
     eff = (b.get("effective") or "").strip() or ("공포한 날" if kind in ("조례", "고시") or ORG["reg_word"] == "자치법규" else "발령한 날")   # 자치법규는 공포, 내규는 발령
     addenda = f"이 {kind}{eun} {eff}부터 시행한다."
-    return {"title": title, "articles": arts, "addenda": [addenda],
+    _ref_sources(arts, b.get("refs"))
+    return {"title": title, "articles": arts, "addenda": [addenda], "sources": _sources_of(arts),
             "reason": {"purpose": f"{purpose}에 필요한 사항을 정하기 위하여 「{title}」{_josa(title, ('을', '를'))} 제정하려는 것임.",
                        "main": [f"{a['title']}에 관한 사항을 정함(안 {art_label(a['no'])})" for a in arts[3:-1]]
                        or [f"{purpose}에 필요한 사항을 정함"]},
             "template": True}
+
+
+def _ref_sources(arts: list, refs) -> None:
+    """고른 다른 기관 조문을 제목이 같은(비슷한) 초안 조에 출처로 붙인다."""
+    for r in refs or []:
+        if not isinstance(r, dict) or not r.get("org"):
+            continue
+        k = _outline_norm(r.get("title", ""))
+        if len(k) < 2:
+            continue
+        line = f"{r['org']} 「{r.get('reg', '')}」 {art_label(r.get('no', ''))}"
+        for a in arts:
+            h = _outline_norm(a.get("title", ""))
+            if h and (h == k or (len(h) >= 2 and (h in k or k in h))):
+                if line not in (a.get("src") or ""):
+                    a["src"] = (a["src"] + ", " if a.get("src") else "") + line
+                break
+
+
+def _sources_of(arts: list) -> list:
+    return [{"no": a["no"], "title": a.get("title", ""), "src": a["src"]} for a in arts if a.get("src")]
 
 
 def ai_enact(b: dict):
@@ -1234,19 +1342,22 @@ def ai_enact(b: dict):
 반드시 아래 JSON만 반환(설명·코드블록 금지):
 {{
   "title": "내규명",
-  "articles": [{{"chapter": "제1장 총칙(장을 두지 않으면 빈 문자열)", "no": "1", "title": "목적", "body": "조문 본문(항은 줄바꿈 후 ①, 호는 줄바꿈 후 1.)"}}],
+  "articles": [{{"chapter": "제1장 총칙(장을 두지 않으면 빈 문자열)", "no": "1", "title": "목적", "body": "조문 본문(항은 줄바꿈 후 ①, 호는 줄바꿈 후 1.)", "src": "이 조를 쓸 때 참고한 다른 기관 조문(예: ○○공사 「여비규정」 제5조). 없으면 빈 문자열"}}],
   "addenda": ["제1조(시행일) 이 규칙은 … 시행한다.", "제2조(경과조치) …(필요할 때만. 시행일만 있으면 “이 규칙은 발령한 날부터 시행한다.” 한 문장)"],
   "reason": {{"purpose": "제정 이유(2~3문장, ~하려는 것임 체)", "main": ["주요내용 1(안 제N조)", "주요내용 2(안 제N조)"]}},
   "notes": ["입안 시 확인할 점(상위법 저촉 여부, 다른 내규와 중복, 위임 근거 등)"]
 }}
 - 목적 → 정의 → 적용범위 → 본칙(절차·기준·위원회·의무 등) → 위임·세부사항 순으로.
 - 상위법 위임 조항이 있으면 제1조(목적)에 근거를 밝히고 위임 범위를 넘지 않게 작성.
-- 정해지지 않은 숫자·기간·금액은 “○○” 자리표시로 남긴다. 사실을 지어내지 말 것."""
+- 정해지지 않은 숫자·기간·금액은 “○○” 자리표시로 남긴다. 사실을 지어내지 말 것.
+- 다른 기관 규정의 조 구성이 주어지면 여러 기관이 공통으로 둔 조를 빠뜨리지 말고, 참고한 조는 src 에 그 기관·규정·조를 적는다(목록에 없는 출처를 지어내지 말 것)."""
+    ob = _outline_block(b.get("outline"))
     user = (f"내규명: {title or '(제안해 주세요)'}\n종류: {b.get('category', '')}\n"
             f"소관부서: {b.get('dept', '')}\n시행일: {b.get('effective', '') or '공포(발령)한 날'}\n"
             f"제정 목적: {b.get('purpose', '')}\n주요 내용:\n{b.get('contents', '')}\n\n"
             f"[상위법 위임 조항]\n{_deleg_block(b.get('delegations')) or '(없음)'}\n\n"
-            f"[참고할 유사 내규 조문(“다른 기관”은 알리오 공시 사규 — 구조·표현만 참고하고 기관명·직위는 우리 기관에 맞게)]\n{_ref_block(b.get('refs')) or '(없음)'}")
+            f"[참고할 유사 내규 조문(“다른 기관”은 알리오 공시 사규 — 구조·표현만 참고하고 기관명·직위는 우리 기관에 맞게)]\n{_ref_block(b.get('refs')) or '(없음)'}"
+            + (f"\n\n[다른 기관 같은 종류 규정의 조 구성]\n{ob}" if ob else ""))
     text, err = _CTX["ai_generate"](provider, key, mdl, system, user,
                                     max_tokens=6000, temperature=0.2, json_mode=True)
 
@@ -1268,10 +1379,17 @@ def ai_enact(b: dict):
         seen.add(no)
         arts.append({"chapter": str(a.get("chapter") or "").strip(), "no": no,
                      "title": str(a.get("title") or "").strip(),
-                     "body": str(a.get("body") or "").strip()})
+                     "body": str(a.get("body") or "").strip(),
+                     "src": str(a.get("src") or "").strip()[:200]})
     if not arts:
         return fallback("AI가 조문을 만들지 못해")
+    known = {r.get("org") for r in (b.get("refs") or []) if isinstance(r, dict)} | {o.get("org") for o in (b.get("outline") or []) if isinstance(o, dict)}
+    for a in arts:                                     # 받은 자료에 없는 기관을 출처로 적었으면 지운다(지어낸 출처 방지)
+        if a["src"] and not any(k and k in a["src"] for k in known):
+            a["src"] = ""
+    _ref_sources(arts, b.get("refs"))
     d["articles"] = arts
+    d["sources"] = _sources_of(arts)
     d["addenda"] = _clean_addenda(d.get("addenda"))
     d["title"] = d.get("title") if isinstance(d.get("title"), str) and d.get("title").strip() else title
     d["reason"] = _norm_reason(d.get("reason"))
