@@ -60,8 +60,8 @@
   --text-lg:16px;
   --text-title:18px;
   --text-head:22px;
-  --text-page:28px;
-  --text-figure:30px;
+  --text-page:24px;                                     /* 앱 화면 제목: 연구 중앙값 24 */
+  --text-figure:24px;                                   /* 지표 값: 중앙값 24, 머리 값만 32 */
 
   --space-3xs:2px;
   --space-2xs:4px;
@@ -141,7 +141,7 @@ html,body{overflow-x:clip;}
 html{-webkit-text-size-adjust:100%;scrollbar-color:var(--color-faint) var(--color-paper);}
 body{font-family:var(--font-body);font-variant-numeric:tabular-nums;background:var(--color-paper);color:var(--color-ink-2);caret-color:var(--color-accent);-webkit-font-smoothing:antialiased;line-height:1.55;}
 ::selection{background:var(--color-accent);color:var(--color-accent-ink);}
-:focus-visible{outline:2px solid var(--color-focus);outline-offset:2px;transition:none;}
+:focus-visible{outline:3px solid var(--color-focus);outline-offset:2px;transition:none;}   /* 공공기관 권고 3–4px */
 h1,h2,h3,h4{font-family:var(--font-display);font-weight:var(--display-weight);color:var(--color-ink);letter-spacing:var(--tracking-display);overflow-wrap:break-word;min-width:0;}
 a{color:inherit;text-decoration-color:var(--color-accent);text-underline-offset:0.15em;}
 a:hover{text-decoration-thickness:2px;}
