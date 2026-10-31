@@ -863,3 +863,32 @@ test('수정안 나눠 요청: 조문 9개 → 4·4·1 묶음, 실패한 묶음�
   const one = await c.raDraftBatched({ mode: 'amend', intent: 'x' }, T.slice(0, 3));   // 4개 이하는 한 번에
   assert.equal(one.success, true); assert.equal(calls.length, 4);
 });
+
+test('제정: 열어 본 다른 기관 규정의 조 구성을 초안 요청용으로 모은다', () => {
+  const c = load();
+  vm.runInContext(`RA.alio={enact:{q:'드론',cat:'',scope:'peer',picked:[],old:false,
+    res:{q:'드론',hits:[{orgId:'A1',idx:'7',org:'가공사',title:'드론 운영지침(2025.1.1. 개정)'},{orgId:'B2',idx:'9',org:'나공단',title:'무인비행장치 관리규정'}]},
+    open:{'A1|7':{data:{toc:['제1조(목적)','제2조(운영책임자)']}},'B2|9':{loading:true}}}, amend:null};`, c);
+  const o = c.raEnactOutline();
+  assert.equal(o.length, 1, '불러오지 못한 규정은 뺀다');
+  assert.equal(o[0].org, '가공사'); assert.equal(o[0].reg, '드론 운영지침'); assert.equal(o[0].toc.length, 2);
+});
+
+test('제정 1단계 안내: 찾는 중·찾음·없음', () => {
+  const c = load();
+  vm.runInContext(`RA.enact.title='업무용 드론 운영지침'; RA.enact.alioPre={q:'드론',st:'done',orgs:['가공사','나공단'],regs:['가공사 「드론 운영지침」','나공단 「무인비행장치 관리규정」'],refs:3,outline:2};`, c);
+  let h = c.raEnactPreView();
+  assert.ok(h.includes('<b>2</b>곳') && h.includes('<b>3</b>개') && h.includes('조 구성') && h.includes('보고 고르기'));
+  vm.runInContext(`RA.enact.alioPre={q:'드론',st:'none'};`, c); assert.ok(c.raEnactPreView().includes('찾지 못했습니다'));
+  vm.runInContext(`RA.enact.alioPre={q:'드론',st:'run'};`, c); assert.ok(c.raEnactPreView().includes('찾는 중'));
+});
+
+test('조문별 참고 출처를 입안 시 확인할 점에 넣는다', () => {
+  const c = load();
+  vm.runInContext(`raRerender=()=>{}; RA.enact.draft={text:'제1조(목적) 가.',notes:['기존'],sources:[{no:'5',title:'비행 승인',src:'다른 기관 2곳 공통 — 가공사 「드론 운영지침」 제4조'}]};`, c);
+  assert.ok(c.raEnactSrcView(c.__RA().enact.draft).includes('제5조(비행 승인)'));
+  c.raEnactSrcNote(); c.raEnactSrcNote();
+  const n = c.__RA().enact.draft.notes;
+  assert.equal(n.length, 2, '두 번 눌러도 한 줄');
+  assert.ok(n[1].startsWith('다른 기관 참고:') && n[1].includes('가공사'));
+});

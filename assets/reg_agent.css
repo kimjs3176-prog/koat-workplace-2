@@ -1161,3 +1161,9 @@ a.svc-btn[target="_blank"][href^="http"]::after{position:static;inset:auto;}
 .ra-sec-t h2 .ra-tip,.ra-sec-t h2 .ra-info{flex:none;}
 /* 한글 제목·라벨은 낱말 단위로만 줄바꿈(“지시하세 / 요”처럼 한 글자가 떨어지지 않게) */
 .ra-sec-t h2,.ra-page-t h1,.ra-wiz-head h2,.ra-sub-sec>h3,.ra-fold summary h3,.ra-kpi-l,.ra-lbl,label,.ra-tab-t,.ra-chip,.ra-pill,.ra-wiz-s{word-break:keep-all;}
+/* 제정 초안: 조문별 참고 출처 */
+.ra-src{list-style:none;margin:var(--space-xs) 0;padding:0;display:grid;gap:var(--space-2xs);}
+.ra-src li{font-size:var(--text-sm);line-height:1.6;padding:var(--space-2xs) 0;border-top:1px solid var(--color-rule);}
+.ra-src li:first-child{border-top:none;}
+.ra-src li span{color:var(--color-muted);}
+#raEnactPre .ra-runbar{margin-top:var(--space-md);}
