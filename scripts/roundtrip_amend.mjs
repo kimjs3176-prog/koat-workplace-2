@@ -88,7 +88,7 @@ const MUT = {
     us[i].text = mk + '이 단위의 내용을 전부 새로 쓴 문장으로 한다.'; return { ...a, body: join(us) };
   },
   hoChange(a) {
-    const us = units(a.body); const cand = us.map((u, i) => i).filter(i => us[i].lv === 'ho');
+    const us = units(a.body); const cand = us.map((u, i) => i).filter(i => us[i].lv === 'ho' && !/^\d{1,2}\.\s*삭\s*제/.test(us[i].text));   // “2. 삭제”인 호에 글을 덧붙이면 삭제 표기가 아니게 된다
     if (!cand.length) return null; const i = pick(cand); us[i].text = us[i].text.replace(/\s*$/, '') + '(원장이 정하는 경우를 포함한다)'; return { ...a, body: join(us) };
   },
 };
