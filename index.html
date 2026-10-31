@@ -79,6 +79,7 @@ svg.ic{width:18px;height:18px;flex-shrink:0;fill:none;stroke:currentColor;stroke
 .modal{background:var(--color-sheet);border-radius:var(--radius-card);width:min(480px,100%);padding:var(--space-lg);box-shadow:var(--shadow-pop);border-top:var(--rule-bar) solid var(--color-ink);}
 .modal h2{font-size:var(--text-title);margin-bottom:var(--space-xs);display:flex;align-items:center;gap:var(--space-xs);}
 .modal p{font-size:var(--text-sm);color:var(--color-muted);line-height:1.65;margin-bottom:var(--space-md);}
+.modal p.m-note{font-size:var(--text-xs);border-left:var(--rule-bar) solid var(--color-accent);padding-left:var(--space-xs);}
 .prov-tabs{display:flex;gap:0;margin-bottom:var(--space-md);border-bottom:var(--rule-hair) solid var(--color-rule);}
 .prov-tab{flex:1;height:var(--ctl-h);font:500 var(--text-sm) var(--font-display);border:none;border-bottom:var(--rule-bar) solid transparent;margin-bottom:-1px;background:transparent;color:var(--color-muted);cursor:pointer;}
 .prov-tab:hover{color:var(--color-ink);}
@@ -121,6 +122,7 @@ svg.ic{width:18px;height:18px;flex-shrink:0;fill:none;stroke:currentColor;stroke
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="aiModalT">
     <h2 id="aiModalT">AI 설정</h2>
     <p>조문 초안·수정안 작성에 쓸 AI를 고르고 API 키를 넣으세요. 키는 이 탭을 닫으면 지워지며(sessionStorage), 요청할 때만 서버로 전달됩니다. Gemini 키가 있으면 유사 규정 의미 검색도 켜집니다.</p>
+    <p class="m-note">전송 범위: AI를 쓰면 개정 의도·질의와 대상 조문 본문이 고른 AI 제공자 서버로 갑니다. 등록된 현행 내규는 알리오 공시 대상인 공개 정보라 문제가 없지만, <b>공개 전 개정안</b>(심의·의결 전의 보수·인사·직제 개정안 등)을 다룰 때는 기관 보안지침에 따라 기관 LLM(Ollama, 관리자 설정)이나 행정안전부 AI 공통기반을 고르거나 AI 없이 규칙 기반으로 작업하세요.</p>
     <div class="prov-tabs">
       <button type="button" class="prov-tab" data-p="gemini" onclick="setProv('gemini')">Gemini</button>
       <button type="button" class="prov-tab" data-p="claude" onclick="setProv('claude')">Claude</button>

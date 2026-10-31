@@ -714,3 +714,49 @@ test('별표 수정: 대비표는 길잡이 줄만 남기고 접기, 주요 내�
   RA.amend.appx[0].body = RA.amend.appx[0].body.replace(/30,000/g, '25,000');
   assert.match(c.raWizGate('amend', 2), /수정안/);
 });
+
+test('개정문 역적용(raApplyAmend): 글자 바꾸기·단서·항 신설·번호 밀기·조 삭제·별표', () => {
+  const c = load();
+  const arts = [
+    { no: '5', title: '여비', body: '① 일비는 1일 2만원으로 한다.\n② 숙박비는 실비로 한다. 다만, 상한을 둔다.\n③ 식비는 2만원으로 한다.', deleted: false },
+    { no: '6', title: '정산', body: '정산은 7일 이내에 한다.', deleted: false },
+    { no: '7', title: '폐지', body: '폐지할 조문이다.', deleted: false },
+  ];
+  const law = ['여비규정 일부를 다음과 같이 개정한다.', '',
+    '제5조제1항 중 “2만원”을 “3만원”으로 하고, 같은 조 제2항 단서를 삭제하고, 같은 조에 제4항을 다음과 같이 신설한다.', '④ 교통비는 실비로 한다.', '',
+    '제6조의 제목 “정산”을 “정산 등”으로 하고, 같은 조에 단서를 다음과 같이 신설한다.', '다만, 국외여행은 14일 이내에 한다.', '',
+    '제7조를 삭제한다.', '',
+    '제6조의2를 다음과 같이 신설한다.', '제6조의2(특례) ① 원장이 정한다.', '② 세부사항은 따로 정한다.', '',
+    '별표 2를 별지와 같이 한다.', '',
+    '부    칙', '이 규정은 발령한 날부터 시행한다.', '',
+    '〔별표 2〕〈 제5조 관련 〉', '국내여비지급표', '30,000'].join('\n');
+  const r = c.raApplyAmend(arts, law, [{ id: '별표 2', head: '〔별표 2〕〈 제5조 관련 〉', body: '국내여비지급표\n25,000' }]);
+  assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
+  const by = Object.fromEntries(r.arts.map(a => [a.no, a]));
+  assert.equal(by['5'].body, '① 일비는 1일 3만원으로 한다.\n② 숙박비는 실비로 한다.\n③ 식비는 2만원으로 한다.\n④ 교통비는 실비로 한다.');
+  assert.equal(by['6'].title, '정산 등'); assert.equal(by['6'].body, '정산은 7일 이내에 한다. 다만, 국외여행은 14일 이내에 한다.');
+  assert.ok(by['7'].deleted);
+  assert.equal(by['6의2'].title, '특례'); assert.equal(by['6의2'].body, '① 원장이 정한다.\n② 세부사항은 따로 정한다.');
+  assert.equal(r.appx[0].body, '국내여비지급표\n30,000');
+  // 번호 밀기 + 가운데 신설
+  const r2 = c.raApplyAmend(arts, '여비규정 일부를 다음과 같이 개정한다.\n\n제5조제3항을 제4항으로, 제2항을 제3항으로 하고, 같은 조에 제2항을 다음과 같이 신설한다.\n② 끼워 넣는 항이다.\n\n부    칙\n시행한다.', []);
+  assert.equal(r2.errors.length, 0);
+  assert.equal(r2.arts[0].body, '① 일비는 1일 2만원으로 한다.\n② 끼워 넣는 항이다.\n③ 숙박비는 실비로 한다. 다만, 상한을 둔다.\n④ 식비는 2만원으로 한다.');
+  // 지운 항은 번호를 남기고 “삭제”, 비교 정규화는 끝 항의 “삭제”와 지움을 같게 본다
+  const r3 = c.raApplyAmend(arts, '여비규정 일부를 다음과 같이 개정한다.\n\n제5조제3항을 삭제한다.\n\n부    칙\n시행한다.', []);
+  assert.equal(r3.arts[0].body.split('\n')[2], '③ 삭제');
+  assert.equal(c.raRtNorm(r3.arts[0]), c.raRtNorm({ ...arts[0], body: arts[0].body.split('\n').slice(0, 2).join('\n') }));
+});
+
+test('raRoundTrip: 수정안으로 만든 개정문을 되돌려 적용하면 일치', () => {
+  const c = load(); const RA = c.__RA();
+  vm.runInContext(`_raArts=${JSON.stringify({ title: '여비규정', articles: [{ no: '15', title: '일비', body: '① 일비는 1일 2만원으로 한다.\n② 숙박비는 실비로 한다.', deleted: false }], appendix: [{ id: '별표 2', head: '〔별표 2〕〈 제15조 관련 〉', body: '표\n25,000' }] })}`, c);
+  Object.assign(RA.amend, { slug: 's', title: '여비규정', lawStyle: 'fine', fullRev: false, addenda: '', purpose: '', main: [], selx: {},
+    changes: [{ type: 'modify', no: '15', title: '일비', body: '① 일비는 1일 3만원으로 한다.\n② 숙박비는 실비로 한다.\n③ 식비는 2만원으로 한다.' }],
+    appx: [{ type: 'modify', id: '별표 2', head: '〔별표 2〕〈 제15조 관련 〉', body: '표\n30,000' }] });
+  const rt = c.raRoundTrip();
+  assert.ok(rt.ok, JSON.stringify(rt.diffs) + JSON.stringify(rt.errors));
+  assert.equal(rt.n, 1); assert.equal(rt.nx, 1);
+  RA.amend.lawStyle = 'art';
+  assert.ok(c.raRoundTrip().ok);
+});
