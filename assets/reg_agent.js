@@ -137,7 +137,8 @@ function _raLoad(){
   try{ const o=JSON.parse(localStorage.getItem(RA_KEY)||'null'); if(o&&typeof o==='object') return _raNormalize(o); }catch(e){}
   return _raBlank();
 }
-let RA=_raLoad(); RA.agent=Object.assign({req:'',steps:[],plan:null,done:null},RA.agent||{},{running:false}); (RA.agent.steps||[]).forEach(s=>{ if(s.st==='run') s.st='err'; }); RA.health=Object.assign({law:{},f:{q:'',g:''}},RA.health||{}); RA.advise=Object.assign({q:'',scope:'',res:null,hist:[],thread:[]},RA.advise||{}); RA.terms=Object.assign({q:'',f:'all',open:'',syn:{}},RA.terms||{}); RA.org=Object.assign({v:'units',q:'',open:'',actor:'',act:''},RA.org||{}); RA.ledger.srv=null;   // 기관 대장 집계는 열 때마다 새로 받는다
+let RA=_raLoad(); if(RA.tab==='check'){ RA.tab='health'; RA.health=Object.assign({},RA.health,{v:'errors'}); }   // 옛 ‘전체 점검’ 탭 저장본
+RA.agent=Object.assign({req:'',steps:[],plan:null,done:null},RA.agent||{},{running:false}); (RA.agent.steps||[]).forEach(s=>{ if(s.st==='run') s.st='err'; }); RA.health=Object.assign({law:{},f:{q:'',g:''}},RA.health||{}); RA.advise=Object.assign({q:'',scope:'',res:null,hist:[],thread:[]},RA.advise||{}); RA.terms=Object.assign({q:'',f:'all',open:'',syn:{}},RA.terms||{}); RA.org=Object.assign({v:'units',q:'',open:'',actor:'',act:''},RA.org||{}); RA.ledger.srv=null;   // 기관 대장 집계는 열 때마다 새로 받는다
 setTimeout(()=>{ if(raArr((RA.ledger||{}).items).some(x=>x.pending)) raLedgerFlush(true); },3000);   // 지난번에 못 보낸 실적
 let _raArtsErr='', _raArts=null, _raCatalog=null, _raSaveT=null, _raBusy={};
 function _raSave(){ clearTimeout(_raSaveT); _raSaveT=setTimeout(()=>{ try{ localStorage.setItem(RA_KEY, raStateJson()); }catch(e){ if(typeof _toast==='function') _toast('작업 내용을 저장하지 못했습니다(브라우저 저장 공간 부족).'); } },300); }
@@ -1450,6 +1451,8 @@ function raAmendSentences(oldA, ch){
   if(!oldA||ch.type==='insert'||oldA.deleted) return full('신설한다');
   const O=raUnits(oldA.body), N=raUnits(ch.body);
   const whole=()=>full('한다');
+  // 항·호 번호가 겹치는 조(“② … ② …” 같은 원문 오류)는 단위를 짝지을 수 없으니 조 전체를 쓴다(형식 점검이 번호 오류를 따로 알린다)
+  if(new Set(O.map(raUKey)).size!==O.length||new Set(N.map(raUKey)).size!==N.length) return whole();
   const S=[], add=(s,lines,ord)=>S.push({s, lines:lines||[], ord:ord==null?-1:ord});   // ord: 조문 안 순서(문장을 위에서 아래 순으로 잇는다)
   const ot=String(oldA.title||'').trim(), nt=String(ch.title||'').trim();
   if(ot!==nt){ if(!nt) return whole(); add(`${L}의 제목 “${ot}”${raEul(ot)} “${nt}”${raRo(nt)} 한다.`,null,-1); }
@@ -1568,7 +1571,10 @@ function raApplyAmend(arts, text, appendix){
   const appxBlocks=[]; if(endAt>=0){ let cur=null; lines.slice(endAt+1).forEach(ln=>{ const m=ln.match(/^\s*[\[［〔【<＜(（]\s*(별표|별지)\s*([^\]］〕】>＞)）]{0,30}?)\s*[\]］〕】>＞)）]/); if(m){ cur={id:(m[1]+' '+m[2]).replace(/\s+/g,' ').trim(),head:ln.trim(),ls:[]}; appxBlocks.push(cur); } else if(cur&&ln.trim()) cur.ls.push(ln); }); }
   const findA=no=>A.find(a=>raNormNo(a.no)===raNormNo(no));
   const dq=t=>t.replace(/‘/g,'“').replace(/’/g,'”');
-  const subst=(txt,a,b)=>{ for(const [x,y] of [[a,b],[dq(a),dq(b)]]){ const k=txt.indexOf(x); if(k>=0) return txt.slice(0,k)+y+txt.slice(k+x.length); } return null; };
+  const subst=(txt,a,b)=>{ for(const [x,y] of [[a,b],[dq(a),dq(b)]]){ const k=txt.indexOf(x); if(k<0) continue;
+      const h0=Math.max(0,k-1), t1=Math.min(txt.length,k+x.length+1);                       // 바꾼 자리 앞뒤 한 글자까지만 띄어쓰기를 정리한다(원문의 다른 표기는 그대로)
+      const mid=(txt.slice(h0,k)+y+txt.slice(k+x.length,t1)).replace(/[ \t]{2,}/g,' ').replace(/\s+([,.])/g,'$1');
+      return txt.slice(0,h0)+mid+txt.slice(t1); } return null; };
   // 블록 나누기(빈 줄 기준)
   const blocks=[]; let cur=[]; body.forEach(l=>{ if(!l.trim()){ if(cur.length) blocks.push(cur); cur=[]; } else cur.push(l); }); if(cur.length) blocks.push(cur);
   blocks.forEach(blk=>{
@@ -1637,7 +1643,7 @@ function raApplyAmend(arts, text, appendix){
           if(lb.part==='단서'&&d>=0){ const r=applyTo(t.slice(d)); if(r==null){ errors.push(s); return; } t=t.slice(0,d)+r; }
           else if(lb.part==='본문'&&d>=0){ const r=applyTo(t.slice(0,d)); if(r==null){ errors.push(s); return; } t=r+t.slice(d); }
           else { const r=applyTo(t); if(r==null){ errors.push(s); return; } t=r; }
-          units[i].text=t.replace(/[ \t]{2,}/g,' ').replace(/\s+([,.])/g,'$1'); a.body=units.map(u=>u.text).join('\n'); lastH=lb.h||lastH; }
+          units[i].text=t; a.body=units.map(u=>u.text).join('\n'); lastH=lb.h||lastH; }
         return; }
       errors.push(s);
     });
