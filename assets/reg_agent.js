@@ -49,19 +49,35 @@ const RA_TABS=[
   ['amend','개정','수정안 · 신구조문대비표 · 인용 정정'],
   ['bulk','일괄 정비','바뀐 용어·명칭을 모든 내규에 반영'],
   ['upper','상위법 영향','상위법 개정 → 개정 후보 조문'],
-  ['check','전체 점검','인용·명칭·조 번호 오류'],
   ['graph','인용 관계','내규 사이 인용 관계·파급 범위'],
   ['proc','절차 안내','기관 제·개정 절차와 할 일'],
   ['ledger','작업 실적','저장한 산출물 · AI 활용 · 사람 검토'],
 ];
 // 페이지 머리: 제목 + 작업 흐름(아이콘 칩). 설명 문장 대신 흐름으로 보여 준다
+// 메뉴 묶음 — 처음 보는 사람은 ‘작업’ 넷만 보면 된다. 나머지는 접어 두고 쓰는 사람이 편다
+const RA_NAV=[
+  {id:'work',t:'작업',tabs:['agent','health','amend','enact']},
+  {id:'browse',t:'찾아보기',tabs:['regs','advise','terms','org'],fold:true},
+  {id:'tools',t:'정비 도구',tabs:['bulk','upper','graph'],fold:true},
+  {id:'admin',t:'관리',tabs:['proc','ledger'],fold:true,small:true},
+];
+function raNavTab(k){ const t=RA_TABS.find(x=>x[0]===k); if(!t) return ''; const [,l,h]=t; return `<button class="ra-tab${RA.tab===k?' on':''}" ${RA.tab===k?'aria-current="page"':''} title="${_e(h)}" onclick="raTab('${k}')">${raIc(k)}<span class="ra-tab-t"><b>${l}</b><small>${_e(h)}</small></span></button>`; }
+function raNavHtml(grouped){
+  if(!grouped) return RA_TABS.map(t=>raNavTab(t[0])).join('');
+  const open=(RA.ui&&RA.ui.nav)||{};
+  return RA_NAV.map(g=>{ const on=!g.fold||open[g.id]||g.tabs.includes(RA.tab);     // 지금 보는 화면이 든 묶음은 펼친다
+    // 항상 펼친 첫 묶음은 머리말을 두지 않는다(사이드바의 ‘작업’ 표시와 겹친다)
+    return `<div class="ra-nav-g${on?'':' fold'}${g.small?' small':''}">`+(g.fold?`<button class="ra-nav-gh" onclick="raNavToggle('${g.id}')" aria-expanded="${on}">${_e(g.t)}<span class="ra-nav-chev" aria-hidden="true">${on?'▾':'▸'}</span></button>`:'')+
+      `<div class="ra-nav-gb">${g.tabs.map(raNavTab).join('')}</div></div>`; }).join('');
+}
+function raNavToggle(id){ RA.ui=RA.ui||{}; RA.ui.nav=RA.ui.nav||{}; const g=RA_NAV.find(x=>x.id===id); const on=RA.ui.nav[id]||(g&&g.tabs.includes(RA.tab)); RA.ui.nav[id]=!on; _raSave(); const nav=document.getElementById('raNav'); if(nav) nav.innerHTML=raNavHtml(true); }
 const RA_PAGE={
   agent:['에이전트에게 맡기기',[['spark','한 문장 지시'],['search','대상 찾기'],['amend','초안'],['bulk','인용 영향'],['check','점검·심의'],['doc','문서 세트']]],
   regs:['내규 목록',[['search','찾기'],['doc','원문·조문'],['amend','개정'],['check','점검']]],
   advise:['내규 자문',[['advise','질의'],['search','근거 조문'],['doc','회신'],['amend','개정 연계']]],
   terms:['용어 사전',[['terms','정의 모음'],['search','동의어'],['alert','정의 불일치'],['amend','정비 착수']]],
   org:['조직·권한',[['org','조직도'],['advise','위원회 구성'],['proc','권한·절차'],['ledger','전결권자'],['bulk','옛 이름 정비']]],
-  health:['규정 건강검진',[['search','전체 진단'],['health','점수·등급'],['upper','상위법·행정규칙 최신성'],['amend','정비 착수']]],
+  health:['규정 건강검진',[['search','전체 진단'],['health','점수·등급'],['upper','상위법·행정규칙 최신성'],['check','오류 목록·내규 하나 점검'],['amend','정비 착수']]],
   enact:['새 내규 제정',[['info','기본 정보'],['upper','위임 조항'],['search','유사 규정'],['spark','조문 초안'],['check','점검·심의'],['doc','문서 세트']]],
   amend:['내규 개정',[['search','조문 선택'],['spark','수정안'],['doc','대비표'],['bulk','인용 영향'],['check','점검·심의'],['doc','문서 세트']]],
   bulk:['용어·명칭 일괄 정비',[['search','용어 검색'],['bulk','조사까지 교정'],['doc','개정문·부칙']]],
@@ -101,7 +117,7 @@ function _raBlank(){
     proc:{ans:{},chk:{},plan:{}},
     me:{name:''},
     ledger:{items:[],srv:null},
-    ui:{side:false}};
+    ui:{side:false,nav:{}}};
 }
 function raArr(x){ return Array.isArray(x)?x:[]; }
 // 저장본·백업을 빈 상태 틀에 맞춘다 — 구역은 깊게 합치고, 틀과 자료형이 다른 값(손상·옛 형식)은 기본값으로
@@ -356,8 +372,8 @@ function openRegAgent(tab){
   _assistMode='regagent';
   if(tab) RA.tab=tab;
   const p=document.getElementById('assistantPanel');
-  const tabs=RA_TABS.map(([k,l,h])=>`<button class="ra-tab${RA.tab===k?' on':''}" ${RA.tab===k?'aria-current="page"':''} title="${_e(h)}" onclick="raTab('${k}')">${raIc(k)}<span class="ra-tab-t"><b>${l}</b><small>${_e(h)}</small></span></button>`).join('');
   const nav=document.getElementById('raNav');
+  const tabs=raNavHtml(!!nav);
   if(nav) nav.innerHTML=tabs;
   let [pt,pf]=RA_PAGE[RA.tab]||['',[]]; if(RA.tab==='enact'||RA.tab==='amend') pf=[];
   const ph=(RA_TABS.find(x=>x[0]===RA.tab)||[])[2]||'';
@@ -368,7 +384,8 @@ function openRegAgent(tab){
   raOrgCard();
   raRender();
 }
-function raTab(k){ const kb=!!(document.activeElement&&document.activeElement.classList&&document.activeElement.classList.contains('ra-tab'));
+function raTab(k){ if(k==='check'){ RA.health=RA.health||{}; RA.health.v=RA.check&&RA.check.reg?'one':'errors'; k='health'; }   // 전체 점검은 건강검진 안의 보기
+  const kb=!!(document.activeElement&&document.activeElement.classList&&document.activeElement.classList.contains('ra-tab'));
   RA.tab=k; _raSave(); openRegAgent(); window.scrollTo({top:0}); const on=document.querySelector('.ra-nav .ra-tab.on'); if(on&&on.scrollIntoView) on.scrollIntoView({block:'nearest',inline:'center'});
   if(kb&&on) on.focus({preventScroll:true}); }            // 키보드로 탭을 바꿨으면 초점을 새 탭에 둔다(목록을 다시 그려 초점이 사라지지 않게)
 // 좌측 기관 카드: 기관명·등록 내규 수·서버/AI 상태
@@ -421,7 +438,7 @@ function raRender(){
   else if(t==='graph') b.innerHTML=raGraphView();
   else if(t==='ledger') b.innerHTML=raLedgerView();
   else b.innerHTML=raProcView();
-  if(t==='amend'||t==='upper'||t==='check'||t==='enact'||t==='advise') raFillCatalog();
+  if(t==='amend'||t==='upper'||t==='check'||t==='enact'||t==='advise'||(t==='health'&&RA.health.v==='one')) raFillCatalog();
 }
 // 짧은 섹션 두 개를 나란히(좁은 화면에서는 위아래)
 function raPair(a,b){ return `<div class="ra-pair">${a}${b}</div>`; }
@@ -482,7 +499,7 @@ const RA_WIZ={
   amend:[
     {t:'대상 고르기', d:'개정할 내규를 불러와 고칠 조문이나 별표·서식을 체크합니다.'},
     {t:'고치기', d:'개정 의도를 적고 수정안을 만들거나 직접 고칩니다.'},
-    {t:'확인·검토', d:'신구조문대비표, 인용 영향, 점검, 심의 사전검토를 확인합니다.'},
+    {t:'확인·검토', d:'“모두 점검하기” 한 번으로 대비표·인용 영향·점검·같은 문장·개정문 검증·사전검토를 확인합니다.'},
     {t:'문서 받기', d:'개정문·대비표·이유서·공고문을 한글·Word로 저장합니다.'},
   ],
 };
@@ -528,18 +545,40 @@ function raWizTop(){
 }
 // 점검·검토 단계: 인용 영향(개정)·형식 점검·심의 사전검토를 한 번에
 function raRunBar(mode){
-  const S=RA[mode], n=[mode==='amend'?!!S.impact:null, mode==='amend'?!!(S.cf&&S.cf.sig===raCfSig()):null, !!S.lint, !!S.review].filter(x=>x!==null), done=n.filter(Boolean).length;
+  const S=RA[mode], n=[mode==='amend'?!!S.impact:null, mode==='amend'?!!(S.cf&&S.cf.sig===raCfSig()):null, !!S.lint, mode==='amend'?!!S.rt:null, !!S.review].filter(x=>x!==null), done=n.filter(Boolean).length;
   return `<div class="ra-runbar"><button class="svc-btn yes" onclick="raRunChecks('${mode}')" ${_raBusy.runAll?'disabled':''}>${raIc('check')}${_raBusy.runAll?'점검 중…':done===n.length?'모두 다시 점검':'모두 점검하기'}</button>`+
-    `<span class="ra-sub">${mode==='amend'?'인용 영향'+RA_VR+'같은 문장'+RA_VR+'':''}형식 점검${RA_VR}심의 사전검토를 차례로 실행합니다 (${done}/${n.length} 완료)</span></div>`;
+    `<span class="ra-sub">${mode==='amend'?'인용 영향'+RA_VR+'같은 문장'+RA_VR+'':''}형식 점검${RA_VR}${mode==='amend'?'개정문 검증'+RA_VR:''}심의 사전검토를 차례로 실행합니다 (${done}/${n.length} 완료)</span></div>`;
 }
 async function raRunChecks(mode){
   if(_raBusy.runAll) return; _raBusy.runAll=true; raRerender(mode);
-  try{ if(mode==='amend'){ await raImpact(); await raCfCheck(); } await raLint(mode); await raReview(mode); }
+  try{ if(mode==='amend'){ await raImpact(); await raCfCheck(); } await raLint(mode); if(mode==='amend') raRtRun(); await raReview(mode); }
   finally{ _raBusy.runAll=false;
     const card=document.querySelector('.ra-wiz-card'); if(card) card.classList.remove('running');
-    const rb=document.querySelector('.ra-runbar'); if(rb) rb.outerHTML=raRunBar(mode); raWizSync(mode); }
+    const rb=document.querySelector('.ra-runbar'); if(rb) rb.outerHTML=raRunBar(mode); if(mode==='amend'){ raChkSumRefresh(); raRerender(mode); } raWizSync(mode); }
 }
 function raSub(title, body){ return `<section class="ra-sub-sec"><h3>${title}</h3>${body}</section>`; }
+// 접는 구역(확인·검토) — 결과가 나오기 전에는 펼쳐 두고, 결과가 있으면 요약 칩만 보이고 접는다. 사용자가 연 상태는 기억한다
+function raFold(id, title, body){
+  const A=RA.amend, st=(A.fold||{})[id], chip=raChkChip(id), open=st!=null?st:!chip.done;
+  // 사용자가 직접 여닫은 것만 기억한다(details 의 toggle 은 처음 그릴 때도 울려서 쓰지 않는다)
+  return `<details class="ra-det ra-fold" ${open?'open':''}><summary onclick="RA.amend.fold=RA.amend.fold||{};RA.amend.fold['${id}']=!this.parentElement.open;_raSave()"><h3>${title}</h3>${chip.html}</summary><div class="ra-fold-b">${body}</div></details>`;
+}
+// 확인·검토 결과를 칩 하나로: {done, html}
+function raChkChip(id){
+  const A=RA.amend, c=(tone,txt)=>({done:true, html:`<span class="ra-chip ${tone}">${_e(txt)}</span>`}), none={done:false, html:`<span class="ra-chip subtle">아직 안 함</span>`};
+  if(id==='cmp'){ const n=raCmpRows().length; return c(n?'':'warn', `${n}행`); }
+  if(id==='impact'){ const m=A.impact&&A.impact.summary; if(!m) return none; const n=(m.inner||0)+(m.outer||0)+(m.appendix||0); return c(n?'warn':'ok', n?`인용 ${n}곳`:'영향 없음'); }
+  if(id==='lint'){ if(!A.lint) return none; const nos=new Set(A.changes.map(x=>x.no)); const iss=A.lint.filter(i=>!i.no||nos.has(i.no)); const e=iss.filter(i=>i.level==='error').length, w=iss.filter(i=>i.level==='warn').length; return c(e?'hi':w?'warn':'ok', e?`오류 ${e}`:w?`주의 ${w}`:'오류 없음'); }
+  if(id==='cf'){ if(!(A.cf&&A.cf.sig===raCfSig())) return none; const n=A.cf.items.length; return c(n?'warn':'ok', n?`함께 고칠 곳 ${n}`:'없음'); }
+  if(id==='rt'){ if(!A.rt) return none; return c(A.rt.ok?'ok':'hi', A.rt.ok?'개정문 일치':`불일치 ${A.rt.diffs.length}`); }
+  if(id==='review'){ if(!A.review) return none; const w=A.review.rows.filter(r=>r.status==='warn').length, k=A.review.rows.filter(r=>r.status==='check').length; return c(w?'warn':'ok', w?`보완 ${w}`:k?`확인 ${k}`:'적합'); }
+  return none;
+}
+function raCheckSummary(){
+  const items=[['cmp','대비표'],['impact','인용 영향'],['lint','형식 점검'],['cf','같은 문장'],['rt','개정문 검증'],['review','사전검토']];
+  return `<div class="ra-chksum" aria-label="확인·검토 요약">`+items.map(([id,l])=>`<span class="ra-chksum-i"><span class="ra-chksum-l">${l}</span>${raChkChip(id).html}</span>`).join('')+`</div>`;
+}
+function raChkSumRefresh(){ const b=document.getElementById('raChkSum'); if(b) b.innerHTML=raCheckSummary(); }
 function raWizBar(mode, i){
   const W=RA_WIZ[mode];
   return `<nav class="ra-wiz" id="raWiz" aria-label="진행 단계"><ol>`+W.map((w,k)=>{ const g=raWizGate(mode,k), done=raWizDone(mode,k);
@@ -721,6 +760,7 @@ async function raLint(mode, silent){
   if(gen!==_raGen[mode]||S!==RA[mode]) return;
   S.lint=d.success?d.issues:null; S.lintFixed=d.success&&d.fixed?d.fixed:null; _raSave();
   if(box) box.innerHTML=d.success?raLintView(d.issues,mode==='amend'?raLintOnlySet():null,false,S.lintFixed):raErr(d.error||'점검 실패');   // “고친 조문 관련만 보기”를 따른다
+  if(mode==='amend') raChkSumRefresh();
 }
 function raLintView(iss, onlyNos, compact, fixed){
   if(!iss) return '';
@@ -763,13 +803,13 @@ function raAmendView(){
     ()=>s1+(_raArts?`<p class="ra-wiz-hint" id="raSelHint">${raSelHint()}</p>`:''),
     ()=>s2+raStaleNote('amend')+`<div id="raSecChg">${s3}</div>`+
       raSub(`다른 기관은 얼마로 정했나 ${raTip('유관 기관(알리오 공시 사규)에서 같은 항목의 금액·일수 등을 찾아 견줍니다. 기관마다 표기가 달라 잘못 뽑힐 수 있으니 문장을 보고 포함 여부를 고르세요. 표로만 적힌 수치(별표 표)는 찾지 못할 수 있습니다.')}`,`<div id="raValBox">${raValView()}</div>`),
-    ()=>raRunBar('amend')+raSub(`신구조문대비표 <span class="ra-leg"><u class="ra-d">삭제</u><u class="ra-i">추가</u></span>`,`<label class="ra-chk"><input type="checkbox" ${A.abbr?'checked':''} onchange="raSet('amend.abbr',this.checked);raRefreshCmp()"> 바뀌지 않은 항·호는 “(현행과 같음)”으로 줄이기</label><div id="raCmp">${raCmpView()}</div>`)+
-      raPair(raSub('인용 영향',`<div class="ra-row"><button class="svc-btn" onclick="raImpact()">${raIc('search')}영향 범위 찾기</button>${raTip(`조 번호를 옮기는 경우 이동표(예: 7→8)를 넣으면 고칠 인용 표기를 함께 보여 줍니다.`)}<input id="raMoves" class="ra-in sm" style="max-width:180px" placeholder="이동표 예: 7→8, 9→10" value="${_e(A.moves||'')}" oninput="raSet('amend.moves',this.value)"></div><div id="raImpact">${raImpactView()}</div>`),
-        raSub('형식 점검',`<div class="ra-row"><button class="svc-btn" onclick="raLint('amend')">${raIc('check')}점검 실행</button><label class="ra-chk"><input type="checkbox" id="raLintOnly" checked onchange="raLintRedraw()"> 고친 조문 관련만 보기</label></div><div id="raLint">${raLintView(A.lint, raLintOnlySet(), false, A.lintFixed)}</div>`))+
-      raSub(`같은 문장이 있는 다른 곳 ${raTip('고친 조문에서 수치를 바꾼 문장이 같은 내규의 다른 조·별표, 시행세칙, 다른 내규에도 그대로 있으면 함께 고칠지 확인합니다. 한쪽만 고치면 내규끼리 수치가 어긋납니다.')}`,
+    ()=>raRunBar('amend')+`<div id="raChkSum">${raCheckSummary()}</div>`+raSub(`신구조문대비표 <span class="ra-leg"><u class="ra-d">삭제</u><u class="ra-i">추가</u></span>`,`<label class="ra-chk"><input type="checkbox" ${A.abbr?'checked':''} onchange="raSet('amend.abbr',this.checked);raRefreshCmp()"> 바뀌지 않은 항·호는 “(현행과 같음)”으로 줄이기</label><div id="raCmp">${raCmpView()}</div>`)+
+      raPair(raFold('impact','인용 영향',`<div class="ra-row"><button class="svc-btn" onclick="raImpact()">${raIc('search')}영향 범위 찾기</button>${raTip(`조 번호를 옮기는 경우 이동표(예: 7→8)를 넣으면 고칠 인용 표기를 함께 보여 줍니다.`)}<input id="raMoves" class="ra-in sm" style="max-width:180px" placeholder="이동표 예: 7→8, 9→10" value="${_e(A.moves||'')}" oninput="raSet('amend.moves',this.value)"></div><div id="raImpact">${raImpactView()}</div>`),
+        raFold('lint','형식 점검',`<div class="ra-row"><button class="svc-btn" onclick="raLint('amend')">${raIc('check')}점검 실행</button><label class="ra-chk"><input type="checkbox" id="raLintOnly" checked onchange="raLintRedraw()"> 고친 조문 관련만 보기</label></div><div id="raLint">${raLintView(A.lint, raLintOnlySet(), false, A.lintFixed)}</div>`))+
+      raFold('cf',`같은 문장이 있는 다른 곳 ${raTip('고친 조문에서 수치를 바꾼 문장이 같은 내규의 다른 조·별표, 시행세칙, 다른 내규에도 그대로 있으면 함께 고칠지 확인합니다. 한쪽만 고치면 내규끼리 수치가 어긋납니다.')}`,
         `<div class="ra-row"><button class="svc-btn" onclick="raCfCheck()">${raIc('search')}같은 문장 찾기</button></div><div id="raCf">${raCfView()}</div>`)+
-      raSub(`개정문 검증 ${raTip('만든 개정문을 현행 조문에 다시 적용해 수정안과 같은지 확인합니다. 개정문 문형이 수정안을 빠짐없이 담았는지 스스로 검증하는 단계입니다.')}`,`<div class="ra-row"><button class="svc-btn" onclick="raRtRun()">${raIc('check')}개정문 되돌려 적용</button></div><div id="raRt">${raRtView()}</div>`)+
-      raSub('심의 사전검토',raReviewSec('amend')),
+      raFold('rt',`개정문 검증 ${raTip('만든 개정문을 현행 조문에 다시 적용해 수정안과 같은지 확인합니다. 개정문 문형이 수정안을 빠짐없이 담았는지 스스로 검증하는 단계입니다.')}`,`<div class="ra-row"><button class="svc-btn" onclick="raRtRun()">${raIc('check')}개정문 되돌려 적용</button></div><div id="raRt">${raRtView()}</div>`)+
+      raFold('review','심의 사전검토',raReviewSec('amend')),
     ()=>`<div id="raSecDocs">${raDocsView('amend')}</div>`,
   ];
   return raWiz('amend', body);
@@ -1148,7 +1188,7 @@ async function raImpact(){
   const d=await raPost('/api/regagent/impact',{...raRegPayload(), nos, moves});
   if(gen!==_raGen.amend||A!==RA.amend) return;
   if(!d.success){ if(box) box.innerHTML=raErr(d.error||'분석 실패'); return; }
-  A.impact=d; _raSave(); if(box) box.innerHTML=raImpactView();
+  A.impact=d; _raSave(); if(box) box.innerHTML=raImpactView(); raChkSumRefresh();
 }
 // 같은 문장이 있는 다른 곳 — 개정안이 바꾸는 수치 문장이 다른 조·별표·시행세칙·다른 내규에도 있으면 함께 고칠 곳
 function raCfChanges(){ const arts=(typeof _raArts!=='undefined'&&_raArts&&_raArts.articles)||[];
@@ -1163,7 +1203,7 @@ async function raCfCheck(){
   const d=await raPost('/api/regagent/conflicts/check',{slug:A.slug||'', changes:ch});
   if(gen!==_raGen.amend||A!==RA.amend) return;
   if(!d.success){ if(box) box.innerHTML=raErr(d.error||'확인 실패'); return; }
-  A.cf={items:raArr(d.items), sig}; _raSave(); if(box) box.innerHTML=raCfView();
+  A.cf={items:raArr(d.items), sig}; _raSave(); if(box) box.innerHTML=raCfView(); raChkSumRefresh();
 }
 function raCfVals(v){ return raArr(v).map(x=>`<span class="ra-val">${_e(x)}</span>`).join(' '); }
 function raCfPlace(p){ return `<a class="ra-link" href="${raRegUrl(p.slug)}" target="_blank" rel="noopener">「${_e(p.title)}」 ${p.no==='별표'?'별표':_e(raLbl(p.no))}</a>${p.art?`(${_e(p.art)})`:''}`; }
@@ -1227,7 +1267,7 @@ async function _raReview(mode){
   const d=await raPost('/api/regagent/review', body);
   if(gen!==_raGen[mode]||S!==RA[mode]) return;
   if(!d.success){ if(box) box.innerHTML=raErr(d.error||'검토 실패'); return; }
-  RA[mode].review=d; _raSave(); if(box) box.innerHTML=raReviewView(d);
+  RA[mode].review=d; _raSave(); if(box) box.innerHTML=raReviewView(d); if(mode==='amend') raChkSumRefresh();
 }
 const RA_ST={ok:['적합','ok'],check:['확인 필요','check'],warn:['보완 필요','warn']};
 const RA_ST_IC={ok:'check',check:'info',warn:'alert'};
@@ -1634,7 +1674,7 @@ function raRtView(){
     r.diffs.slice(0,6).map(d=>`<div class="ra-chg-b" style="margin-top:6px"><div class="ra-old"><div class="ra-lab">수정안 ${_e(/^별/.test(d.no)?d.no:raLbl(d.no))}</div>${_e(d.exp).replace(/\n/g,'<br>')}</div><div class="ra-new"><div class="ra-lab">개정문 적용 결과</div>${_e(d.got).replace(/\n/g,'<br>')}</div></div>`).join('')+
     (r.errors.length?`<div class="ra-meta">읽지 못한 문장: ${r.errors.slice(0,4).map(_e).join(' / ')}</div>`:'');
 }
-function raRtRun(){ const A=RA.amend; A.rt=raRoundTrip(); _raSave(); const b=document.getElementById('raRt'); if(b) b.innerHTML=raRtView(); return A.rt; }
+function raRtRun(){ const A=RA.amend; A.rt=raRoundTrip(); _raSave(); const b=document.getElementById('raRt'); if(b) b.innerHTML=raRtView(); raChkSumRefresh(); return A.rt; }
 // 개정 규모 → 일부개정/전부개정 권고(고친 조가 전체의 절반 이상이면 전부개정을 검토)
 function raAmendScale(){
   const A=RA.amend; const total=_raArts?_raArts.articles.filter(a=>!a.deleted).length:0;
@@ -2526,6 +2566,9 @@ function raHealthNorms(d){ return raArr(d&&d.laws).concat(raArr(d&&d.rules)); }
 function raHealthView(){
   if(!_raHealth){ setTimeout(raHealthLoad,0); return `<div class="ra-wide" id="raHealth">${raSpin('진단 준비 중...')}</div>`; }
   const d=_raHealth, H=RA.health, f=H.f||{q:'',g:''};
+  const seg=raHealthSeg(H.v||'diag');
+  if(H.v==='errors') return `<div class="ra-wide" id="raHealth">${seg}`+raHealthErrorsView()+`</div>`;
+  if(H.v==='one') return `<div class="ra-wide" id="raHealth">${seg}`+raHealthOneView()+`</div>`;
   const gradeOf=s=>s>=95?'A':s>=85?'B':s>=75?'C':s>=60?'D':'E';
   const ag=gradeOf(d.avg);
   const norms=raHealthNorms(d), lawN=norms.filter(n=>(H.law||{})[n]).length, nTot=Math.max(1,norms.length), nr=raArr(d.rules).length;
@@ -2555,13 +2598,28 @@ function raHealthView(){
     raMeter(lawN/nTot,'acc')+`<div class="ra-meta" style="margin-top:6px">법제처 확인 ${Math.round(lawN/nTot*100)}%</div>`+
     (H.lawErr?`<div class="ra-chip warn" style="margin-top:6px">${raIc('alert')}법제처에 연결하지 못한 법령·규칙 ${H.lawErr.n}건${H.lawErr.msg?` — ${_e(H.lawErr.msg)}`:''} · 이 법령들의 최신성은 확인하지 못했습니다(망 차단이면 관리자가 law.go.kr 허용). <button class="ra-link" onclick="raHealthLaws()">다시 확인</button></div>`:'')+
     (raArr(d.unfound).length&&lawN?`<div class="ra-meta" style="margin-top:4px">법제처에서 못 찾은 이름 ${d.unfound.length}건: ${d.unfound.slice(0,6).map(x=>'「'+_e(x)+'」').join(', ')}${d.unfound.length>6?' 외':''} — 약칭·옛 이름·끊긴 띄어쓰기면 조문의 법령명을 정식 명칭으로 고치세요.</div>`:'');
-  return `<div class="ra-wide" id="raHealth">${tiles}`+
+  return `<div class="ra-wide" id="raHealth">${seg}${tiles}`+
     `<div class="ra-grid2 ra-h2">${raSec(1,'등급 분포',raTip('막대를 누르면 아래 목록을 거릅니다'),dist+rule)}${raSec(2,'상위법·행정규칙 최신성','법제처 현행 법령·행정규칙 기준',lawSec)}</div>`+
     raSec(3,'곧 시행되는 상위법·행정규칙',raTip('공포됐지만 아직 시행 전인 상위법·행정규칙입니다(180일 안). 시행 전에 인용한 '+RA_ORG.reg_word+'를 미리 정비할 수 있습니다. “상위법·행정규칙 최신성 확인”을 누르면 함께 찾습니다.'),raUpcomingView(d,lawN))+
     raSec(4,'정비 우선순위 Top 10','점수 낮은 순',prio)+
     raSec(4,`전체 ${_e(RA_ORG.reg_word)} 진단표`,'',table)+
     raSec(5,'유관 기관 규정 체계 비교',raTip('알리오에 공시된 유관 기관(같은 주무부처 등)의 내부규정 목록과 우리 기관 내규를 견줍니다. 여러 기관이 두고 있는데 우리에게 없는 규정은 제정을 검토할 만합니다.'),`<div id="raBench">${raBenchView()}</div>`)+
     `<div class="ra-foot"><button class="svc-btn ghost sm" onclick="_raHealth=null;raHealthLoad()">다시 진단</button></div></div>`;
+}
+// 건강검진 보기 전환 — 점수 요약 / 조문 오류 전체 목록(옛 ‘전체 점검’) / 내규 하나 자세히
+function raHealthSeg(v){
+  const items=[['diag','진단 요약','점수·등급·우선순위·상위법 최신성'],['errors','오류 목록','없는 조문 인용·내규명·옛 명칭·조 번호와 같은 문장 다른 수치를 내규별로'],['one','내규 하나 점검','항·호 순서, 표기, 부칙, 별표 인용까지 자세히']];
+  return `<div class="ra-seg ra-hseg" role="tablist">`+items.map(([k,l,h])=>`<button role="tab" aria-selected="${v===k}" class="${v===k?'on':''}" title="${_e(h)}" onclick="RA.health.v='${k}';_raSave();raRerender('health')">${_e(l)}</button>`).join('')+`</div>`;
+}
+function raHealthErrorsView(){
+  const all=`<div class="ra-row"><button class="svc-btn yes" onclick="raCheckAll()">${raIc('check')}기관 ${_e(RA_ORG.reg_word)} 전체 점검</button>${raTip(`모든 내규에서 없는 조문 인용·현행 목록에 없는 내규명·구 명칭(재단·이사장 등)·조 번호 중복을 찾아 내규별로 보여 줍니다. 진단 요약의 점수는 같은 결과로 매깁니다.`)}</div><div id="raChkAll">${raCheckAllView()}</div>`;
+  return raSec(1,'조문 오류 목록','',all)+
+    raSec(2,'같은 문장, 다른 수치',raTip('문장은 같은데 숫자(금액·일수·기간·비율)만 다른 곳입니다. 같은 내규 안·규정과 시행세칙·서로 인용하는 내규 사이는 한쪽만 고친 것으로 의심되고, 관계없는 내규 사이는 기관 안 기준이 다른 곳입니다.'),`<div id="raCfAll">${raCfAllView()}</div>`);
+}
+function raHealthOneView(){
+  const C=RA.check;
+  return raSec(1,`${_e(RA_ORG.reg_word)} 하나 자세히 점검`,raTip('항·호 순서, 표기, 부칙, 별표 인용까지'),
+    `<div class="ra-row"><input id="raChkReg" class="ra-in" list="raRegList" aria-label="점검할 ${_e(RA_ORG.reg_word)}명" style="max-width:320px" placeholder="내규명 (예: 인사규정)" value="${_e(C.reg||'')}" onkeydown="if(event.key==='Enter')raCheckOne()"><datalist id="raRegList"></datalist><button class="svc-btn" onclick="raCheckOne()">이 ${_e(RA_ORG.reg_word)} 점검</button></div><div id="raChkOne">${C.one?raCheckOneView(C.one):''}</div>`);
 }
 function raMeter(p, tone){ return `<div class="ra-meter"><i class="t-${tone}" style="width:${Math.round(Math.max(0,Math.min(1,p||0))*100)}%"></i></div>`; }
 function raMini(v, tone){ return `<span class="ra-mini" aria-hidden="true"><i class="t-${tone}" style="width:${Math.max(0,Math.min(100,v))}%"></i></span>`; }
