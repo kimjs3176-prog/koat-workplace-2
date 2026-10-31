@@ -99,6 +99,7 @@ for (const r of regs) {
   const arts = r.articles.map(a => ({ no: a.no, title: a.title, body: a.body, chapter: a.chapter || '', deleted: !!a.deleted }));
   const live = arts.filter(a => !a.deleted && a.body.trim());
   if (live.length < 2) continue;
+  if (new Set(arts.map(a => a.no)).size !== arts.length) continue;      // 조 번호가 겹치는 내규(건강검진이 따로 잡는다)는 뺀다
   for (let round = 0; round < rounds; round++) {
     c.__setArts({ title: r.title, revision: '', articles: arts, appendix: [] });
     Object.assign(RA.amend, { slug: r.slug, title: r.title, lawStyle: round % 2 ? 'art' : 'fine', fullRev: false, abbr: true, addenda: '', purpose: '', main: [], appx: [], selx: {} });

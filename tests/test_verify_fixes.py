@@ -101,3 +101,16 @@ def test_split_appendix_blocks(ra, client):
     d = client.get("/api/regagent/articles?slug=" + slug).get_json()
     assert d["has_appendix"] and [b["id"] for b in d["appendix"]][:3] == ["별표 1", "별표 2", "별표 3"]
     assert "국내여비지급표" in next(b for b in d["appendix"] if b["id"] == "별표 2")["body"]
+
+
+def test_roundtrip_amend_all_regs():
+    """개정문 왕복 시험 — 등록된 내규 전체에 무작위 개정을 가해 개정문을 만들고 현행에 되돌려 적용하면 수정안과 모두 일치해야 한다."""
+    import importlib.util
+    import os
+    spec = importlib.util.spec_from_file_location("roundtrip_amend", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "roundtrip_amend.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    res = mod.run(seed=7, rounds=2)
+    s = res["summary"]
+    assert s["total"] >= 150, s
+    assert s["ok"] == s["total"], (s, res["fails"][:3])
