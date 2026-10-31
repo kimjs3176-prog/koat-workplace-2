@@ -1146,3 +1146,18 @@ body.dark .svc-btn:not([disabled]):hover{box-shadow:inset 0 0 0 999px oklch(100%
 .ra-old,.ra-new,.ra-docbox,.ra-cmp td{overflow-wrap:anywhere;}
 /* 8 나란한 카드: 내용이 짧은 카드는 이웃 높이로 늘리지 않음(늘린 카드 안의 빈 띠 금지), 거터 16 */
 .ra-grid2,.ra-pair{gap:var(--space-md);align-items:start;margin-bottom:var(--space-md);}
+/* ── 전수 점검(배포 화면)에서 고친 것 ── */
+/* 바깥 링크 화살표: 단추의 터치 영역용 ::after(position:absolute)가 새어 들어와 화살표가 단추 밖 왼쪽 위에 찍히던 문제 */
+a.svc-btn[target="_blank"][href^="http"]::after{position:static;inset:auto;}
+/* 별표·서식 수정 카드의 현행 칸: 표가 한 줄에 한 칸씩 풀려 5천 픽셀을 넘던 것을 스크롤 틀로 */
+.ra-chg.t-appx .ra-old{max-height:420px;overflow:auto;}
+/* 긴 목록(용어 사전·법령 조문 지도)은 화면 한 장 안에서 스크롤, 조직도 트리는 제외 */
+.ra-sec-b>ul.ra-terms:not(.ra-org),#raLawMapList>ul.ra-terms{max-height:min(640px,70vh);overflow:auto;border:var(--rule-hair) solid var(--color-rule);border-radius:var(--radius-inner);padding:0 var(--space-sm);}
+/* 에이전트 예시 격자: 마지막 줄이 짧을 때 밑선이 중간에서 끊기지 않게(칸은 윗선, 틀은 아랫선) */
+.ra-ag-exs{border-top:none;border-bottom:var(--rule-hair) solid var(--color-rule);}
+.ra-ag-ex{border-bottom:none;border-top:var(--rule-hair) solid var(--color-rule);}
+/* 제목이 좁은 폭에서 한 글자만 다음 줄로 떨어지지 않게 */
+.ra-sec-t h2,.ra-page-t h1,.ra-wiz-head h2{text-wrap:balance;}
+.ra-sec-t h2 .ra-tip,.ra-sec-t h2 .ra-info{flex:none;}
+/* 한글 제목·라벨은 낱말 단위로만 줄바꿈(“지시하세 / 요”처럼 한 글자가 떨어지지 않게) */
+.ra-sec-t h2,.ra-page-t h1,.ra-wiz-head h2,.ra-sub-sec>h3,.ra-fold summary h3,.ra-kpi-l,.ra-lbl,label,.ra-tab-t,.ra-chip,.ra-pill,.ra-wiz-s{word-break:keep-all;}
