@@ -1167,3 +1167,8 @@ a.svc-btn[target="_blank"][href^="http"]::after{position:static;inset:auto;}
 .ra-src li:first-child{border-top:none;}
 .ra-src li span{color:var(--color-muted);}
 #raEnactPre .ra-runbar{margin-top:var(--space-md);}
+/* 바뀐 곳이 따로 있을 때 그대로인 수정안 카드는 한 줄로 */
+.ra-chg-idle{margin-bottom:var(--space-sm);border:1px dashed var(--color-border-strong);border-radius:var(--radius-inner);background:var(--color-sheet);}
+.ra-chg-idle>summary{display:flex;align-items:center;gap:var(--space-xs);padding:var(--space-xs) var(--space-md);cursor:pointer;font-size:var(--text-sm);}
+.ra-chg-idle[open]>summary{border-bottom:1px solid var(--color-rule);}
+.ra-chg-idle>.ra-chg{margin:var(--space-xs);}
