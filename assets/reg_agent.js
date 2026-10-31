@@ -179,7 +179,7 @@ function raNormNo(s){   // “제7조의2제1항” → “7의2” (항·호 �
   const m=t.match(/(\d+)조(?:의(\d+))?/)||t.match(/^(?:제)?(\d+)(?:의(\d+))?/);
   return m?m[1]+(m[2]?'의'+m[2]:''):'';
 }
-function raJosa(w,p){ p=p||['은','는']; const c=String(w||'').trim().slice(-1); if(c>='가'&&c<='힣') return ((c.charCodeAt(0)-0xAC00)%28)?p[0]:p[1]; return p[0]; }
+function raJosa(w,p){ p=p||['은','는']; const c=String(w||'').trim().slice(-1); if(c>='가'&&c<='힣') return ((c.charCodeAt(0)-0xAC00)%28)?p[0]:p[1]; if(c>='0'&&c<='9') return '013678'.includes(c)?p[0]:p[1];   /* 숫자 끝(별표 2·제4조): 영일삼육칠팔은 받침 있음 */ return p[0]; }
 // 끝 괄호는 떼고 본다: “… 규칙(구 직무발명 보상규칙)” → 규칙
 function raKind(title){ const t=String(title||'').trim().replace(/\s*\([^()]*\)$/,''); for(const s of ['시행세칙','시행규칙','정관','조례','훈령','예규','고시','규정','규칙','세칙','지침','요령','기준','매뉴얼','강령']) if(t.endsWith(s)) return s==='시행규칙'?'규칙':s; return '규정'; }
 // 시행일 기본 문구: 조례·규칙(자치법규)·고시는 “공포한 날”, 기관 내규는 “발령한 날”
