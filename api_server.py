@@ -1086,33 +1086,39 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
                     cfg["responseMimeType"] = "application/json"
                 if think:
                     cfg["thinkingConfig"] = think
-                return _ai_post_retry(lambda: req_lib.post(
-                    url, timeout=left(60), headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
-                    json={"contents": [{"parts": [{"text": f"{system}\n\n{user}"}]}],
-                          "generationConfig": cfg}), deadline=deadline)
+                try:
+                    # 한 모델에 예산 전부를 쓰지 않는다(40초): 늦으면 남은 시간에 더 빠른 대체 모델을 부를 수 있게
+                    return _ai_post_retry(lambda: req_lib.post(
+                        url, timeout=left(40), headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+                        json={"contents": [{"parts": [{"text": f"{system}\n\n{user}"}]}],
+                              "generationConfig": cfg}), deadline=deadline)
+                except req_lib.exceptions.Timeout:
+                    return None                        # 늦은 응답도 과부하처럼 다른 모델로 넘긴다
 
             think = _gemini_thinking_cfg(mdl)
             # 사고 토큰까지 감안해 넉넉히 잡는다(본문이 잘리는 것보다 낫다)
             limit = max(max_tokens, 3000)
             r = call(limit, think)
-            if r.status_code == 400 and think and "thinking" in (r.text or "").lower():
+            if r is not None and r.status_code == 400 and think and "thinking" in (r.text or "").lower():
                 r = call(limit, None)           # 사고 설정 미지원 모델 폴백
             tried = []
-            if r.status_code in (429, 503, 500, 502, 504) or (r.status_code == 404 and "not found" in (r.text or "").lower()):
+            if r is None or r.status_code in (429, 503, 500, 502, 504) or (r.status_code == 404 and "not found" in (r.text or "").lower()):
                 # 과부하·한도·미제공 모델이면 다른 Gemini 모델로 바로 바꿔 부른다(시간 예산이 남아 있을 때만)
                 for alt in _gemini_alternates(mdl):
                     if deadline - _t.time() < 12:
                         break
                     tried.append(alt)
-                    print(f"[ai] {mdl} {r.status_code} → 대체 모델 {alt}")
+                    print(f"[ai] {mdl} {'timeout' if r is None else r.status_code} → 대체 모델 {alt}")
                     url = (f"https://generativelanguage.googleapis.com/v1beta/models/{alt}:generateContent")
                     think = _gemini_thinking_cfg(alt)
                     r = call(limit, think)
-                    if r.status_code == 400 and think and "thinking" in (r.text or "").lower():
+                    if r is not None and r.status_code == 400 and think and "thinking" in (r.text or "").lower():
                         r = call(limit, None)
-                    if r.status_code == 200:
+                    if r is not None and r.status_code == 200:
                         mdl = alt
                         break
+            if r is None:
+                raise req_lib.exceptions.Timeout()
             if r.status_code != 200:
                 msg = _ai_error(r)[0]
                 if tried:
@@ -1133,7 +1139,7 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
             truncated = cands[0].get("finishReason") == "MAX_TOKENS"
             if truncated and deadline - _t.time() > 20:      # 시간이 남을 때만 크게 잡아 한 번 더
                 r2 = call(min(limit * 3, 12000), think or {"thinkingLevel": "low"})
-                if r2.status_code == 200:
+                if r2 is not None and r2.status_code == 200:
                     d2 = r2.json()
                     t2 = text_of(d2)
                     if t2.strip():
@@ -1182,7 +1188,7 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
                 return "", f"Ollama 오류({r.status_code})"
             return (r.json().get("message") or {}).get("content", ""), ""
     except req_lib.exceptions.Timeout:
-        return "", "AI 서버 응답이 늦습니다. 잠시 후 다시 시도하세요."
+        return "", "AI 서버 응답이 늦습니다. 대상 조문을 줄이거나 잠시 후 다시 시도하세요."
     except req_lib.exceptions.RequestException:
         return "", "AI 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요."
     except Exception as e:                       # 응답 형식 오류 등 — 키·URL 이 섞이지 않게 종류만 알린다

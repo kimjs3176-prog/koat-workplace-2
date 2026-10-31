@@ -1039,16 +1039,38 @@ function raChanged(c){
   return n(o.title)!==n(c.title)||n(o.body)!==n(c.body);
 }
 function raEffChanges(){ return RA.amend.changes.filter(raChanged); }
+// 대상 조문이 많으면 한 번에 보내지 않고 4개씩 나눠(동시 2건) 수정안을 받는다 — 한 호출이 길어져 “응답이 늦습니다”로 끝나는 것을 막는다
+const RA_DRAFT_CHUNK=4;
+async function raDraftBatched(base, targets, onProg){
+  const T=raArr(targets); if(T.length<=RA_DRAFT_CHUNK) return raPost('/api/regagent/draft',Object.assign({},base,{targets:T}));
+  const parts=[]; for(let i=0;i<T.length;i+=RA_DRAFT_CHUNK) parts.push(T.slice(i,i+RA_DRAFT_CHUNK));
+  const res=new Array(parts.length); let next=0, done=0;
+  const worker=async()=>{ while(next<parts.length){ const k=next++;
+    res[k]=await raPost('/api/regagent/draft',Object.assign({},base,{targets:parts[k],intent:`${base.intent}\n(대상 조문이 많아 나눠 요청합니다: ${k+1}/${parts.length}번째 묶음 — 이 묶음의 조문만 고치세요)`}));
+    done++; if(onProg) onProg(done,parts.length); } };
+  await Promise.all([worker(),worker()]);
+  const ok=res.filter(r=>r&&r.success), bad=res.map((r,k)=>r&&r.success?null:{k,e:(r&&r.error)||'실패'}).filter(Boolean);
+  if(!ok.length) return res[0]||{success:false,error:'수정안 작성 실패'};
+  const seen=new Set(), changes=[];
+  ok.forEach(r=>raArr(r.draft.changes).forEach(c=>{ if(seen.has(c.no)) return; seen.add(c.no); changes.push(c); }));
+  const f=ok[0].draft, notes=[...new Set(ok.flatMap(r=>raArr(r.draft.notes)))], main=[...new Set(ok.flatMap(r=>raArr((r.draft.reason||{}).main)))];
+  const miss=bad.flatMap(b=>parts[b.k].map(a=>raLbl(a.no)));
+  return {success:true, draft:Object.assign({},f,{changes,notes,reason:Object.assign({},f.reason||{},{main})}),
+    notice:miss.length?`${miss.join(', ')}는 AI가 답하지 않아(${bad[0].e.replace(/^AI 오류:\s*/,'').slice(0,60)}) 수정안에서 빠졌습니다. 그 조문만 골라 다시 요청하거나 직접 고치세요.`:'', partial:miss};
+}
 function raAmendDraft(){ return raOnce('amendDraft', _raAmendDraft); }
 async function _raAmendDraft(){
   const A=RA.amend; if(!_raArts){ _toast('먼저 내규를 불러오세요.'); return; }
   if(!A.intent.trim()){ _toast('개정 의도를 입력하세요.'); return; }
   if(!raHasAi()){ _toast('AI 키가 없습니다. [AI 설정]에서 키를 넣거나 “선택 조문 직접 고치기”를 쓰세요.'); return; }
-  const box=document.getElementById('raChanges'); if(box) box.innerHTML=raSpin('AI가 수정안을 작성하는 중... (20~40초)');
-  const targets=Object.keys(A.sel).map(no=>raOld(no)).filter(Boolean).map(a=>({no:a.no,title:a.title,body:a.body}));
+  const box=document.getElementById('raChanges');
+  const targets=Object.keys(A.sel).sort(raCmp).map(no=>raOld(no)).filter(Boolean).map(a=>({no:a.no,title:a.title,body:a.body}));
+  const nb=Math.ceil(targets.length/RA_DRAFT_CHUNK);
+  if(box) box.innerHTML=raSpin(nb>1?`AI가 수정안을 작성하는 중... 조문 ${targets.length}개를 ${nb}묶음으로 나눠 요청합니다`:'AI가 수정안을 작성하는 중... (20~40초)');
   const dels=A.refText.trim()?[{law:'참고',art:'',text:A.refText}]:[];
   const gen=_raGen.amend;
-  const d=await raPost('/api/regagent/draft',{mode:'amend', ...raRegPayload(), intent:A.intent, effective:A.effective, targets, delegations:dels, refs:Object.values(A.alioRefs||{}), ...raAi()});
+  const d=await raDraftBatched({mode:'amend', ...raRegPayload(), intent:A.intent, effective:A.effective, delegations:dels, refs:Object.values(A.alioRefs||{}), ...raAi()}, targets,
+    (k,n)=>{ const b=document.getElementById('raChanges'); if(b&&gen===_raGen.amend) b.innerHTML=raSpin(`AI가 수정안을 작성하는 중... ${k}/${n}묶음 완료`); });
   if(gen!==_raGen.amend||A!==RA.amend) return;            // 그사이 다른 내규로 바꿈
   if(!d.success){ if(box) box.innerHTML=raErr(d.error||'수정안 작성 실패', d.need_key); return; }
   const r=d.draft;
@@ -1059,6 +1081,7 @@ async function _raAmendDraft(){
   A.purpose=(r.reason||{}).purpose||''; A.main=(r.reason||{}).main||[]; A.addenda=(r.addenda||[]).join('\n'); A.notes=r.notes||[]; A.model=r.model||''; raSub_('amend').aiOk=false;
   A.basis=raBasis('amend'); A.impact=null; A.lint=null; A.review=null; A.nota=null; _raSave(); raRerender('amend');
   setTimeout(()=>{ const s=document.getElementById('raSecChg'); if(s) s.scrollIntoView({behavior:'smooth',block:'start'}); },60);
+  if(d.notice) _toast(d.notice, 7000);
   raLint('amend', true);
 }
 function raAmendManual(){
@@ -2514,10 +2537,12 @@ async function raAgAmend(P, step, fin, stop){
   s=step('수정안 작성');
   let ok=false;
   if(raHasAi()){
-    const r=await raPost('/api/regagent/draft',{mode:'amend',slug:A.slug,reg:A.title,intent:A.intent,targets:tg.map(a=>({no:a.no,title:a.title,body:a.body})),delegations:[],refs:Object.values(A.alioRefs||{}),...raAi()});
+    const r=await raDraftBatched({mode:'amend',slug:A.slug,reg:A.title,intent:A.intent,delegations:[],refs:Object.values(A.alioRefs||{}),...raAi()}, tg.map(a=>({no:a.no,title:a.title,body:a.body})),
+      (k,n)=>{ s.d=`조문 ${tg.length}개를 ${n}묶음으로 나눠 작성 중 — ${k}/${n} 완료`; raAgentDraw(); });
     if(r.success){ const x=r.draft; A.changes=x.changes.map(c=>({type:c.type,no:c.no,title:c.title,body:c.body,why:c.why,ai:c.body,aiTitle:c.title})); raSub_('amend').aiOk=false;
       A.purpose=(x.reason||{}).purpose||''; A.main=(x.reason||{}).main||[]; A.addenda=(x.addenda||[]).join('\n'); A.notes=x.notes||[]; A.model=x.model||''; ok=true;
-      fin(s,`${A.changes.length}개 조문 수정안: `+A.changes.map(c=>`${raLbl(c.no)} ${({modify:'개정',insert:'신설',delete:'삭제'})[c.type]}`).join(', ')+(A.purpose?'<br>'+_e(A.purpose):'')); }
+      fin(s,`${A.changes.length}개 조문 수정안: `+A.changes.map(c=>`${raLbl(c.no)} ${({modify:'개정',insert:'신설',delete:'삭제'})[c.type]}`).join(', ')+(A.purpose?'<br>'+_e(A.purpose):'')+(r.notice?'<br>'+_e(r.notice):''), r.notice?'warn':'ok');
+      raArr(r.partial).length&&tg.filter(a=>r.partial.includes(raLbl(a.no))).forEach(a=>{ if(!A.changes.some(c=>c.no===a.no)) A.changes.push({type:'modify',no:a.no,title:a.title,body:a.body,why:'AI가 답하지 않은 조문 — 직접 고치세요'}); }); }
     else fin(s,_e(r.error||'AI 오류')+' — 대상 조문을 수정안 칸에 담았습니다.','warn');
   }
   if(!ok){
@@ -2600,8 +2625,10 @@ async function raAgUpper(P, step, fin, stop){
     return;
   }
   fin(s,top.map(c=>`「${_e(c.reg)}」 ${raLbl(c.no)}(${_e(c.title)})${c.specific.length?' — '+_e(c.specific.join(', ')):''}`).join('<br>'), d.high?'warn':'ok');
-  RA.agent.done={title:`개정 후보 ${d.count}개 조문을 찾았습니다`,sub:'1순위 후보로 바로 개정 작업을 시작할 수 있습니다.',
-    acts:[['후보 전체 보기',"raTab('upper')",1],[`1순위 「${top[0].reg}」 ${raLbl(top[0].no)} 개정하기`,`raUpperToAmend('${_a(top[0].slug)}','${_a(top[0].no)}')`]]};
+  const topAll=raArr(d.candidates).filter(c=>c.slug===top[0].slug).map(c=>c.no);          // 1순위 내규의 후보 조문 전부
+  RA.agent.done={title:`개정 후보 ${d.count}개 조문을 찾았습니다`,sub:topAll.length>1?`1순위 「${top[0].reg}」의 후보 ${topAll.length}개 조문을 한 번에 개정 작업으로 가져갈 수 있습니다.`:'1순위 후보로 바로 개정 작업을 시작할 수 있습니다.',
+    acts:[['후보 전체 보기',"raTab('upper')",1],[`1순위 「${top[0].reg}」 ${raLbl(top[0].no)} 개정하기`,`raUpperToAmend('${_a(top[0].slug)}','${_a(top[0].no)}')`]]
+      .concat(topAll.length>1?[[`「${top[0].reg}」 ${topAll.length}개 조문 모두 개정하기`,`raUpperToAmend('${_a(top[0].slug)}','${_a(topAll.join('|'))}')`]]:[])};
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -2927,6 +2954,10 @@ function raHealthToAmend(slug){
   raAmendStart(slug, r.title, {sel:nos, force:true, fresh:RA.amend.slug!==slug, subs,
     intent:`건강검진 결과 정비: ${kinds.join('·')} (${what.slice(0,4).join(', ')}${what.length>4?` 외 ${what.length-4}건`:''})`,
     refText:'[건강검진에서 찾은 문제]\n'+sel.map(x=>`- ${x.msg}`+(x.snip?`\n  문맥: ${x.snip}`:'')).join('\n').slice(0,3000)});
+  if(sel.some(x=>x.code==='dup'||x.code==='order')){                 // 조 번호 중복·순서는 AI 없이 번호 도구로 정리한다
+    RA.amend.mvOpen=true; _raSave(); raRerender('amend');
+    _toast('조 번호 중복·순서는 AI 없이 “조 번호 도구 → 빈 번호 메우기”나 이동으로 정리할 수 있습니다. 도구를 펼쳐 두었습니다.',7000);
+  }
 }
 function raHealthCheckOne(title){ RA.check.reg=title; _raSave(); raTab('check'); setTimeout(()=>{ if(typeof raCheckOne==='function') raCheckOne(); },80); }
 // 곧 시행되는 상위법: 시행일이 가까운 순, D-n, 인용하는 내규, 영향 조문 찾기
@@ -3467,10 +3498,11 @@ function raUpperResView(){
     raStack([{n:R.high,l:'우선 검토',tone:'bad'},{n:R.count-R.high,l:'법령명만 인용',tone:'acc'}],'후보 구성')+
     `</div><div>`+(gl.length>1?raBars(gl.slice(0,8),'','내규별 개정 후보'):'')+`</div></div>`+
     (R.removed_terms.length?`<div class="ra-meta">바뀐 용어 ${R.removed_terms.map(t=>`<span class="ra-chip warn">${_e(t)}</span>`).join('')}</div>`:'')+
-    `<div class="ra-detg">`+Object.entries(groups).map(([reg,g])=>`<div class="ra-simc"><div class="ra-simc-h"><b>「${_e(reg)}」</b><span class="ra-sub">${g.items.length}개 조문</span><a class="ra-link" href="${raRegUrl(g.slug)}" target="_blank" rel="noopener">원문</a></div>`+
+    `<div class="ra-detg">`+Object.entries(groups).map(([reg,g])=>`<div class="ra-simc"><div class="ra-simc-h"><b>「${_e(reg)}」</b><span class="ra-sub">${g.items.length}개 조문</span><a class="ra-link" href="${raRegUrl(g.slug)}" target="_blank" rel="noopener">원문</a>`+
+      (g.items.length>1?`<button class="svc-btn yes sm ra-upall" onclick="raUpperToAmend('${_a(g.slug)}','${_a(g.items.map(c=>c.no).join('|'))}')" title="이 ${_e(RA_ORG.reg_word)}의 후보 조문 ${g.items.length}개를 한 번에 고치기 단계로 가져갑니다">${raIc('amend')}${g.items.length}개 조문 모두 개정</button>`:'')+`</div>`+
       g.items.map(c=>`<div class="ra-cand${(c.specific.length||c.terms.length)?' hi':''}"><div><b>${_e(raLbl(c.no))}(${_e(c.title)})</b> `+
         `${c.specific.map(s=>`<span class="ra-chip hi">${_e(s)}</span>`).join('')}${c.terms.map(s=>`<span class="ra-chip warn">용어: ${_e(s)}</span>`).join('')}${!c.specific.length&&!c.terms.length?c.cites.slice(0,2).map(s=>`<span class="ra-chip">${_e(s)}</span>`).join(''):''}`+
-        `<button class="svc-btn sm" style="margin:0 0 0 6px" onclick="raUpperToAmend('${_a(c.slug)}','${_a(c.no)}')">${raIc('amend')}개정</button></div><div class="ra-snip">${_e(c.snippet)}</div></div>`).join('')+`</div>`).join('')+`</div>`;
+        `<button class="svc-btn sm" style="margin:0 0 0 6px" onclick="raUpperToAmend('${_a(c.slug)}','${_a(c.no)}')">${raIc('amend')}${g.items.length>1?'이 조만 개정':'개정'}</button></div><div class="ra-snip">${_e(c.snippet)}</div></div>`).join('')+`</div>`).join('')+`</div>`;
 }
 function raAmendStart(slug, title, o){
   o=o||{}; const A=RA.amend;
@@ -3489,11 +3521,12 @@ function raArtList(t){
   const s=String(t||''); const m=s.match(/제?\s*\d+\s*조(?:\s*의\s*\d+)?/g);
   return [...new Set((m||s.split(/[,，\s]+/).filter(x=>/^제?\d+(?:의\d+)?$/.test(x))).map(raNormNo).filter(Boolean))];
 }
-function raUpperToAmend(slug, no){
+function raUpperToAmend(slug, nos){
   const R=RA.upper.res, U=R.q||{law:R.law, arts:(R.arts||[]).map(raLbl).join(', ')};   // 결과를 만든 입력 기준(입력란은 그 뒤 바뀌었을 수 있다)
   const reg=(R.candidates.find(c=>c.slug===slug)||{}).reg||'';
   const arts=U.arts?` ${U.arts}`:'';
-  raAmendStart(slug, reg, {sel:[no], force:true, intent:`상위법 「${U.law}」${arts} 개정 내용을 반영하여 인용 조문과 관련 내용을 정비`,
+  const sel=(Array.isArray(nos)?nos:String(nos||'').split('|')).map(x=>String(x).trim()).filter(Boolean);   // 'a|b|c' — 한 내규의 후보 조문 전부
+  raAmendStart(slug, reg, {sel, force:true, intent:`상위법 「${U.law}」${arts} 개정 내용을 반영하여 인용 조문과 관련 내용을 정비`,
     refText:[U.old?`[개정 전] ${U.old}`:'', U.neu?`[개정 후] ${U.neu}`:''].filter(Boolean).join('\n').slice(0,3000)});
 }
 

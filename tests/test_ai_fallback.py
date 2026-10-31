@@ -57,3 +57,27 @@ def test_error_kinds():
     assert A._ai_error(_R(429, {"error": {"message": "quota exceeded"}}))[1] == "quota"
     assert A._ai_error(_R(503, {"error": {"message": "The model is overloaded"}}))[1] == "overload"
     assert A._ai_error(_R(403, {"error": {"message": "API key not valid"}}))[1] == "auth"
+
+
+def test_generate_switches_model_on_timeout(monkeypatch):
+    calls = []
+    def post(url, **kw):
+        calls.append((url, kw.get("timeout")))
+        if "gemini-2.5-flash:" in url:
+            raise A.req_lib.exceptions.Timeout()
+        return _ok("ok")
+    monkeypatch.setattr(A.req_lib, "post", post)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    A._GEMINI_MODEL_CACHE["ranked"] = []
+    text, err = A._ai_generate("gemini", "k", "gemini-2.5-flash", "sys", "user")
+    assert (text, err) == ("ok", "")
+    assert calls[0][1] <= 40 and any("flash-lite" in u for u, _ in calls)
+
+
+def test_generate_timeout_message_when_all_slow(monkeypatch):
+    def post(url, **kw):
+        raise A.req_lib.exceptions.Timeout()
+    monkeypatch.setattr(A.req_lib, "post", post)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    text, err = A._ai_generate("gemini", "k", "gemini-2.5-flash", "sys", "user")
+    assert text == "" and "응답이 늦습니다" in err

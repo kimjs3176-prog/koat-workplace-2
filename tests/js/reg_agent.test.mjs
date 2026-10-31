@@ -824,3 +824,42 @@ test('자치법규(조례)도 같은 틀: 원문 붙여넣기 → 개정 → “
   assert.match(law, /부    칙\n이 조례는 공포한 날부터 시행한다\./);
   const rt = c.raRoundTrip(); assert.ok(rt.ok, JSON.stringify(rt.diffs) + JSON.stringify(rt.errors));
 });
+
+test('상위법 영향: 한 내규의 후보 조문 여러 개를 한 번에 개정 작업으로', () => {
+  const c = load();
+  vm.runInContext(`openRegAgent=()=>{}; RA.upper.res={law:'공공기관의 운영에 관한 법률', count:4, reg_count:1, high:2, removed_terms:[], arts:['34'],
+    candidates:[{reg:'정관',slug:'jeonggwan',no:'44',title:'준용',specific:[],terms:[],cites:['공운법'],snippet:'…'},
+                {reg:'정관',slug:'jeonggwan',no:'11',title:'임원의 결격사유',specific:['제34조'],terms:[],cites:[],snippet:'…'},
+                {reg:'정관',slug:'jeonggwan',no:'13의2',title:'노동이사',specific:[],terms:[],cites:['공운법'],snippet:'…'},
+                {reg:'정관',slug:'jeonggwan',no:'39',title:'공고',specific:['제11조'],terms:[],cites:[],snippet:'…'}]};`, c);
+  const html = c.raUpperResView();
+  assert.ok(html.includes('4개 조문 모두 개정'), '묶음 머리에 모두 개정 단추');
+  assert.ok(html.includes('이 조만 개정'), '조마다는 “이 조만 개정”');
+  c.raUpperToAmend('jeonggwan', '44|11|13의2|39');
+  const A = c.__RA().amend;
+  assert.equal(A.slug, 'jeonggwan');
+  assert.equal(Object.keys(A.sel).sort().join(','), '11,13의2,39,44');
+  assert.equal(A.step, 1, '의도와 조문이 있으니 고치기 단계로');
+  assert.ok(A.intent.includes('공공기관의 운영에 관한 법률'));
+  c.raUpperToAmend('jeonggwan', '11');                       // 한 조만도 그대로
+  assert.ok(c.__RA().amend.sel['11']);
+});
+
+test('수정안 나눠 요청: 조문 9개 → 4·4·1 묶음, 실패한 묶음은 알림', async () => {
+  const c = load();
+  const calls = [];
+  c.raPost = async (url, b) => { calls.push(b.targets.map(t => t.no).join(','));
+    if (b.targets[0].no === '5') return { success: false, error: 'AI 오류: AI 서버 응답이 늦습니다.' };
+    return { success: true, draft: { changes: b.targets.map(t => ({ type: 'modify', no: t.no, title: t.title, body: t.body + ' 개정', why: '' })), reason: { purpose: '정비', main: [`${b.targets[0].no} 정비`] }, notes: ['n'], addenda: [] } }; };
+  vm.runInContext('raPost=globalThis.raPost', c);
+  const T = Array.from({ length: 9 }, (_, i) => ({ no: String(i + 1), title: 't', body: 'b' }));
+  const d = await c.raDraftBatched({ mode: 'amend', intent: '정비' }, T);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls.sort(), ['1,2,3,4', '5,6,7,8', '9']);
+  assert.equal(d.success, true);
+  assert.equal(d.draft.changes.map(x => x.no).join(','), '1,2,3,4,9');
+  assert.ok(d.notice.includes('제5조') && d.notice.includes('응답이 늦습니다'));
+  assert.equal(d.draft.notes.length, 1);
+  const one = await c.raDraftBatched({ mode: 'amend', intent: 'x' }, T.slice(0, 3));   // 4개 이하는 한 번에
+  assert.equal(one.success, true); assert.equal(calls.length, 4);
+});
