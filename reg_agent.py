@@ -193,7 +193,7 @@ _MOK_CH = "가나다라마바사아자차카타파하"
 
 # 내규 명칭 접미어(상위법과 구분하는 데 쓴다)
 _REG_SUFFIX = ("정관", "규정", "규칙", "세칙", "지침", "요령", "기준", "매뉴얼",
-               "강령", "헌장", "수칙", "예규")
+               "강령", "헌장", "수칙", "예규", "조례", "훈령", "고시")       # 지자체 자치법규·중앙부처 행정규칙도 같은 틀로 다룬다
 # 기관명·직위 변경 전 구 명칭(기관 프로필 stale_terms·stale_words)
 _STALE_TERMS = [tuple(x) for x in ORG.get("stale_terms") or []]
 _STALE_WORDS = [tuple(x) for x in ORG.get("stale_words") or []]   # 단어 경계로만 찾는 짧은 말
@@ -606,9 +606,9 @@ def _josa(word: str, pair=("은", "는")) -> str:
 def _kind_of(title: str) -> str:
     """규정명 → '규정'·'규칙'·'지침' 등 자기 지칭어."""
     t = (title or "").strip()
-    for suf in ("시행세칙", "정관", "규정", "규칙", "세칙", "지침", "요령", "기준", "매뉴얼", "강령"):
+    for suf in ("시행세칙", "시행규칙", "정관", "조례", "훈령", "예규", "고시", "규정", "규칙", "세칙", "지침", "요령", "기준", "매뉴얼", "강령"):
         if t.endswith(suf):
-            return suf
+            return "규칙" if suf == "시행규칙" else suf
     return "규정"
 
 
@@ -1212,7 +1212,7 @@ def template_enact(b: dict) -> dict:
         n += 1
     arts.append({"no": str(n), "title": "세부사항",
                  "body": f"이 {kind}에서 정한 사항 외에 {purpose}에 필요한 세부사항은 {head_ga} 따로 정한다."})
-    eff = (b.get("effective") or "").strip() or "발령한 날"
+    eff = (b.get("effective") or "").strip() or ("공포한 날" if kind in ("조례", "고시") or ORG["reg_word"] == "자치법규" else "발령한 날")   # 자치법규는 공포, 내규는 발령
     addenda = f"이 {kind}{eun} {eff}부터 시행한다."
     return {"title": title, "articles": arts, "addenda": [addenda],
             "reason": {"purpose": f"{purpose}에 필요한 사항을 정하기 위하여 「{title}」{_josa(title, ('을', '를'))} 제정하려는 것임.",

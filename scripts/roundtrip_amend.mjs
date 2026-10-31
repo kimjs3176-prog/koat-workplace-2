@@ -102,7 +102,7 @@ for (const r of regs) {
   if (new Set(arts.map(a => a.no)).size !== arts.length) continue;      // 조 번호가 겹치는 내규(건강검진이 따로 잡는다)는 뺀다
   for (let round = 0; round < rounds; round++) {
     c.__setArts({ title: r.title, revision: '', articles: arts, appendix: [] });
-    Object.assign(RA.amend, { slug: r.slug, title: r.title, lawStyle: round % 2 ? 'art' : 'fine', fullRev: false, abbr: true, addenda: '', purpose: '', main: [], appx: [], selx: {} });
+    Object.assign(RA.amend, { slug: r.slug, title: r.title, lawStyle: round % 2 ? 'art' : 'fine', fullRev: false, abbr: true, addenda: '', purpose: '', main: [], appx: [], selx: {}, mv: {} });
     const n = 1 + Math.floor(rnd() * 3); const picked = new Set(); const changes = []; const used = [];
     for (let k = 0; k < n; k++) {
       const a = pick(live); if (picked.has(a.no)) continue; picked.add(a.no);
@@ -114,9 +114,19 @@ for (const r of regs) {
     }
     if (rnd() < 0.15) { const a = pick(live.filter(x => !picked.has(x.no))); if (a) { changes.push({ type: 'delete', no: a.no, title: a.title, body: '' }); used.push('delArticle'); } }
     if (rnd() < 0.15) { const a = pick(live); const no = a.no + (a.no.includes('의') ? '' : '의9'); if (!arts.some(x => x.no === no)) { changes.push({ type: 'insert', no, title: '특례', body: '① 이 조는 새로 둔다.\n② 세부 사항은 원장이 정한다.' }); used.push('insArticle'); } }
-    if (!changes.length) continue;
-    RA.amend.changes = changes;
+    // 조 이동·맞교환: 끝 조를 한 번호 뒤로(가지 번호) / 이웃한 두 조 맞바꾸기 / 빈 번호 메우기
+    let mv = {}; const liveNos = live.map(a => a.no);
+    const r2 = rnd();
+    if (r2 < 0.12) { const a = liveNos[liveNos.length - 1]; const to = a.includes('의') ? null : a + '의9'; if (to && !arts.some(x => x.no === to)) mv[a] = to; }
+    else if (r2 < 0.24 && liveNos.length >= 2) { const i = Math.floor(rnd() * (liveNos.length - 1)); const [a, b] = [liveNos[i], liveNos[i + 1]]; if (!changes.some(x => x.no === a || x.no === b) || true) { mv[a] = b; mv[b] = a; } }
+    else if (r2 < 0.30) { const del = new Set(changes.filter(x => x.type === 'delete').map(x => x.no)); const seq = arts.filter(a => !a.deleted && !del.has(a.no)).sort((x, y) => c.raCmp(x.no, y.no)); seq.forEach((a, i) => { const to = String(i + 1); if (c.raNormNo(a.no) !== to) mv[a.no] = to; }); }
+    // 삭제·신설 수정안과 겹치는 이동은 버린다(이동 대상이 삭제되거나, 신설 번호와 충돌)
+    Object.keys(mv).forEach(k => { if (changes.some(x => (x.type === 'delete' && x.no === k) || (x.type === 'insert' && (x.no === mv[k] || x.no === k)))) delete mv[k]; });
+    if (!changes.length && !Object.keys(mv).length) continue;
+    RA.amend.changes = changes; RA.amend.mv = mv;
+    if (Object.keys(mv).length) used.push('move:' + Object.entries(mv).map(([a, b]) => a + '>' + b).slice(0, 3).join(','));
     total++;
+    if (Object.keys(mv).length && !c.raMvValid().ok) { RA.amend.mv = {}; total--; continue; }
     const law = c.raDocLaw(c.raDocCtx('amend'));
     const res = c.raApplyAmend(arts, law, []);
     const exp = c.raAmendFullText().arts;
