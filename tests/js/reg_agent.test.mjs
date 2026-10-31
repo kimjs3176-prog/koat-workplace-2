@@ -760,3 +760,67 @@ test('raRoundTrip: 수정안으로 만든 개정문을 되돌려 적용하면 �
   RA.amend.lawStyle = 'art';
   assert.ok(c.raRoundTrip().ok);
 });
+
+test('조 번호 도구: 이동·맞교환·빈 번호 메우기 — 인용 자동 정정·개정문·대비표·역적용', () => {
+  const c = load(); const RA = c.__RA();
+  const arts = [
+    { no: '1', title: '신청', body: '① 신청은 제3조에 따라 한다.\n② 제4조를 준용한다.', deleted: false },
+    { no: '2', title: '폐지', body: '', deleted: true },
+    { no: '3', title: '심사', body: '심사는 위원회가 한다. 「공공기관의 운영에 관한 법률」 제8조는 그대로 둔다.', deleted: false },
+    { no: '4', title: '결정', body: '결정은 원장이 한다.', deleted: false },
+  ];
+  vm.runInContext(`_raArts=${JSON.stringify({ title: '시험규칙', articles: arts, appendix: [] })}`, c);
+  Object.assign(RA.amend, { slug: 's', title: '시험규칙', lawStyle: 'fine', fullRev: false, addenda: '', purpose: '', main: [], selx: {}, appx: [], changes: [], mv: {} });
+  // 인용 정정은 같은 내규의 조만(「법률」 제8조는 그대로)
+  assert.equal(c.raRetargetRefs('제7조와 제8조, 「공공기관의 운영에 관한 법률」 제8조', { '7': '6', '8': '7' }), '제6조와 제7조, 「공공기관의 운영에 관한 법률」 제8조');
+  // 빈 번호 메우기: 삭제된 제2조 자리를 채워 3→2, 4→3
+  c.raMvFill();
+  assert.equal(JSON.stringify(c.raMoves()), JSON.stringify({ '3': '2', '4': '3' }));
+  assert.ok(c.raMvValid().ok, JSON.stringify(c.raMvValid()));
+  const eff = c.raEffAll();
+  assert.equal(JSON.stringify(eff.map(x => [x.no, x.nno, !!x.mvfix, !!x.mvonly])), JSON.stringify([['1', '1', true, false], ['3', '2', false, true], ['4', '3', false, true]]));
+  assert.equal(eff[0].body, '① 신청은 제2조에 따라 한다.\n② 제3조를 준용한다.');
+  const law = c.raDocLaw(c.raDocCtx('amend'));
+  assert.match(law, /제1조제1항 중 “제3조”를 “제2조”로 하고, 같은 조 제2항 중 “제4조”를 “제3조”로 한다\./);
+  assert.match(law, /제3조를 제2조로, 제4조를 제3조로 한다\./);                  // 낮은 번호로 내릴 때는 낮은 것부터
+  const full = c.raAmendFullText().arts;
+  assert.equal(JSON.stringify(full.map(a => a.no)), JSON.stringify(['1', '2', '3']));   // 삭제 표시 제2조는 걷히고 3·4가 2·3으로
+  assert.equal(full[1].title, '심사');
+  // 대비표: 번호만 바뀌는 조도 행으로(제7조 → 제6조)
+  const rows = c.raCmpRows();
+  assert.equal(rows.length, 3); assert.match(rows[1][3], /^제2조\(심사\)/);
+  // 역적용·왕복
+  const rt = c.raRoundTrip(); assert.ok(rt.ok, JSON.stringify(rt.diffs) + JSON.stringify(rt.errors));
+  // 맞교환
+  RA.amend.mv = { '3': '4', '4': '3' }; RA.amend.changes = [];
+  assert.equal(c.raMvSentence(), '제4조를 제3조로, 제3조를 제4조로 한다.');
+  const full2 = c.raAmendFullText().arts;
+  assert.equal(full2.find(a => a.no === '3').title, '결정'); assert.equal(full2.find(a => a.no === '4').title, '심사');
+  assert.equal(full2.find(a => a.no === '1').body, '① 신청은 제4조에 따라 한다.\n② 제3조를 준용한다.');
+  const rt2 = c.raRoundTrip(); assert.ok(rt2.ok, JSON.stringify(rt2.diffs) + JSON.stringify(rt2.errors));
+  // 유효성: 비어 있지 않은 자리로 옮기면 오류
+  RA.amend.mv = { '3': '4' };
+  assert.ok(!c.raMvValid().ok);
+  // 조 단위 문형에서도 왕복
+  RA.amend.mv = { '4': '5' }; RA.amend.lawStyle = 'art';
+  assert.ok(c.raRoundTrip().ok);
+});
+
+test('자치법규(조례)도 같은 틀: 원문 붙여넣기 → 개정 → “일부개정조례안”·“공포한 날” 부칙·왕복 일치', () => {
+  const c = load(); const RA = c.__RA();
+  const text = ['제1조(목적) 이 조례는 가온군의 농업기계 임대사업에 필요한 사항을 정함을 목적으로 한다.',
+    '제2조(임대 기간) ① 임대 기간은 1회 3일 이내로 한다. 다만, 농번기에는 군수가 5일까지 연장할 수 있다.', '② 기간이 지나면 제3조의 임대료를 더하여 부과한다.',
+    '제3조(임대료) 임대료는 [별표 1]과 같다.', '부칙', '이 조례는 공포한 날부터 시행한다.'].join('\n');
+  const p = c.raParse(text);
+  assert.equal(p.articles.length, 3);
+  assert.equal(c.raKind('가온군 농업기계 임대사업 운영 조례'), '조례'); assert.equal(c.raKind('가온군 ○○ 조례 시행규칙'), '규칙'); assert.equal(c.raKind('농림축산식품부 ○○ 훈령'), '훈령');
+  assert.equal(c.raEffDefault('조례'), '공포한 날'); assert.equal(c.raEffDefault('규정'), '발령한 날');
+  vm.runInContext(`_raArts=${JSON.stringify({ title: '가온군 농업기계 임대사업 운영 조례', revision: '붙여넣은 원문', articles: p.articles, pasted: true, appendix: [] })}`, c);
+  Object.assign(RA.amend, { src: 'paste', pasted: true, slug: '', title: '가온군 농업기계 임대사업 운영 조례', lawStyle: 'fine', fullRev: false, addenda: '', purpose: '', main: [], selx: {}, appx: [], mv: {},
+    changes: [{ type: 'modify', no: '2', title: '임대 기간', body: '① 임대 기간은 1회 5일 이내로 한다. 다만, 농번기에는 군수가 7일까지 연장할 수 있다.\n② 기간이 지나면 제3조의 임대료를 더하여 부과한다.' }] });
+  const ctx = c.raDocCtx('amend'); const law = c.raDocLaw(ctx);
+  assert.match(law, /^가온군 농업기계 임대사업 운영 조례 일부개정조례안\n/);
+  assert.match(law, /제2조제1항을 다음과 같이 한다\.\n① 임대 기간은 1회 5일 이내로 한다\./);   // 본문·단서 두 곳이 바뀌어 항 전체를 쓴다
+  assert.match(law, /부    칙\n이 조례는 공포한 날부터 시행한다\./);
+  const rt = c.raRoundTrip(); assert.ok(rt.ok, JSON.stringify(rt.diffs) + JSON.stringify(rt.errors));
+});

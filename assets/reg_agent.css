@@ -1049,3 +1049,6 @@ button.ra-nav-gh{cursor:pointer;} button.ra-nav-gh:hover{color:var(--color-ink);
 .ra-fold summary h3{display:inline;margin:0;font-size:var(--text-md);} .ra-fold summary::before{content:'▸';color:var(--color-faint);font-size:var(--text-xs);} .ra-fold[open] summary::before{content:'▾';}
 .ra-fold-b{padding-top:var(--space-xs);}
 .ra-hseg{margin-bottom:var(--space-md);}
+/* 조 번호 도구 */
+.ra-mv-b{padding:var(--space-xs) 0;} .ra-mv-b .ra-row{margin:0 0 var(--space-xs);} .ra-mv-b .ra-lab{min-width:48px;color:var(--color-muted);font-size:var(--text-sm);}
+.ra-mv-list{display:flex;flex-wrap:wrap;gap:var(--space-xs);margin-top:var(--space-2xs);} .ra-mv-list .ra-chip .ra-x{margin-left:var(--space-2xs);}
