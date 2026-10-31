@@ -1052,3 +1052,56 @@ button.ra-nav-gh{cursor:pointer;} button.ra-nav-gh:hover{color:var(--color-ink);
 /* 조 번호 도구 */
 .ra-mv-b{padding:var(--space-xs) 0;} .ra-mv-b .ra-row{margin:0 0 var(--space-xs);} .ra-mv-b .ra-lab{min-width:48px;color:var(--color-muted);font-size:var(--text-sm);}
 .ra-mv-list{display:flex;flex-wrap:wrap;gap:var(--space-xs);margin-top:var(--space-2xs);} .ra-mv-list .ra-chip .ra-x{margin-left:var(--space-2xs);}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   표면 v2 — 칸이 서로 구분되도록. 1차 카드(.ra-sec·.ra-wiz-card)는 흰 카드 + 1px 반투명 테두리 + 낮은 그림자,
+   2차 칸(.ra-chg·.ra-fold·.ra-det·.ra-mv·.ra-kpi·.ra-stat)은 카드 안의 연한 패널. 모서리는 자식 ≤ 부모(10 → 7 → 6).
+   ══════════════════════════════════════════════════════════════════════════ */
+.ra-sec,.ra-wiz-card{background:var(--color-sheet);border:var(--rule-hair) solid var(--color-border);border-top:var(--rule-hair) solid var(--color-border);border-radius:var(--radius-card);box-shadow:var(--shadow-card);padding:var(--space-lg) var(--space-lg) var(--space-lg);}
+.ra-main>.ra-sec+.ra-sec::before,.ra-wide>.ra-sec+.ra-sec::before{display:none;}                /* 연결선 대신 간격으로 */
+.ra-sec+.ra-sec,.ra-wide>.ra-sec{margin-bottom:var(--space-lg);}
+.ra-sec-h{padding-bottom:var(--space-sm);border-bottom:var(--rule-hair) solid var(--color-rule);margin-bottom:var(--space-md);}
+.ra-sec-t h2{font-size:var(--text-title);}
+.ra-wiz-head{padding-bottom:var(--space-sm);border-bottom:var(--rule-hair) solid var(--color-rule);margin-bottom:var(--space-md);}
+/* 카드 안의 구역: 사이 간격을 키우고 머리에 작은 악센트 바 */
+.ra-sub-sec{border-top:var(--rule-hair) solid var(--color-rule);padding-top:var(--space-md);margin-top:var(--space-lg);}
+.ra-sub-sec>h3,.ra-fold summary h3{font-size:var(--text-md);font-weight:600;}
+.ra-sub-sec>h3::before{content:'';display:inline-block;width:3px;height:14px;border-radius:2px;background:var(--color-accent);margin-right:var(--space-2xs);}
+/* 2차 칸(패널) */
+.ra-chg,.ra-fold,.ra-mv,.ra-det.ra-fold,.ra-fixbox,.ra-note{background:var(--color-paper-2);border:var(--rule-hair) solid var(--color-border);border-radius:var(--radius-inner);box-shadow:none;}
+.ra-chg{border-top:var(--rule-hair) solid var(--color-border);border-left:3px solid var(--color-accent);padding:0 var(--space-md) var(--space-sm);margin-bottom:var(--space-md);}
+.ra-chg.t-insert{border-left-color:var(--color-ok);} .ra-chg.t-delete{border-left-color:var(--color-bad);} .ra-chg.t-appx{border-left-color:var(--color-accent-2);}
+.ra-chg-h{border-bottom:var(--rule-hair) solid var(--color-rule);padding:var(--space-sm) 0;}
+.ra-chg-b{gap:var(--space-md);padding-top:var(--space-sm);}
+.ra-chg .ra-old,.ra-chg .ra-new{background:var(--color-sheet);border:var(--rule-hair) solid var(--color-rule);border-radius:var(--radius-ctl);padding:var(--space-sm);}
+.ra-fold{padding:var(--space-xs) var(--space-md);margin-top:var(--space-sm);}
+.ra-fold summary{padding:var(--space-2xs) 0;} .ra-fold-b{padding:var(--space-sm) 0 var(--space-xs);border-top:var(--rule-hair) solid var(--color-rule);margin-top:var(--space-2xs);}
+.ra-mv{padding:var(--space-xs) var(--space-md);margin-top:var(--space-sm);}
+/* 지표 칸: 각각 테두리를 두른 카드, 사이는 간격으로 */
+.ra-kpis{gap:var(--space-sm);background:transparent;border-top:none;}
+.ra-kpi{background:var(--color-sheet);border:var(--rule-hair) solid var(--color-border);border-left:var(--rule-hair) solid var(--color-border);border-radius:var(--radius-card);box-shadow:var(--shadow-card);padding:var(--space-md) var(--space-md);}
+.ra-kpi.hero{border-color:var(--color-border-strong);}
+.ra-sec .ra-kpis{border-top:none;} .ra-sec .ra-kpi{background:var(--color-paper-2);box-shadow:none;border-radius:var(--radius-inner);} .ra-sec .ra-kpi:first-child{padding-left:var(--space-md);}
+.ra-stats{gap:var(--space-xs);border:none;}
+.ra-stat{background:var(--color-paper-2);border:var(--rule-hair) solid var(--color-border);border-left:var(--rule-hair) solid var(--color-border);border-radius:var(--radius-inner);padding:var(--space-sm) var(--space-md);}
+/* 표·목록은 카드 안에서 둥근 틀로 */
+.ra-tbl-w{border:var(--rule-hair) solid var(--color-rule);border-radius:var(--radius-inner);overflow:hidden;}
+.ra-tbl thead th{background:var(--color-paper-2);}
+.ra-cmp{border:var(--rule-hair) solid var(--color-rule);border-radius:var(--radius-inner);overflow:hidden;}
+.ra-cmp thead th{background:var(--color-paper-2);}
+.ra-chksum{background:var(--color-paper-2);border:var(--rule-hair) solid var(--color-border);border-radius:var(--radius-inner);padding:var(--space-sm) var(--space-md);}
+.ra-runbar{background:var(--color-accent-wash);border:var(--rule-hair) solid var(--color-border);border-left:3px solid var(--color-accent);border-radius:var(--radius-inner);padding:var(--space-sm) var(--space-md);}
+/* 단계 표시줄·메뉴는 둥근 모서리와 활성 배경으로 */
+.ra-wiz{background:var(--color-sheet);border:var(--rule-hair) solid var(--color-border);border-radius:var(--radius-card);box-shadow:var(--shadow-card);padding:var(--space-2xs) var(--space-sm);}
+.ra-tab{border-radius:var(--radius-ctl);border-left:none;padding-left:var(--space-sm);} .ra-tab.on{background:var(--color-sheet);box-shadow:inset 0 0 0 1px var(--color-border);} 
+.ra-nav-g.fold .ra-nav-gh{border-radius:var(--radius-ctl);} button.ra-nav-gh:hover{background:var(--color-sheet);}
+.ra-hseg,.ra-seg{background:var(--color-paper-2);border:var(--rule-hair) solid var(--color-border);border-radius:var(--radius-ctl);padding:2px;}
+.ra-seg button{border-radius:calc(var(--radius-ctl) - 2px);}
+.ra-dtabs{border-bottom:var(--rule-hair) solid var(--color-rule);} .ra-docbox{border:var(--rule-hair) solid var(--color-rule);border-radius:var(--radius-inner);padding:var(--space-md);background:var(--color-sheet);}
+.ra-empty{border:1px dashed var(--color-border-strong);border-radius:var(--radius-inner);background:var(--color-paper-2);}
+.ra-ag-hero{background:var(--color-sheet);border:var(--rule-hair) solid var(--color-border);border-radius:var(--radius-card);box-shadow:var(--shadow-card);padding:var(--space-lg);}
+.ra-ag-steps li{background:var(--color-paper-2);border:var(--rule-hair) solid var(--color-border);border-radius:var(--radius-inner);}
+.ra-prio>li{background:var(--color-paper-2);border:var(--rule-hair) solid var(--color-border);border-radius:var(--radius-inner);padding:var(--space-sm) var(--space-md);margin-bottom:var(--space-xs);}
+@media (max-width:640px){ .ra-sec,.ra-wiz-card{padding:var(--space-md) var(--space-sm);border-radius:var(--radius-inner);} .ra-kpi{border-radius:var(--radius-inner);} }
+.ra-wiz-card{overflow:hidden;}                                                                  /* 바닥 단추 띠가 둥근 모서리를 따라가도록 */
+.ra-wiz-card{padding-bottom:0;}
