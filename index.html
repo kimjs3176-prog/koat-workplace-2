@@ -169,14 +169,17 @@ function closeAssist(){}
 
 // ── AI 설정: 키는 sessionStorage(aiKeys), 공급자·모델은 localStorage(aiSettings) ──
 const AI_MODELS={
-  gemini:[['gemini-flash-latest','최신 Flash (자동 현행화·권장)'],['gemini-pro-latest','최신 Pro (고성능)'],['gemini-2.5-flash','Gemini 2.5 Flash'],['gemini-2.5-pro','Gemini 2.5 Pro']],
+  gemini:[['gemini-flash-latest','최신 Flash (자동 현행화·권장)'],['gemini-flash-lite-latest','최신 Flash-Lite (빠름·한도 넉넉)'],['gemini-pro-latest','최신 Pro (고성능)']],
   claude:[['claude-sonnet-4-5','Claude Sonnet 4.5 (권장)'],['claude-opus-4-5','Claude Opus 4.5 (최고 성능)'],['claude-haiku-4-5-20251001','Claude Haiku 4.5 (빠름)']],
   gpt:[['gpt-4.1','GPT-4.1 (권장)'],['gpt-4.1-mini','GPT-4.1 Mini (빠름)'],['gpt-4o','GPT-4o']],
 };
 const AI_HELP={gemini:'https://aistudio.google.com/apikey', claude:'https://console.anthropic.com/settings/keys', gpt:'https://platform.openai.com/api-keys'};
 let currentProv='gemini';
 function _readAiKeys(){ try{ return JSON.parse(sessionStorage.getItem('aiKeys')||'{}'); }catch(e){ return {}; } }
-function _readAiPrefs(){ try{ return JSON.parse(localStorage.getItem('aiSettings')||'{}'); }catch(e){ return {}; } }
+function _readAiPrefs(){ let o={}; try{ o=JSON.parse(localStorage.getItem('aiSettings')||'{}')||{}; }catch(e){ return {}; }
+  // 은퇴한 버전 이름(gemini-1.x·2.x)으로 저장된 모델은 현행 별칭으로 바꾼다 — 그대로 두면 모든 AI 호출이 실패한다
+  if(/^gemini-(1|2)\./.test(o.model_gemini||'')){ o.model_gemini=/pro/.test(o.model_gemini)?'gemini-pro-latest':'gemini-flash-latest'; try{ localStorage.setItem('aiSettings',JSON.stringify(o)); }catch(e){} }
+  return o; }
 function getAiSettings(){ return {..._readAiPrefs(), ..._readAiKeys()}; }
 function setProv(p){
   currentProv=p; const s=getAiSettings();
