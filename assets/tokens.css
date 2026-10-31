@@ -1,19 +1,22 @@
 /* Hallmark · v2.0.0 · redesign: full · scope: app · shape: app screen · theme: almanac (dealt 1/3), recoloured for readability at the owner's request · genre: editorial · posture: restrained · faces: Pretendard only (SIL OFL 1.1, a Gothic face free for commercial use) · signature: the regulation on a white sheet, ruled like a reference book · built: the project */
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V4 · weakest: P, an app screen argues little; leaned on the sheet so every article, table and reply reads as the printed regulation rather than a dashboard card */
 /* Hallmark · kept: Pretendard (the project's KRDS face); changed at the owner's request: a bright neutral ground with white sheets and darker ink for readability, a blue accent for the magenta, one Gothic family (no serif or monospace) */
+/* Surfaces v2 (owner's request: cards were not separable): clean-professional card treatment — white card on a one-step-darker ground, 1px hue-tinted translucent border + low layered shadow (Vercel web-interface guidelines), nested radii 10/7/6 (child ≤ parent), 8px spacing rhythm; sub-sections inside a card use a paper-2 panel. Dark mode: translucent white borders, opacity steps for height (Linear). */
 
 :root{
-  --color-paper:oklch(96.6% 0.004 255);
-  --color-paper-2:oklch(98.6% 0.003 255);
-  --color-paper-3:oklch(93.5% 0.006 255);
+  --color-paper:oklch(95.2% 0.006 255);
+  --color-paper-2:oklch(98.2% 0.004 255);
+  --color-paper-3:oklch(92.5% 0.008 255);
   --color-sheet:oklch(99.7% 0.002 255);
   --color-sheet-2:oklch(97% 0.005 255);
   --color-ink:oklch(20% 0.02 258);
   --color-ink-2:oklch(27% 0.018 258);
   --color-muted:oklch(44% 0.018 258);
   --color-faint:oklch(57% 0.014 258);
-  --color-rule:oklch(89.5% 0.008 258);
+  --color-rule:oklch(90% 0.008 258);
   --color-rule-2:oklch(36% 0.02 258);
+  --color-border:oklch(20% 0.02 258 / 0.12);          /* 카드 가장자리 — 바탕 색조에 녹는 반투명 선 */
+  --color-border-strong:oklch(20% 0.02 258 / 0.22);
   --color-accent:oklch(49% 0.19 262);
   --color-accent-2:oklch(42% 0.18 262);
   --color-accent-ink:oklch(99% 0.004 262);
@@ -40,12 +43,13 @@
   --font-text:var(--font-display);
   --font-outlier:var(--font-display);
 
-  --radius-card:0;
-  --radius-ctl:2px;
-  --radius-pill:2px;
+  --radius-card:10px;
+  --radius-inner:7px;                                   /* 카드 안의 칸(자식 ≤ 부모) */
+  --radius-ctl:6px;
+  --radius-pill:999px;
   --rule-hair:1px;
   --rule-bar:2px;
-  --shadow-card:none;
+  --shadow-card:0 1px 2px oklch(20% 0.02 258 / 0.05), 0 1px 1px oklch(20% 0.02 258 / 0.03);   /* 낮은 겹그림자 — 가장자리는 테두리가 맡는다 */
   --shadow-pop:0 6px 18px oklch(17% 0.02 245 / 0.18);
   --tracking-display:-0.02em;
   --display-weight:600;
@@ -82,17 +86,20 @@
 
 /* 다크 모드 — 같은 슬레이트 계열을 어둡게 내린 것(뒤집지 않음) */
 body.dark{
-  --color-paper:oklch(19% 0.016 245);
-  --color-paper-2:oklch(16.5% 0.016 245);
-  --color-paper-3:oklch(14.5% 0.015 245);
-  --color-sheet:oklch(23.5% 0.016 245);
-  --color-sheet-2:oklch(27% 0.016 245);
+  --color-paper:oklch(16.5% 0.016 245);
+  --color-paper-2:oklch(19.5% 0.016 245);
+  --color-paper-3:oklch(13.5% 0.015 245);
+  --color-sheet:oklch(22% 0.016 245);
+  --color-sheet-2:oklch(26% 0.016 245);
   --color-ink:oklch(95% 0.007 245);
   --color-ink-2:oklch(87% 0.01 245);
   --color-muted:oklch(73% 0.014 245);
   --color-faint:oklch(60% 0.014 245);
   --color-rule:oklch(34% 0.016 245);
   --color-rule-2:oklch(80% 0.012 245);
+  --color-border:oklch(100% 0 0 / 0.1);
+  --color-border-strong:oklch(100% 0 0 / 0.2);
+  --shadow-card:0 1px 2px oklch(0% 0 0 / 0.3);
   --color-accent:oklch(74% 0.13 262);
   --color-accent-2:oklch(80% 0.11 262);
   --color-accent-ink:oklch(18% 0.02 245);
