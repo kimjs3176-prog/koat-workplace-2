@@ -884,7 +884,7 @@ _AI_MODEL_FALLBACK = {"gemini": "gemini-flash-latest",
 # 콜드 스타트에서 시나리오/해석 핫패스가 ListModels 왕복을 동기로 기다리지 않도록
 # 즉시 반환할 기본 모델(캐시가 비었을 때 사용).
 GEMINI_DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "") or "gemini-2.5-flash"
-_GEMINI_MODEL_CACHE: dict = {"model": None, "ts": 0.0}
+_GEMINI_MODEL_CACHE: dict = {"model": None, "ts": 0.0, "ranked": []}   # ranked: ListModels 기준 점수 내림차순 후보(과부하 대체용)
 _GEMINI_CACHE_TTL = 6 * 3600          # 6시간
 # 선호 Gemini 버전. 기본은 비워 두고 ListModels 기준 '사용 가능한 최신'을 자동 선택한다
 # (현재 최신 계열은 3.x). 특정 버전으로 묶고 싶을 때만 GEMINI_MODEL_PREF=3.0 처럼 지정.
@@ -948,6 +948,7 @@ def _gemini_latest_model(api_key: str) -> str:
                 pref_ver = int(pm.group(1)) * 100 + int(pm.group(2) or 0)
         best, best_score = None, None
         pbest, pbest_score = None, None      # 선호 버전 중 최적
+        scored = []                          # (점수, 이름) — 과부하 때 바꿔 쓸 후보 순위
         for m in (r.json().get("models") or []):
             name = (m.get("name") or "").split("/")[-1]
             methods = m.get("supportedGenerationMethods") or []
@@ -956,6 +957,7 @@ def _gemini_latest_model(api_key: str) -> str:
             sc = _gemini_model_score(name)
             if not sc:
                 continue
+            scored.append((sc, name))
             if best_score is None or sc > best_score:
                 best, best_score = name, sc
             if pref_ver is not None and sc[0] == pref_ver:
@@ -964,6 +966,7 @@ def _gemini_latest_model(api_key: str) -> str:
             elif pref and not pref_ver and pref.lower() in name.lower():
                 if pbest_score is None or sc > pbest_score:
                     pbest, pbest_score = name, sc
+        _GEMINI_MODEL_CACHE["ranked"] = [n for _, n in sorted(scored, reverse=True)]
         if pbest:
             _GEMINI_MODEL_CACHE.update({"model": pbest, "ts": now})
             print(f"[ai-model] 선호 버전({pref}) 모델 사용: {pbest}")
@@ -977,6 +980,38 @@ def _gemini_latest_model(api_key: str) -> str:
     except Exception as e:
         print(f"[ai-model] 조회 오류: {type(e).__name__}")
     return fallback
+
+
+_GEMINI_STATIC_ALTS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash",
+                       "gemini-flash-latest", "gemini-flash-lite-latest"]
+
+
+def _gemini_alternates(mdl: str, limit: int = 3) -> list:
+    """과부하(503/429)로 실패한 모델 대신 바로 바꿔 부를 Gemini 후보.
+
+    순서: 같은 세대의 다른 등급(flash ↔ flash-lite) → 다른 세대의 flash → '-latest' 별칭.
+    ListModels 캐시가 있으면 그 순위를, 없으면 고정 목록을 쓴다. 이미 실패한 모델은 뺀다.
+    (무료 등급의 분당·일일 한도와 과부하는 모델별로 걸리므로 모델만 바꿔도 대개 바로 성공한다)
+    """
+    cur = (mdl or "").lower()
+    pool = list(_GEMINI_MODEL_CACHE.get("ranked") or []) + _GEMINI_STATIC_ALTS
+    seen, out = {cur}, []
+    m = re.search(r"gemini-(\d+(?:\.\d+)?)", cur)
+    gen = m.group(1) if m else ""
+    def rank(n):
+        nl = n.lower()
+        same = gen and f"gemini-{gen}" in nl
+        latest = "latest" in nl
+        pro = "pro" in nl
+        return (1 if pro else 0, 0 if same else 1, 1 if latest else 0)   # pro 계열은 맨 뒤(느리고 한도 작음)
+    for n in sorted(pool, key=rank):              # rank: 같은 세대 → 별칭 아님 → flash 계열(pro는 느리고 한도가 작아 뒤로)
+        nl = n.lower()
+        if nl in seen or _GEMINI_SKIP.search(nl):
+            continue
+        seen.add(nl); out.append(n)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _default_model_for(provider: str, api_key: str = "") -> str:
@@ -1062,8 +1097,27 @@ def _ai_generate(provider: str, api_key: str, mdl: str, system: str, user: str,
             r = call(limit, think)
             if r.status_code == 400 and think and "thinking" in (r.text or "").lower():
                 r = call(limit, None)           # 사고 설정 미지원 모델 폴백
+            tried = []
+            if r.status_code in (429, 503, 500, 502, 504) or (r.status_code == 404 and "not found" in (r.text or "").lower()):
+                # 과부하·한도·미제공 모델이면 다른 Gemini 모델로 바로 바꿔 부른다(시간 예산이 남아 있을 때만)
+                for alt in _gemini_alternates(mdl):
+                    if deadline - _t.time() < 12:
+                        break
+                    tried.append(alt)
+                    print(f"[ai] {mdl} {r.status_code} → 대체 모델 {alt}")
+                    url = (f"https://generativelanguage.googleapis.com/v1beta/models/{alt}:generateContent")
+                    think = _gemini_thinking_cfg(alt)
+                    r = call(limit, think)
+                    if r.status_code == 400 and think and "thinking" in (r.text or "").lower():
+                        r = call(limit, None)
+                    if r.status_code == 200:
+                        mdl = alt
+                        break
             if r.status_code != 200:
-                return "", _ai_error(r)[0]
+                msg = _ai_error(r)[0]
+                if tried:
+                    msg += f" (대체 모델 {', '.join(tried)}도 실패)"
+                return "", msg
             data = r.json()
             cands = data.get("candidates") or []
             if not cands:
@@ -1148,7 +1202,7 @@ def _ai_post_retry(do_post, tries=3, deadline=None):
         if i < tries - 1:
             if deadline and deadline - _t.time() < 10:
                 break
-            _t.sleep(0.8 * (i + 1))
+            _t.sleep(1.2 * (i + 1))
     return resp
 
 
@@ -1161,9 +1215,12 @@ def _ai_error(resp):
         msg = (resp.text or "")[:200]
     low = (msg or "").lower()
     code = resp.status_code
-    if code in (429, 503) or "overload" in low or "high demand" in low or "unavailable" in low or "quota" in low or "rate" in low:
+    if code == 429 and ("quota" in low or "resource_exhausted" in low or "limit" in low):
+        kind = "quota"
+        user = f"AI 사용량 한도(분당·일일)를 넘었습니다. 1분쯤 뒤 다시 시도하거나 다른 모델·키를 쓰세요. (원문: {msg[:160]})"
+    elif code in (429, 503) or "overload" in low or "high demand" in low or "unavailable" in low or "quota" in low or "rate" in low:
         kind = "overload"
-        user = f"AI 모델이 일시적으로 과부하 상태입니다 (재시도 후에도 실패). 잠시 뒤 다시 시도하거나 다른 모델을 선택하세요. (원문: {msg})"
+        user = f"AI 모델이 일시적으로 과부하 상태입니다. 잠시 뒤 다시 시도하거나 다른 모델을 선택하세요. (원문: {msg[:160]})"
     elif code in (401, 403) or "api key" in low or "permission" in low or "invalid" in low or "unauthenticated" in low:
         kind = "auth"
         user = f"API 키가 올바르지 않거나 권한이 없습니다. 키를 확인하세요. (원문: {msg})"
