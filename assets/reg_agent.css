@@ -1105,3 +1105,44 @@ button.ra-nav-gh{cursor:pointer;} button.ra-nav-gh:hover{color:var(--color-ink);
 @media (max-width:640px){ .ra-sec,.ra-wiz-card{padding:var(--space-md) var(--space-sm);border-radius:var(--radius-inner);} .ra-kpi{border-radius:var(--radius-inner);} }
 .ra-wiz-card{overflow:hidden;}                                                                  /* 바닥 단추 띠가 둥근 모서리를 따라가도록 */
 .ra-wiz-card{padding-bottom:0;}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   표면 v3 — 앱 화면 규칙. 참조: tasteskill v2.1 references/app-screens.md(실제 제품 화면 23개 측정: 제목 24px, 지표 값 24px·머리 값 ≥1.3배,
+   지표는 타일이 아니라 1px 선으로 나눈 한 띠, 표 머리는 띠 없이 12px 회색, 얼룩말 줄무늬 없음, 숫자 오른쪽 정렬·고정폭 숫자, 활성 메뉴는 회색 알약,
+   거터 하나), UI/UX Pro Max 공공기관 권고(접근성 우선·스위스 미니멀, 포커스 링 3–4px, 움직임 절제), Vercel Web Interface Guidelines(호버 상태,
+   min-width:0, 긴 토큰 줄바꿈).
+   ══════════════════════════════════════════════════════════════════════════ */
+/* 1 제목 */
+.ra-page-t h1{font-size:var(--text-page);font-weight:600;letter-spacing:-0.01em;line-height:1.2;}
+.ra-page-t p{font-size:var(--text-sm);}
+/* 2 지표 띠: 칸 사이 1px 선(격자 틈 1px에 테두리색을 비춤 — 어떤 열 수에서도 선이 맞음), 값 24/500, 머리 값 32 */
+.ra-kpis,.ra-sec .ra-kpis{gap:1px;background:var(--color-border);border:1px solid var(--color-border);border-radius:var(--radius-card);box-shadow:var(--shadow-card);overflow:hidden;margin-bottom:var(--space-md);}
+.ra-kpis .ra-kpi,.ra-sec .ra-kpis .ra-kpi,.ra-kpis .ra-kpi:nth-child(n){background:var(--color-sheet);border:none;border-radius:0;box-shadow:none;padding:var(--space-md) var(--space-lg);min-width:0;}
+.ra-kpi-l{font-size:var(--text-sm);font-weight:500;color:var(--color-muted);}
+.ra-kpi-v{font-size:var(--text-figure);font-weight:500;letter-spacing:-0.01em;}
+.ra-kpi.hero .ra-kpi-v{font-size:32px;}
+.ra-kpi-v small{font-size:var(--text-sm);}
+@media (max-width:640px){ .ra-kpis .ra-kpi{padding:var(--space-sm) var(--space-md);} .ra-kpi.hero .ra-kpi-v{font-size:30px;} }
+/* 3 표: 머리 띠 없음, 12px 회색 보통 굵기, 머리 아래 선이 표에서 가장 진한 선, 행 선은 연하게, 숫자 오른쪽 */
+.ra-tbl th,.ra-tbl thead th{background:var(--color-sheet);font-size:var(--text-xs);font-weight:400;color:var(--color-muted);border-bottom:1px solid var(--color-rule-2);height:36px;}
+.ra-tbl td{border-top:1px solid var(--color-rule);}
+.ra-tbl tbody tr:first-child td{border-top:none;}
+.ra-tbl th.num{text-align:right;}
+.ra-cmp thead th{background:var(--color-sheet);border-bottom:1px solid var(--color-rule-2);}
+/* 4 메뉴: 활성 항목은 회색 알약(글자 그대로), 묶음 이름은 12px 자간 없음 */
+.ra-tab.on{background:var(--color-paper-3);box-shadow:none;color:var(--color-ink);}
+body.dark .ra-tab.on{background:var(--color-sheet-2);}
+.ra-tab:not(.on):hover{background:var(--color-paper-2);}
+.ra-nav-gh{letter-spacing:0;font-weight:500;font-size:var(--text-xs);}
+/* 5 거터 하나(16px): 카드 사이 가로·세로 같은 값 */
+.ra-main>.ra-sec,.ra-wide>.ra-sec,.ra-sec+.ra-sec{margin-bottom:var(--space-md);}
+.ra-grid,.ra-split{gap:var(--space-md);}
+/* 6 상호작용: 호버는 대비를 키우고, 비활성은 읽히게 */
+.svc-btn:not([disabled]):hover{box-shadow:inset 0 0 0 999px oklch(20% 0.02 258 / 0.06);}
+body.dark .svc-btn:not([disabled]):hover{box-shadow:inset 0 0 0 999px oklch(100% 0 0 / 0.08);}
+.svc-btn[disabled]{opacity:.6;cursor:not-allowed;}
+/* 7 긴 내용: 플렉스·격자 자식은 줄어들 수 있게, 긴 토큰은 아무 데서나 줄바꿈 */
+.ra-chg-b>*,.ra-sec,.ra-kpi,.ra-tbl td{min-width:0;}
+.ra-old,.ra-new,.ra-docbox,.ra-cmp td{overflow-wrap:anywhere;}
+/* 8 나란한 카드: 내용이 짧은 카드는 이웃 높이로 늘리지 않음(늘린 카드 안의 빈 띠 금지), 거터 16 */
+.ra-grid2,.ra-pair{gap:var(--space-md);align-items:start;margin-bottom:var(--space-md);}
